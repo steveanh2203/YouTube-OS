@@ -44,3 +44,13 @@ class ProjectItem:
         self.status = ProjectStatus.pending
         self.notes = ""
         self.is_selected = False
+
+    def refresh_metadata(self) -> dict[str, Any]:
+        """Reload lightweight metadata from the project folder."""
+
+        from autocapcut.services.project_loader import inspect_project
+
+        info = inspect_project(self.path)
+        if info:
+            self.metadata.update(info)
+        return info
