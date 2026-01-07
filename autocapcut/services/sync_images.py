@@ -36,7 +36,14 @@ def sync_project_images(project) -> ImageSyncSummary:
 
     materials = data.get('materials', {})
     audio_materials = {item.get('id'): item for item in materials.get('audios', []) if item.get('id')}
-    video_materials = {item.get('id'): item for item in materials.get('videos', []) if item.get('id')}
+
+    # Video track segments can reference either ``materials.videos`` or ``materials.images``.
+    video_materials: Dict[str, dict] = {}
+    for bucket in ('videos', 'images'):
+        for item in materials.get(bucket, []) or []:
+            material_id = item.get('id')
+            if material_id and material_id not in video_materials:
+                video_materials[material_id] = item
 
     if not audio_materials:
         raise SyncImageError('No audio materials found in draft')

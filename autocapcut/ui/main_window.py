@@ -9,10 +9,12 @@ from loguru import logger
 from PySide6.QtCore import QThread, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QGridLayout,
@@ -23,8 +25,10 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -36,6 +40,11 @@ from autocapcut.models import ProjectItem, ProjectSource, ProjectStatus
 from autocapcut.services.project_loader import discover_projects
 from autocapcut.services.sync_audio import SyncAudioError, SyncSummary, sync_project_audio
 from autocapcut.services.sync_images import SyncImageError, ImageSyncSummary, sync_project_images
+from autocapcut.services.sync_captions import (
+    CaptionSyncSummary,
+    SyncCaptionError,
+    sync_project_captions,
+)
 from autocapcut.services.animation import (
     AnimationError,
     EffectError,
@@ -53,7 +62,7 @@ from autocapcut.services.animation_presets import (
     TRANSITION_PRESETS,
 )
 from autocapcut.services.bulk_rename import BulkRenameError, bulk_rename
-from autocapcut.services.ffmpeg_render import FFmpegRenderError, render_project_with_ffmpeg
+from autocapcut.services.background_removal import BackgroundRemovalError, remove_white_background
 
 
 class SyncWorker(QThread):
@@ -122,11 +131,19 @@ def _format_image_summary(summary: ImageSyncSummary) -> str:
         note += " (" + ", ".join(extras) + ")"
     return note
 
-def _format_summary(summary: SyncSummary) -> str:
-    seconds = summary.audio_duration / 1_000_000
-    return (
-        f"Updated {summary.updated_segments} segment(s), audio length {seconds:.2f}s"
-    )
+
+def _format_caption_summary(summary: CaptionSyncSummary) -> str:
+    note = f"Synced {summary.paired} image(s) to captions"
+    extras = []
+    extra_captions = summary.caption_total - summary.paired
+    extra_images = summary.image_total - summary.paired
+    if extra_captions > 0:
+        extras.append(f"unused captions: {extra_captions}")
+    if extra_images > 0:
+        extras.append(f"unchanged images: {extra_images}")
+    if extras:
+        note += " (" + ", ".join(extras) + ")"
+    return note
 
 
 @dataclass
@@ -152,7 +169,6 @@ class MainWindow(QMainWindow):
         self.project_table: QTableWidget | None = None
         self._worker: SyncWorker | None = None
         self._last_job_projects: list[ProjectItem] = []
-        self.audio_folder: Path | None = None
         self.image_folder: Path | None = None
         self.status_label: QLabel | None = None
         self._status_message_override: str | None = None
@@ -187,7 +203,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(24)
 
         layout.addWidget(self._build_control_panel(), 1)
-        layout.addWidget(self._build_project_panel(), 1)
+        layout.addWidget(self._build_project_panel(), 2)
 
         container.setLayout(layout)
         self.setCentralWidget(container)
@@ -213,6 +229,8 @@ class MainWindow(QMainWindow):
         self.control_tabs.addTab(self._build_animation_tab(), "Animation")
         self.control_tabs.addTab(self._build_effect_tab(), "Effect")
         self.control_tabs.addTab(self._build_transition_tab(), "Transitions")
+        self.control_tabs.addTab(self._build_remove_background_tab(), "Remove Background")
+        self.control_tabs.addTab(self._build_rename_tab(), "Rename")
 
         tab_row = QWidget()
         tab_row_layout = QHBoxLayout(tab_row)
@@ -239,46 +257,30 @@ class MainWindow(QMainWindow):
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(10)
 
-        label = QLabel("Asset Preparation")
+        label = QLabel("Image Preparation")
         label.setObjectName("sectionLabel")
         grid.addWidget(label, 0, 0, 1, 3)
 
-        audio_caption = QLabel("Audio Folder")
-        audio_caption.setObjectName("assetCaption")
-        grid.addWidget(audio_caption, 1, 0, 1, 3)
-
-        self.audio_path_edit = QLineEdit()
-        self.audio_path_edit.setPlaceholderText("Choose audio folder…")
-        self.audio_path_edit.setReadOnly(True)
-        self.audio_path_edit.setObjectName("assetPath")
-        grid.addWidget(self.audio_path_edit, 2, 0, 1, 2)
-
-        audio_button = QPushButton("Browse Audio")
-        audio_button.setProperty("variant", "secondary")
-        audio_button.setObjectName("assetBrowseButton")
-        audio_button.clicked.connect(self._handle_select_audio_folder)
-        grid.addWidget(audio_button, 2, 2, 1, 1)
-
         image_caption = QLabel("Image Folder")
         image_caption.setObjectName("assetCaption")
-        grid.addWidget(image_caption, 3, 0, 1, 3)
+        grid.addWidget(image_caption, 1, 0, 1, 3)
 
         self.image_path_edit = QLineEdit()
         self.image_path_edit.setPlaceholderText("Choose image folder…")
         self.image_path_edit.setReadOnly(True)
         self.image_path_edit.setObjectName("assetPath")
-        grid.addWidget(self.image_path_edit, 4, 0, 1, 2)
+        grid.addWidget(self.image_path_edit, 2, 0, 1, 2)
 
         image_button = QPushButton("Browse Images")
         image_button.setProperty("variant", "secondary")
         image_button.setObjectName("assetBrowseButton")
         image_button.clicked.connect(self._handle_select_image_folder)
-        grid.addWidget(image_button, 4, 2, 1, 1)
+        grid.addWidget(image_button, 2, 2, 1, 1)
 
         self.bulk_rename_btn = QPushButton("Bulk Rename")
         self.bulk_rename_btn.setProperty("variant", "primary")
         self.bulk_rename_btn.clicked.connect(self._handle_bulk_rename)
-        grid.addWidget(self.bulk_rename_btn, 5, 0, 1, 3)
+        grid.addWidget(self.bulk_rename_btn, 3, 0, 1, 3)
 
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
@@ -461,9 +463,123 @@ class MainWindow(QMainWindow):
 
         return tab
 
+    def _build_remove_background_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        info = QLabel(
+            "Convert all JPG/JPEG images in the selected folder to PNG and remove backgrounds."
+        )
+        info.setObjectName("hintLabel")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # Mode selection
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Mode:")
+        mode_layout.addWidget(mode_label)
+
+        self.bg_removal_mode = QComboBox()
+        self.bg_removal_mode.addItem("Auto (Smart detection)", "auto")
+        self.bg_removal_mode.addItem("Fast (White background only)", "fast")
+        self.bg_removal_mode.addItem("AI (Any background, accurate)", "ai")
+        self.bg_removal_mode.setCurrentIndex(0)  # Default to Auto
+        self.bg_removal_mode.setToolTip(
+            "Auto: Automatically detects white backgrounds and uses fast mode, "
+            "otherwise uses AI mode.\n"
+            "Fast: Quick processing for white backgrounds only (~0.05s/image).\n"
+            "AI: High accuracy for any background type (~0.8-1.5s/image)."
+        )
+        mode_layout.addWidget(self.bg_removal_mode)
+        mode_layout.addStretch(1)
+        layout.addLayout(mode_layout)
+
+        remove_button = QPushButton("Remove Background")
+        remove_button.setProperty("variant", "primary")
+        remove_button.clicked.connect(self._handle_remove_background)
+        layout.addWidget(remove_button)
+
+        layout.addStretch(1)
+        return tab
+
+    def _build_rename_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        info = QLabel("Rename files to image_### while keeping their extensions.")
+        info.setObjectName("hintLabel")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        path_row = QHBoxLayout()
+        self.rename_path_edit = QLineEdit()
+        self.rename_path_edit.setPlaceholderText("Choose folder to rename…")
+        self.rename_path_edit.setReadOnly(True)
+        self.rename_path_edit.setObjectName("assetPath")
+        path_row.addWidget(self.rename_path_edit, 1)
+
+        rename_browse_btn = QPushButton("Browse Folder")
+        rename_browse_btn.setProperty("variant", "secondary")
+        rename_browse_btn.clicked.connect(self._handle_select_rename_folder)
+        self.rename_browse_btn = rename_browse_btn
+        path_row.addWidget(rename_browse_btn)
+        layout.addLayout(path_row)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        start_label = QLabel("Start number")
+        start_label.setObjectName("sectionLabel")
+        grid.addWidget(start_label, 0, 0)
+
+        self.rename_start_spin = QSpinBox()
+        self.rename_start_spin.setRange(1, 999_999)
+        self.rename_start_spin.setValue(1)
+        self.rename_start_spin.valueChanged.connect(self._update_rename_preview)
+        grid.addWidget(self.rename_start_spin, 1, 0)
+
+        end_label = QLabel("End number")
+        end_label.setObjectName("sectionLabel")
+        grid.addWidget(end_label, 0, 1)
+
+        self.rename_end_spin = QSpinBox()
+        self.rename_end_spin.setRange(1, 999_999)
+        self.rename_end_spin.setValue(1)
+        self.rename_end_spin.valueChanged.connect(self._update_rename_preview)
+        grid.addWidget(self.rename_end_spin, 1, 1)
+
+        self.rename_until_end = QCheckBox("Đến hết số file trong thư mục")
+        self.rename_until_end.setChecked(True)
+        self.rename_until_end.toggled.connect(self._toggle_rename_end_state)
+        grid.addWidget(self.rename_until_end, 2, 0, 1, 2)
+
+        layout.addLayout(grid)
+
+        self.rename_hint_label = QLabel("Format: image_001, image_002…")
+        self.rename_hint_label.setObjectName("hintLabel")
+        self.rename_hint_label.setWordWrap(True)
+        layout.addWidget(self.rename_hint_label)
+
+        self.rename_run_btn = QPushButton("Rename Files")
+        self.rename_run_btn.setProperty("variant", "primary")
+        self.rename_run_btn.clicked.connect(self._handle_bulk_rename_range)
+        layout.addWidget(self.rename_run_btn)
+
+        layout.addStretch(1)
+
+        self._toggle_rename_end_state(self.rename_until_end.isChecked())
+        self._update_rename_preview()
+        return tab
+
     def _build_project_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("projectPanel")
+        panel.setMinimumWidth(520)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(18, 18, 18, 18)
         panel_layout.setSpacing(16)
@@ -512,20 +628,14 @@ class MainWindow(QMainWindow):
         self.sync_images_button.setProperty("variant", "primary")
         self.sync_images_button.clicked.connect(self._handle_sync_images_clicked)
 
-        self.reload_status_button = QPushButton("Reload Status")
-        self.reload_status_button.setProperty("variant", "secondary")
-        self.reload_status_button.clicked.connect(self._handle_reload_status_clicked)
-
-        self.render_ffmpeg_button = QPushButton("Render via FFmpeg")
-        self.render_ffmpeg_button.setProperty("variant", "primary")
-        self.render_ffmpeg_button.clicked.connect(self._handle_ffmpeg_render_clicked)
-        self.render_ffmpeg_button.setEnabled(False)
+        self.sync_caption_button = QPushButton("Sync Caption")
+        self.sync_caption_button.setProperty("variant", "primary")
+        self.sync_caption_button.clicked.connect(self._handle_sync_captions_clicked)
 
         button_row.addWidget(self.reload_button)
         button_row.addWidget(self.sync_audio_button)
         button_row.addWidget(self.sync_images_button)
-        button_row.addWidget(self.reload_status_button)
-        button_row.addWidget(self.render_ffmpeg_button)
+        button_row.addWidget(self.sync_caption_button)
         panel_layout.addLayout(button_row)
 
         return panel
@@ -781,40 +891,25 @@ class MainWindow(QMainWindow):
                 keys.append(str(key))
         return keys
 
-    def _update_ffmpeg_button_state(self) -> None:
-        if not hasattr(self, "render_ffmpeg_button") or self.render_ffmpeg_button is None:
-            return
-        selected = [p for p in self.projects if p.is_selected]
-        if not selected:
-            self.render_ffmpeg_button.setEnabled(False)
-            return
-        can_render = all(
-            (p.metadata.get("ffmpeg") or {}).get("ready")
-            for p in selected
-        )
-        worker_running = self._worker is not None and self._worker.isRunning()
-        self.render_ffmpeg_button.setEnabled(can_render and not worker_running)
-
     def _set_job_controls_state(self, busy: bool) -> None:
         controls = (
             getattr(self, "reload_button", None),
             getattr(self, "sync_audio_button", None),
             getattr(self, "sync_images_button", None),
+            getattr(self, "sync_caption_button", None),
             getattr(self, "bulk_rename_btn", None),
+            getattr(self, "rename_run_btn", None),
+            getattr(self, "rename_browse_btn", None),
             getattr(self, "insert_animation_button", None),
             getattr(self, "remove_animation_button", None),
             getattr(self, "insert_effect_button", None),
             getattr(self, "remove_effect_button", None),
             getattr(self, "transition_apply_btn", None),
             getattr(self, "transition_clear_btn", None),
-            getattr(self, "reload_status_button", None),
-            getattr(self, "render_ffmpeg_button", None),
         )
         for button in controls:
             if button is not None:
                 button.setEnabled(not busy)
-        if not busy:
-            self._update_ffmpeg_button_state()
 
     def _update_status_label(self, message: str | None = None) -> None:
         if self.status_label is None:
@@ -831,21 +926,43 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             f"Loaded {total} project(s) · Selected {selected} · Completed {completed}"
         )
-        self._update_ffmpeg_button_state()
+
+    def _update_ffmpeg_button_state(self) -> None:
+        """Compatibility shim for legacy FFmpeg controls (currently no-op)."""
+        return
 
     # region project table helpers
+    def _refresh_project_metadata(self, project: ProjectItem) -> None:
+        info = project.refresh_metadata()
+        project.status = ProjectStatus.pending
+        if not info:
+            project.notes = "Metadata unavailable"
+            return
+
+        parts: list[str] = []
+        duration = info.get("duration_s")
+        if duration:
+            parts.append(f"{duration:.2f}s")
+        track_count = info.get("track_count")
+        if track_count:
+            parts.append(f"{track_count} track(s)")
+        video_segments = info.get("video_segments")
+        if video_segments:
+            parts.append(f"{video_segments} video segment(s)")
+
+        project.notes = " · ".join(parts)
+
     def refresh_projects(self) -> None:
         previously_selected = {p.name for p in self.projects if p.is_selected}
         self.projects = discover_projects()
         for project in self.projects:
             project.is_selected = project.name in previously_selected
+            self._refresh_project_metadata(project)
         if not self.projects:
             logger.warning("No CapCut projects found. Check your CapCut library path.")
         self._populate_table()
         if self._status_message_override is None:
             self._update_status_label()
-        else:
-            self._update_ffmpeg_button_state()
 
     def _populate_table(self) -> None:
         if self.project_table is None:
@@ -906,35 +1023,165 @@ class MainWindow(QMainWindow):
 
     # endregion
 
-    def _handle_select_audio_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select Audio Folder", str(self.audio_folder or Path.home()))
-        if folder:
-            self.audio_folder = Path(folder)
-            self.audio_path_edit.setText(folder)
+    def _set_image_folder(self, folder: Path) -> None:
+        self.image_folder = folder
+        if getattr(self, "image_path_edit", None):
+            self.image_path_edit.setText(str(folder))
+        if getattr(self, "rename_path_edit", None):
+            self.rename_path_edit.setText(str(folder))
 
     def _handle_select_image_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select Image Folder", str(self.image_folder or Path.home()))
         if folder:
-            self.image_folder = Path(folder)
-            self.image_path_edit.setText(folder)
+            self._set_image_folder(Path(folder))
+
+    def _handle_select_rename_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder to Rename", str(self.image_folder or Path.home()))
+        if folder:
+            self._set_image_folder(Path(folder))
+
+    def _handle_remove_background(self) -> None:
+        if not self.image_folder:
+            QMessageBox.information(
+                self,
+                "No image folder",
+                "Select an image folder before removing backgrounds.",
+            )
+            return
+
+        # Get selected mode from ComboBox
+        selected_mode = self.bg_removal_mode.currentData()  # Returns "auto", "fast", or "ai"
+
+        progress = QProgressDialog("Preparing images…", None, 0, 0, self)
+        progress.setWindowTitle("Removing Background")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+
+        def update_progress(done: int, total: int, current: Path | None) -> None:
+            if total and progress.maximum() != total:
+                progress.setMaximum(total)
+            progress.setValue(done)
+            if current is not None:
+                progress.setLabelText(f"Processing {current.name} ({done}/{total})")
+            else:
+                label_total = f"{total} image(s)" if total else "images"
+                progress.setLabelText(f"Preparing {label_total}…")
+            QApplication.processEvents()
+
+        try:
+            summary = remove_white_background(
+                self.image_folder,
+                delete_original=True,
+                mode=selected_mode,
+                progress_callback=update_progress,
+            )
+        except BackgroundRemovalError as exc:
+            progress.close()
+            progress = None
+            QMessageBox.warning(self, "Background removal failed", str(exc))
+            return
+        finally:
+            if progress is not None:
+                progress.close()
+
+        message = [
+            f"Processed {summary.processed} image(s).",
+            f"Background removed: {summary.removed_background}",
+            f"Mode used: {summary.mode_used}",
+        ]
+        if summary.kept:
+            message.append(f"Unchanged: {summary.kept}")
+        if summary.converted_to_png:
+            message.append(f"Converted to PNG: {summary.converted_to_png}")
+        if summary.errors:
+            message.append("Errors:")
+            message.extend(summary.errors)
+
+        if summary.errors:
+            QMessageBox.warning(
+                self,
+                "Background removal complete with issues",
+                "\n".join(message),
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Background removal complete",
+                "\n".join(message),
+            )
+
+    def _toggle_rename_end_state(self, checked: bool) -> None:
+        if hasattr(self, "rename_end_spin"):
+            self.rename_end_spin.setEnabled(not checked)
+        self._update_rename_preview()
+
+    def _update_rename_preview(self) -> None:
+        if not hasattr(self, "rename_hint_label"):
+            return
+        start = self.rename_start_spin.value() if hasattr(self, "rename_start_spin") else 1
+        end_value = (
+            None
+            if not hasattr(self, "rename_until_end") or self.rename_until_end.isChecked()
+            else self.rename_end_spin.value()
+        )
+        preview_max = end_value if end_value is not None else start + 1
+        width = max(3, len(str(preview_max)))
+        second = min(start + 1, preview_max)
+        if second == start:
+            text = f"Format: image_{start:0{width}d}"
+        else:
+            text = f"Format: image_{start:0{width}d}, image_{second:0{width}d}…"
+        self.rename_hint_label.setText(text)
 
     def _handle_bulk_rename(self) -> None:
-        summaries = []
+        if not self.image_folder:
+            QMessageBox.information(self, "No folder", "Select an image folder before renaming.")
+            return
         try:
-            if self.audio_folder:
-                summaries.append(bulk_rename(self.audio_folder, "audio"))
-            if self.image_folder:
-                summaries.append(bulk_rename(self.image_folder, "image"))
+            summary = bulk_rename(self.image_folder, "image")
         except BulkRenameError as exc:
             QMessageBox.warning(self, "Bulk rename failed", str(exc))
             return
-        if not summaries:
-            QMessageBox.information(self, "No folders", "Select at least one folder before renaming.")
+        message = (
+            f"{summary.folder}: renamed {summary.renamed}, skipped {summary.skipped}\n"
+            f"Range: {summary.start:0{summary.width}d} \u2192 {summary.end:0{summary.width}d}"
+        )
+        QMessageBox.information(self, "Bulk rename", message)
+
+    def _handle_bulk_rename_range(self) -> None:
+        if not self.image_folder:
+            QMessageBox.information(self, "No folder", "Select a folder before renaming.")
             return
-        message = []
-        for summary in summaries:
-            message.append(f"{summary.folder}: renamed {summary.renamed}, skipped {summary.skipped}")
-        QMessageBox.information(self, 'Bulk rename', '\n'.join(message))
+
+        start = self.rename_start_spin.value()
+        end_value: int | None = None
+        if hasattr(self, "rename_until_end") and not self.rename_until_end.isChecked():
+            end_value = self.rename_end_spin.value()
+            if end_value < start:
+                QMessageBox.warning(self, "Invalid range", "End number must be greater than or equal to start number.")
+                return
+
+        self._set_job_controls_state(True)
+        try:
+            summary = bulk_rename(self.image_folder, "image", start=start, end=end_value)
+        except BulkRenameError as exc:
+            QMessageBox.warning(self, "Bulk rename failed", str(exc))
+            return
+        finally:
+            self._set_job_controls_state(False)
+
+        final_end = summary.end if summary.end is not None else summary.start + summary.total_files - 1
+        message_lines = [
+            f"Folder: {summary.folder}",
+            f"Renamed: {summary.renamed}",
+            f"Skipped (already in place): {summary.skipped}",
+            f"Range used: {summary.start:0{summary.width}d} \u2192 {final_end:0{summary.width}d}",
+        ]
+        QMessageBox.information(self, "Bulk rename", "\n".join(message_lines))
 
     # region actions
     def _handle_animation_insert(self) -> None:
@@ -1105,54 +1352,6 @@ class MainWindow(QMainWindow):
             summary_lines.extend(failed)
         QMessageBox.information(self, "Effects removed", "\n".join(summary_lines))
 
-    def _handle_ffmpeg_render_clicked(self) -> None:
-        selected = [p for p in self.projects if p.is_selected]
-        if not selected:
-            QMessageBox.information(self, "No Project Selected", "Select a project to render via FFmpeg.")
-            return
-        if len(selected) > 1:
-            QMessageBox.information(
-                self,
-                "Multiple Projects",
-                "FFmpeg render currently supports one project at a time.",
-            )
-            return
-
-        project = selected[0]
-        plan = (project.metadata.get("ffmpeg") or {})
-        if not plan.get("ready"):
-            reason = ", ".join(plan.get("issues") or ["Unsupported timeline"])
-            QMessageBox.warning(
-                self,
-                "FFmpeg Render Unavailable",
-                f"Project {project.name} is not FFmpeg-ready.\nReason: {reason}",
-            )
-            return
-
-        default_name = f"{project.name}.mp4"
-        save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export via FFmpeg",
-            str(Path.home() / default_name),
-            "MP4 Video (*.mp4)",
-        )
-        if not save_path:
-            return
-
-        output_path = Path(save_path)
-        try:
-            render_project_with_ffmpeg(project, plan, output_path)
-        except FFmpegRenderError as exc:
-            logger.exception("FFmpeg render failed for %s", project.name)
-            QMessageBox.critical(self, "FFmpeg Render Failed", str(exc))
-            return
-
-        QMessageBox.information(
-            self,
-            "FFmpeg Render Complete",
-            f"Exported project {project.name} to\n{output_path}",
-        )
-
     def _handle_sync_clicked(self) -> None:
         selected = [p for p in self.projects if p.is_selected]
         if not selected:
@@ -1225,6 +1424,42 @@ class MainWindow(QMainWindow):
         self._update_status_label(f"Syncing images… ({len(selected)} project(s))")
         self._worker.start()
 
+    def _handle_sync_captions_clicked(self) -> None:
+        selected = [p for p in self.projects if p.is_selected]
+        if not selected:
+            QMessageBox.information(
+                self,
+                "No Project Selected",
+                "Please tick at least one project before syncing captions.",
+            )
+            return
+
+        if self._worker and self._worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Sync in progress",
+                "Another synchronisation is already running.",
+            )
+            return
+
+        for project in selected:
+            project.status = ProjectStatus.pending
+            project.notes = ""
+        self._refresh_status_cells()
+
+        self._last_job_projects = list(selected)
+        self._worker = SyncWorker(
+            selected,
+            sync_project_captions,
+            _format_caption_summary,
+            (SyncCaptionError,)
+        )
+        self._worker.status_updated.connect(self._refresh_status_cells)
+        self._worker.job_finished.connect(self._on_worker_finished)
+        self._set_job_controls_state(True)
+        self._update_status_label(f"Syncing captions… ({len(selected)} project(s))")
+        self._worker.start()
+
     def _handle_stop_clicked(self) -> None:
         QMessageBox.information(self, "No Sync Running", "There is no active job to stop.")
 
@@ -1240,49 +1475,6 @@ class MainWindow(QMainWindow):
                     keys.append(str(key))
         logger.debug("Selected transition keys: %s", keys)
         return keys
-
-    def _handle_reload_status_clicked(self) -> None:
-        selected = [p for p in self.projects if p.is_selected]
-        if not selected:
-            QMessageBox.information(
-                self,
-                "No Project Selected",
-                "Select at least one project before reloading status.",
-            )
-            return
-
-        summaries: list[str] = []
-        for project in selected:
-            info = project.refresh_metadata()
-            if info:
-                duration = info.get("duration_s")
-                track_count = info.get("track_count", 0)
-                video_segments = info.get("video_segments", 0)
-                parts = []
-                if duration:
-                    parts.append(f"duration {duration:.2f}s")
-                parts.append(f"tracks {track_count}")
-                if video_segments:
-                    parts.append(f"video segments {video_segments}")
-                ffmpeg_plan = info.get("ffmpeg") or {}
-                if ffmpeg_plan.get("ready"):
-                    parts.append("FFmpeg ready")
-                else:
-                    reason = ", ".join(ffmpeg_plan.get("issues") or []) or "FFmpeg unsupported"
-                    parts.append(f"FFmpeg blocked: {reason}")
-                project.notes = "Reloaded: " + ", ".join(parts)
-            else:
-                project.notes = "Reloaded: no metadata found"
-            project.status = ProjectStatus.pending
-            summaries.append(f"{project.name}: {project.notes}")
-
-        self._refresh_status_cells()
-        QMessageBox.information(
-            self,
-            "Project status reloaded",
-            "\n".join(summaries),
-        )
-        self._update_ffmpeg_button_state()
 
     def _on_worker_finished(self) -> None:  # pragma: no cover - GUI callback
         self._status_message_override = None
