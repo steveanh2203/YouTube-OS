@@ -37,3 +37,7 @@ env/
 *.swp
 *.swo
 *~
+
+# Runtime logs & debug
+logs/
+.waylog/

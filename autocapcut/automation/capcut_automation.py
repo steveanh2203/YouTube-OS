@@ -45,31 +45,55 @@ class MacCapCutAutomation(AutomationBackend):
         return atomacos.getAppRefByBundleId(self.bundle_id)
 
     def open_project(self, project: ProjectItem) -> bool:
-        """Focus CapCut and open the requested project from the home screen list."""
+        """Focus CapCut and open the requested project from the home screen list.
 
-        try:
-            self.focus_capcut()
-            element = self._locate_project_element(project.name)
-            if element is None:
-                logger.warning("Could not locate project '%s' in CapCut home", project.name)
-                return False
+        Retries up to 3 times (with a 2-second pause between attempts) to
+        handle the case where the dashboard is still loading when this is called.
+        """
+        max_attempts = 3
+        retry_delay = 2.0
 
-            frame = element.AXFrame
-            center_x = frame.x + frame.width / 2
-            center_y = frame.y + frame.height / 2
-            logger.debug(
-                "Clicking project '%s' at screen position (%.1f, %.1f)",
-                project.name,
-                center_x,
-                center_y,
-            )
-            pyautogui.moveTo(center_x, center_y, duration=0.15)
-            pyautogui.doubleClick()
-            time.sleep(2.0)
-            return True
-        except Exception as exc:  # pragma: no cover - GUI automation
-            logger.exception("Failed to open project %s: %s", project.name, exc)
-            return False
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.focus_capcut()
+                element = self._locate_project_element(project.name)
+                if element is None:
+                    logger.warning(
+                        "Could not locate project '%s' in CapCut home (attempt %d/%d)",
+                        project.name,
+                        attempt,
+                        max_attempts,
+                    )
+                    if attempt < max_attempts:
+                        time.sleep(retry_delay)
+                        continue
+                    return False
+
+                frame = element.AXFrame
+                center_x = frame.x + frame.width / 2
+                center_y = frame.y + frame.height / 2
+                logger.debug(
+                    "Clicking project '%s' at screen position (%.1f, %.1f)",
+                    project.name,
+                    center_x,
+                    center_y,
+                )
+                pyautogui.moveTo(center_x, center_y, duration=0.15)
+                pyautogui.doubleClick()
+                time.sleep(2.0)
+                return True
+            except Exception as exc:  # pragma: no cover - GUI automation
+                logger.exception(
+                    "Failed to open project %s (attempt %d/%d): %s",
+                    project.name,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    time.sleep(retry_delay)
+
+        return False
 
     def _locate_project_element(self, project_name: str):
         """Locate the accessibility element that contains the CapCut project title."""
@@ -557,14 +581,81 @@ class MacCapCutAutomation(AutomationBackend):
             logger.debug("lsof error: %s", exc)
             return []
 
+    def _wait_for_dashboard(self, timeout: float = 30.0) -> bool:
+        """Poll the AX tree until the CapCut home/dashboard screen is visible.
+
+        Returns True as soon as any ``HomePageDraftTitle`` element is found,
+        False if the timeout is reached without detecting the home screen.
+        """
+        logger.info("Waiting for CapCut dashboard to be ready (timeout=%.0fs)…", timeout)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                app = self._get_app()
+                for window in app.AXWindows:
+                    queue = deque([window])
+                    visited: set[int] = set()
+                    while queue:
+                        node = queue.popleft()
+                        ref = getattr(node, "ref", None)
+                        identifier = id(ref) if ref is not None else id(node)
+                        if identifier in visited:
+                            continue
+                        visited.add(identifier)
+                        try:
+                            value = node.AXValue
+                        except Exception:
+                            value = None
+                        if isinstance(value, str) and "HomePageDraftTitle:" in value:
+                            logger.info("  ✅ Dashboard detected — home screen is ready.")
+                            return True
+                        try:
+                            children = node.AXChildren
+                        except Exception:
+                            children = []
+                        for child in children:
+                            queue.append(child)
+            except Exception as exc:
+                logger.debug("_wait_for_dashboard poll error: %s", exc)
+            time.sleep(1.0)
+        logger.warning("  ⚠️ Dashboard not detected within %.0fs.", timeout)
+        return False
+
     def _finish_render(self):
-        """Helper to dismiss dialogs after render."""
+        """Dismiss the export-complete dialog and return to the editor.
+
+        CapCut's export-done dialog ("Open folder" / "OK") does NOT close on
+        Escape — pressing Return activates the default button (OK), which is
+        the correct way to dismiss it.  We also try clicking the OK button via
+        the AX API as a reliable fallback.
+        """
         logger.info("Dismissing completion dialog")
         time.sleep(0.5)
-        pyautogui.press("escape")
+
+        # 1. Try to click "OK" via Accessibility API (most reliable)
+        try:
+            app = self._get_app()
+            ok_keywords = ("OK", "Ok", "Done", "Xong")
+            for window in app.AXWindows:
+                btn = self._find_button(window, ok_keywords)
+                if btn is not None:
+                    frame = btn.AXFrame
+                    cx = frame.x + frame.width / 2
+                    cy = frame.y + frame.height / 2
+                    pyautogui.moveTo(cx, cy, duration=0.1)
+                    pyautogui.click()
+                    logger.info("  Clicked OK button at (%.0f, %.0f)", cx, cy)
+                    time.sleep(0.8)
+                    return
+        except Exception as exc:
+            logger.debug("AX click OK failed: %s", exc)
+
+        # 2. Fallback: press Return (activates the default/highlighted button)
+        pyautogui.press("return")
         time.sleep(0.5)
+        # 3. Last resort: Escape in case dialog is still open
         pyautogui.press("escape")
-        time.sleep(1.0) # Wait a bit longer for dialog to close
+        time.sleep(0.8)
 
     def _get_video_files(self, folder) -> set:
         """Get set of video file paths in folder."""
@@ -587,19 +678,26 @@ class MacCapCutAutomation(AutomationBackend):
 
     def close_project(self) -> bool:
         """Close current project and return to dashboard.
-        
-        Uses Cmd+W to close the current window/project.
+
+        Presses Cmd+W then waits until the CapCut home/dashboard screen is
+        actually visible (up to 30 s) before returning, so the next project
+        open attempt is never made while CapCut is still transitioning.
         """
         try:
             self.focus_capcut()
             logger.info("Closing project (Cmd+W)")
             pyautogui.hotkey("command", "w")
-            time.sleep(1.5)  # Wait for project to close
-            
-            # Press Escape to dismiss any "save" dialogs if they appear
+            time.sleep(1.5)  # Give CapCut a moment to start closing
+
+            # Dismiss any "save changes?" dialog that might appear
             pyautogui.press("escape")
             time.sleep(0.5)
-            
+
+            # Wait until the home dashboard is fully loaded
+            ready = self._wait_for_dashboard(timeout=30.0)
+            if not ready:
+                logger.warning("Dashboard not confirmed after closing project; proceeding anyway.")
+
             logger.info("Project closed, returned to dashboard")
             return True
         except Exception as exc:  # pragma: no cover
@@ -686,7 +784,8 @@ class MacCapCutAutomation(AutomationBackend):
             return False
 
         # Strong indicators of the success screen
-        # "Share to TikTok", "YouTube" are buttons usually present after export.
+        # Covers both the Share screen AND the simpler "Export complete" dialog
+        # that just shows "Open folder" + "OK".
         success_keywords = (
             "Share to TikTok",
             "YouTube",
@@ -697,6 +796,8 @@ class MacCapCutAutomation(AutomationBackend):
             "Exported",
             "Complete",
             "Hoàn thành",
+            "Open folder",   # simple export-done dialog
+            "Mở thư mục",    # Vietnamese variant
         )
 
         for window in app.AXWindows:
