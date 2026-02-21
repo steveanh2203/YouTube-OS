@@ -622,40 +622,14 @@ class MacCapCutAutomation(AutomationBackend):
         return False
 
     def _finish_render(self):
-        """Dismiss the export-complete dialog and return to the editor.
+        """Dismiss the export-complete / Share dialog and return to the editor.
 
-        CapCut's export-done dialog ("Open folder" / "OK") does NOT close on
-        Escape — pressing Return activates the default button (OK), which is
-        the correct way to dismiss it.  We also try clicking the OK button via
-        the AX API as a reliable fallback.
+        fn+Esc is the confirmed shortcut to close CapCut's Share dialog.
         """
-        logger.info("Dismissing completion dialog")
+        logger.info("Dismissing completion dialog (fn+Esc)")
         time.sleep(0.5)
-
-        # 1. Try to click "OK" via Accessibility API (most reliable)
-        try:
-            app = self._get_app()
-            ok_keywords = ("OK", "Ok", "Done", "Xong")
-            for window in app.AXWindows:
-                btn = self._find_button(window, ok_keywords)
-                if btn is not None:
-                    frame = btn.AXFrame
-                    cx = frame.x + frame.width / 2
-                    cy = frame.y + frame.height / 2
-                    pyautogui.moveTo(cx, cy, duration=0.1)
-                    pyautogui.click()
-                    logger.info("  Clicked OK button at (%.0f, %.0f)", cx, cy)
-                    time.sleep(0.8)
-                    return
-        except Exception as exc:
-            logger.debug("AX click OK failed: %s", exc)
-
-        # 2. Fallback: press Return (activates the default/highlighted button)
-        pyautogui.press("return")
-        time.sleep(0.5)
-        # 3. Last resort: Escape in case dialog is still open
-        pyautogui.press("escape")
-        time.sleep(0.8)
+        pyautogui.hotkey("fn", "escape")
+        time.sleep(1.0)
 
     def _get_video_files(self, folder) -> set:
         """Get set of video file paths in folder."""
