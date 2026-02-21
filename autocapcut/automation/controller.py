@@ -48,7 +48,7 @@ class AutomationController:
             if self._abort_if_cancelled(project, progress_callback):
                 break
 
-            if not self.backend.start_render():
+            if not self.backend.start_render(project.name):
                 self._fail(project, "Render start failed", progress_callback)
                 continue
 
@@ -60,6 +60,13 @@ class AutomationController:
             ):
                 self._fail(project, "Render timeout", progress_callback)
                 continue
+
+            # Close project and return to dashboard for next project
+            if self._abort_if_cancelled(project, progress_callback):
+                break
+            
+            if hasattr(self.backend, 'close_project'):
+                self.backend.close_project()
 
             project.status = ProjectStatus.done
             project.notes = ""

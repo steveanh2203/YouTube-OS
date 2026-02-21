@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -25,19 +26,23 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QStackedWidget,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from autocapcut.models import ProjectItem, ProjectSource, ProjectStatus
 from autocapcut.services.project_loader import discover_projects
+from autocapcut.utils.permissions import check_screen_recording_permission, open_screen_recording_settings
 from autocapcut.services.sync_audio import SyncAudioError, SyncSummary, sync_project_audio
 from autocapcut.services.sync_images import SyncImageError, ImageSyncSummary, sync_project_images
 from autocapcut.services.sync_captions import (
@@ -63,6 +68,7 @@ from autocapcut.services.animation_presets import (
 )
 from autocapcut.services.bulk_rename import BulkRenameError, bulk_rename
 from autocapcut.services.background_removal import BackgroundRemovalError, remove_white_background
+from autocapcut.services.srt_generator import SRTGeneratorError, generate_merged_srt
 
 
 class SyncWorker(QThread):
@@ -114,6 +120,119 @@ class SyncWorker(QThread):
         self.job_finished.emit()
 
 
+class RenderWorker(QThread):
+    """Background worker for Auto Render operations."""
+
+    status_updated = Signal()
+    job_finished = Signal(int, int)  # completed, total
+    progress_updated = Signal(int, int)
+    log_message = Signal(str)
+
+    def __init__(self, projects: List[ProjectItem]) -> None:
+        super().__init__()
+        self.projects = projects
+        self._cancelled = False
+        self._completed = 0
+        self._failed = 0
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def _emit_log(self, message: str) -> None:
+        logger.info(message)
+        self.log_message.emit(message)
+
+    def run(self) -> None:
+        from autocapcut.automation.capcut_automation import MacCapCutAutomation
+        from autocapcut.config import APP_CONFIG
+
+        self._emit_log("========== RENDER WORKER STARTED ==========")
+        self._emit_log(f"Total projects to render: {len(self.projects)}")
+        automation = MacCapCutAutomation()
+        self.progress_updated.emit(0, len(self.projects))
+
+        for idx, project in enumerate(self.projects, 1):
+            self._emit_log("")
+            self._emit_log(f"------ PROJECT {idx}/{len(self.projects)}: {project.name} ------")
+            
+            if self._cancelled:
+                self._emit_log(f"[CANCELLED] Render cancelled before project {project.name}")
+                project.status = ProjectStatus.failed
+                project.notes = "Cancelled by user"
+                self.status_updated.emit()
+                break
+
+            project.status = ProjectStatus.processing
+            project.notes = "Opening project..."
+            self.status_updated.emit()
+
+            try:
+                # Step 1: Open project
+                self._emit_log("[STEP 1/4] Opening project in CapCut...")
+                if not automation.open_project(project):
+                    raise RuntimeError("Could not open project")
+                self._emit_log("[STEP 1/4] ✓ Project opened")
+
+                project.notes = "Exporting..."
+                self.status_updated.emit()
+
+                # Step 2: Start render (dismiss dialogs + Cmd+M + Enter)
+                self._emit_log("[STEP 2/4] Starting export (Cmd+M + Enter)...")
+                if not automation.start_render(project.name):
+                    raise RuntimeError("Could not start render")
+                self._emit_log("[STEP 2/4] ✓ Export started")
+
+                project.notes = "Rendering..."
+                self.status_updated.emit()
+
+                # Step 3: Wait for render to complete
+                self._emit_log("[STEP 3/4] Waiting for export to complete...")
+                export_folder = getattr(automation, "last_export_folder", None)
+                export_name = getattr(automation, "last_export_name", None)
+                if export_folder or export_name:
+                    self._emit_log(f"  Monitoring export: folder={export_folder} name={export_name}")
+                else:
+                    self._emit_log("  Monitoring export via process activity (fallback)")
+                if not automation.wait_for_render_complete(
+                    APP_CONFIG.render_timeout_sec,
+                    export_folder,
+                    export_name,
+                ):
+                    raise RuntimeError("Render timeout")
+                self._emit_log("[STEP 3/4] ✓ Export completed")
+
+                # Step 4: Close project
+                self._emit_log("[STEP 4/4] Closing project...")
+                automation.close_project()
+                self._emit_log("[STEP 4/4] ✓ Project closed, back to dashboard")
+
+                project.status = ProjectStatus.done
+                project.notes = "Exported successfully"
+                self._completed += 1
+                self._emit_log(f"[SUCCESS] Project '{project.name}' rendered successfully!")
+
+            except Exception as exc:
+                logger.exception("[ERROR] Render failed for %s: %s", project.name, exc)
+                self.log_message.emit(f"[ERROR] Render failed for {project.name}: {exc}")
+                project.status = ProjectStatus.failed
+                project.notes = str(exc)
+                self._failed += 1
+                # Try to close project even on failure
+                try:
+                    self._emit_log("[CLEANUP] Attempting to close project...")
+                    automation.close_project()
+                except Exception:
+                    pass
+
+            self.status_updated.emit()
+            self.progress_updated.emit(self._completed + self._failed, len(self.projects))
+
+        self._emit_log("")
+        self._emit_log("========== RENDER WORKER FINISHED ==========")
+        self._emit_log(f"Completed: {self._completed}, Failed: {self._failed}")
+        self.job_finished.emit(self._completed, len(self.projects))
+
+
 
 def _format_summary(summary: SyncSummary) -> str:
     seconds = summary.audio_duration / 1_000_000
@@ -162,22 +281,47 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("AutoCapcut – Sync Audio")
-        self.resize(960, 620)
+        self.setWindowTitle("AutoCapCut")
+        self.resize(1280, 740)
 
         self.projects: list[ProjectItem] = []
         self.project_table: QTableWidget | None = None
         self._worker: SyncWorker | None = None
+        self._render_worker: RenderWorker | None = None
         self._last_job_projects: list[ProjectItem] = []
         self.image_folder: Path | None = None
         self.status_label: QLabel | None = None
         self._status_message_override: str | None = None
+        self._render_log_dialog: QDialog | None = None
+        self._render_log_text: QTextEdit | None = None
+        self._render_progress_bar: QProgressBar | None = None
+        self._render_progress_label: QLabel | None = None
+        self.srt_input_path: Path | None = None
+        self.srt_content_file_path: Path | None = None
+        self._generated_srt: str | None = None
+        self._nav_buttons: dict[str, QPushButton] = {}
+        self._nav_group: QButtonGroup | None = None
+        self._tool_stack: QStackedWidget | None = None
+        self._tool_title_label: QLabel | None = None
 
         self._build_ui()
         self.refresh_projects()
 
     # region Qt overrides
     def closeEvent(self, event: QCloseEvent) -> None:  # pragma: no cover - GUI callback
+        if self._render_worker and self._render_worker.isRunning():
+            choice = QMessageBox.question(
+                self,
+                "Render in progress",
+                "Auto Render is still running. Stop and exit?",
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self._render_worker.cancel()
+                self._render_worker.wait(2000)
+                super().closeEvent(event)
+            else:
+                event.ignore()
+            return
         if self._worker and self._worker.isRunning():
             choice = QMessageBox.question(
                 self,
@@ -199,10 +343,11 @@ class MainWindow(QMainWindow):
         container = QWidget(self)
         container.setObjectName("rootWidget")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(24)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        layout.addWidget(self._build_control_panel(), 1)
+        layout.addWidget(self._build_sidebar())
+        layout.addWidget(self._build_tool_panel(), 1)
         layout.addWidget(self._build_project_panel(), 2)
 
         container.setLayout(layout)
@@ -210,40 +355,151 @@ class MainWindow(QMainWindow):
         self._apply_styles()
         self._set_job_controls_state(False)
 
-    def _build_control_panel(self) -> QWidget:
+    def _build_sidebar(self) -> QFrame:
+        """Build the dark left navigation sidebar."""
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(184)
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ── App Header ──────────────────────────────────────────────────────
+        header = QWidget()
+        header.setObjectName("sidebarHeader")
+        hdr_layout = QVBoxLayout(header)
+        hdr_layout.setContentsMargins(20, 24, 20, 18)
+        hdr_layout.setSpacing(3)
+        app_name = QLabel("AutoCapCut")
+        app_name.setObjectName("appName")
+        app_tagline = QLabel("CapCut Automation")
+        app_tagline.setObjectName("appTagline")
+        hdr_layout.addWidget(app_name)
+        hdr_layout.addWidget(app_tagline)
+        layout.addWidget(header)
+
+        # ── Navigation ───────────────────────────────────────────────────────
+        self._nav_group = QButtonGroup(self)
+        self._nav_group.setExclusive(True)
+
+        nav_area = QWidget()
+        nav_area.setObjectName("navArea")
+        nav_layout = QVBoxLayout(nav_area)
+        nav_layout.setContentsMargins(12, 4, 12, 4)
+        nav_layout.setSpacing(2)
+
+        # Section: Project Tools
+        sec1 = QLabel("PROJECT TOOLS")
+        sec1.setObjectName("navSection")
+        nav_layout.addSpacing(14)
+        nav_layout.addWidget(sec1)
+        nav_layout.addSpacing(4)
+
+        for key, label in (
+            ("animation",  "🎞  Animation"),
+            ("effect",     "✨  Effect"),
+            ("transition", "⇌  Transition"),
+        ):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setObjectName("navBtn")
+            btn.clicked.connect(lambda _checked, k=key: self._switch_tool(k))
+            self._nav_buttons[key] = btn
+            self._nav_group.addButton(btn)
+            nav_layout.addWidget(btn)
+
+        # Section: File Tools
+        sec2 = QLabel("FILE TOOLS")
+        sec2.setObjectName("navSection")
+        nav_layout.addSpacing(14)
+        nav_layout.addWidget(sec2)
+        nav_layout.addSpacing(4)
+
+        for key, label in (
+            ("remove_bg",  "🖼  Remove BG"),
+            ("rename",     "✏  Rename"),
+            ("srt",        "📄  Tạo SRT"),
+        ):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setObjectName("navBtn")
+            btn.clicked.connect(lambda _checked, k=key: self._switch_tool(k))
+            self._nav_buttons[key] = btn
+            self._nav_group.addButton(btn)
+            nav_layout.addWidget(btn)
+
+        layout.addWidget(nav_area)
+        layout.addStretch(1)
+
+        # Select first nav item by default
+        if "animation" in self._nav_buttons:
+            self._nav_buttons["animation"].setChecked(True)
+
+        return sidebar
+
+    def _build_tool_panel(self) -> QFrame:
+        """Build the centre tool panel (replaces old QTabWidget)."""
         panel = QFrame()
-        panel.setObjectName("controlPanel")
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(20, 20, 20, 20)
-        panel_layout.setSpacing(18)
+        panel.setObjectName("toolPanel")
+        panel.setMinimumWidth(320)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        title = QLabel("Control Panel")
-        title.setObjectName("controlTitle")
-        panel_layout.addWidget(title)
+        # ── Panel Header ─────────────────────────────────────────────────────
+        tool_header = QWidget()
+        tool_header.setObjectName("toolHeader")
+        th_layout = QHBoxLayout(tool_header)
+        th_layout.setContentsMargins(20, 18, 20, 14)
+        self._tool_title_label = QLabel("Animation")
+        self._tool_title_label.setObjectName("toolTitle")
+        th_layout.addWidget(self._tool_title_label)
+        th_layout.addStretch(1)
+        layout.addWidget(tool_header)
 
-        self.control_tabs = QTabWidget()
-        self.control_tabs.setObjectName("controlTabs")
-        self.control_tabs.setContentsMargins(0, 0, 0, 0)
-        self.control_tabs.setElideMode(Qt.TextElideMode.ElideNone)
-        self.control_tabs.tabBar().setObjectName("controlTabBar")
-        self.control_tabs.addTab(self._build_animation_tab(), "Animation")
-        self.control_tabs.addTab(self._build_effect_tab(), "Effect")
-        self.control_tabs.addTab(self._build_transition_tab(), "Transitions")
-        self.control_tabs.addTab(self._build_remove_background_tab(), "Remove Background")
-        self.control_tabs.addTab(self._build_rename_tab(), "Rename")
+        # ── Stacked Tool Pages ───────────────────────────────────────────────
+        self._tool_stack = QStackedWidget()
+        self._tool_stack.setObjectName("toolStack")
+        # Index must match _switch_tool's index_map
+        self._tool_stack.addWidget(self._build_animation_tab())          # 0
+        self._tool_stack.addWidget(self._build_effect_tab())              # 1
+        self._tool_stack.addWidget(self._build_transition_tab())          # 2
+        self._tool_stack.addWidget(self._build_remove_background_tab())   # 3
+        self._tool_stack.addWidget(self._build_rename_tab())              # 4
+        self._tool_stack.addWidget(self._build_srt_generator_tab())       # 5
+        layout.addWidget(self._tool_stack, 1)
 
-        tab_row = QWidget()
-        tab_row_layout = QHBoxLayout(tab_row)
-        tab_row_layout.setContentsMargins(0, 0, 0, 0)
-        tab_row_layout.setSpacing(16)
-        tab_row_layout.addStretch(1)
-        tab_row_layout.addWidget(self.control_tabs)
-        tab_row_layout.addStretch(1)
-        panel_layout.addWidget(tab_row)
-
-        panel_layout.addWidget(self._build_asset_panel())
+        # ── Asset Panel (shared workspace folder) ────────────────────────────
+        sep = QFrame()
+        sep.setObjectName("assetSep")
+        sep.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(sep)
+        layout.addWidget(self._build_asset_panel())
 
         return panel
+
+    def _switch_tool(self, key: str) -> None:
+        """Switch the visible tool panel page and update the header title."""
+        index_map = {
+            "animation": 0,
+            "effect":    1,
+            "transition": 2,
+            "remove_bg": 3,
+            "rename":    4,
+            "srt":       5,
+        }
+        titles = {
+            "animation":  "Animation",
+            "effect":     "Effect",
+            "transition": "Transition",
+            "remove_bg":  "Remove Background",
+            "rename":     "Rename Files",
+            "srt":        "Tạo SRT",
+        }
+        if self._tool_stack is not None:
+            self._tool_stack.setCurrentIndex(index_map.get(key, 0))
+        if self._tool_title_label is not None:
+            self._tool_title_label.setText(titles.get(key, ""))
 
     def _build_asset_panel(self) -> QWidget:
         frame = QFrame()
@@ -576,15 +832,110 @@ class MainWindow(QMainWindow):
         self._update_rename_preview()
         return tab
 
+    def _build_srt_generator_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # ── SRT Input ──────────────────────────────────────────────
+        srt_label = QLabel("File SRT từ CapCut")
+        srt_label.setObjectName("sectionLabel")
+        layout.addWidget(srt_label)
+
+        srt_row = QHBoxLayout()
+        self.srt_input_path_edit = QLineEdit()
+        self.srt_input_path_edit.setPlaceholderText("Chọn file .srt…")
+        self.srt_input_path_edit.setReadOnly(True)
+        self.srt_input_path_edit.setObjectName("assetPath")
+        srt_row.addWidget(self.srt_input_path_edit, 1)
+
+        srt_browse_btn = QPushButton("Browse")
+        srt_browse_btn.setProperty("variant", "secondary")
+        srt_browse_btn.clicked.connect(self._handle_srt_input_browse)
+        srt_row.addWidget(srt_browse_btn)
+        layout.addLayout(srt_row)
+
+        # ── Content Input ──────────────────────────────────────────
+        content_label = QLabel("Content gốc")
+        content_label.setObjectName("sectionLabel")
+        layout.addWidget(content_label)
+
+        # Mode toggle: File vs Paste
+        mode_row = QHBoxLayout()
+        self.srt_content_file_radio = QRadioButton("Upload file")
+        self.srt_content_paste_radio = QRadioButton("Paste text")
+        self.srt_content_paste_radio.setChecked(True)
+        mode_row.addWidget(self.srt_content_file_radio)
+        mode_row.addWidget(self.srt_content_paste_radio)
+        mode_row.addStretch(1)
+        layout.addLayout(mode_row)
+
+        # Widget: upload file
+        self.srt_content_file_widget = QWidget()
+        file_row = QHBoxLayout(self.srt_content_file_widget)
+        file_row.setContentsMargins(0, 0, 0, 0)
+        self.srt_content_path_edit = QLineEdit()
+        self.srt_content_path_edit.setPlaceholderText("Chọn file content (.txt, .rtf…)")
+        self.srt_content_path_edit.setReadOnly(True)
+        self.srt_content_path_edit.setObjectName("assetPath")
+        file_row.addWidget(self.srt_content_path_edit, 1)
+        content_browse_btn = QPushButton("Browse")
+        content_browse_btn.setProperty("variant", "secondary")
+        content_browse_btn.clicked.connect(self._handle_content_file_browse)
+        file_row.addWidget(content_browse_btn)
+
+        # Widget: paste text
+        self.srt_content_paste_widget = QWidget()
+        paste_layout = QVBoxLayout(self.srt_content_paste_widget)
+        paste_layout.setContentsMargins(0, 0, 0, 0)
+        self.srt_content_text = QTextEdit()
+        self.srt_content_text.setPlaceholderText(
+            "Paste nội dung vào đây (mỗi dòng = 1 câu content)\n"
+            "Ví dụ:\n"
+            "1. Have you noticed your hands tingling…\n"
+            "2. or your legs feeling weaker…"
+        )
+        self.srt_content_text.setObjectName("contentPasteArea")
+        paste_layout.addWidget(self.srt_content_text)
+
+        layout.addWidget(self.srt_content_file_widget)
+        layout.addWidget(self.srt_content_paste_widget, 1)
+
+        # Connect radios → toggle visibility
+        self.srt_content_file_radio.toggled.connect(self._toggle_srt_content_mode)
+        self.srt_content_paste_radio.toggled.connect(self._toggle_srt_content_mode)
+        self._toggle_srt_content_mode()
+
+        # ── Generate button ────────────────────────────────────────
+        self.srt_generate_btn = QPushButton("Tạo file SRT")
+        self.srt_generate_btn.setProperty("variant", "success")
+        self.srt_generate_btn.clicked.connect(self._handle_srt_generate)
+        layout.addWidget(self.srt_generate_btn)
+
+        # ── Result label + Save button ─────────────────────────────
+        self.srt_result_label = QLabel("")
+        self.srt_result_label.setObjectName("hintLabel")
+        self.srt_result_label.setWordWrap(True)
+        layout.addWidget(self.srt_result_label)
+
+        self.srt_save_btn = QPushButton("Lưu file SRT output")
+        self.srt_save_btn.setProperty("variant", "primary")
+        self.srt_save_btn.setEnabled(False)
+        self.srt_save_btn.clicked.connect(self._handle_srt_save)
+        layout.addWidget(self.srt_save_btn)
+
+        return tab
+
     def _build_project_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("projectPanel")
-        panel.setMinimumWidth(520)
+        panel.setMinimumWidth(580)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(18, 18, 18, 18)
+        panel_layout.setContentsMargins(24, 24, 24, 20)
         panel_layout.setSpacing(16)
 
-        title = QLabel("Project Management")
+        title = QLabel("Projects")
         title.setObjectName("projectTitle")
         panel_layout.addWidget(title)
 
@@ -632,10 +983,15 @@ class MainWindow(QMainWindow):
         self.sync_caption_button.setProperty("variant", "primary")
         self.sync_caption_button.clicked.connect(self._handle_sync_captions_clicked)
 
+        self.auto_render_button = QPushButton("Auto Render")
+        self.auto_render_button.setProperty("variant", "success")
+        self.auto_render_button.clicked.connect(self._handle_auto_render_clicked)
+
         button_row.addWidget(self.reload_button)
         button_row.addWidget(self.sync_audio_button)
         button_row.addWidget(self.sync_images_button)
         button_row.addWidget(self.sync_caption_button)
+        button_row.addWidget(self.auto_render_button)
         panel_layout.addLayout(button_row)
 
         return panel
@@ -643,53 +999,101 @@ class MainWindow(QMainWindow):
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
+            /* ── Root ────────────────────────────────────────────────────────── */
             #rootWidget {
-                background-color: #f3f4f6;
+                background: #e8eaf0;
             }
-            #controlPanel,
-            #projectPanel {
-                background-color: #ffffff;
-                border-radius: 16px;
-                border: 1px solid #e5e7eb;
+
+            /* ── Sidebar ─────────────────────────────────────────────────────── */
+            #sidebar {
+                background: #1e293b;
             }
-            #controlTitle,
-            #projectTitle {
-                font-size: 18px;
-                font-weight: 600;
+            #sidebarHeader {
+                background: #0f172a;
+            }
+            #appName {
+                font-size: 16px;
+                font-weight: 700;
+                color: #f1f5f9;
+                letter-spacing: -0.2px;
+            }
+            #appTagline {
+                font-size: 10px;
+                color: #475569;
+            }
+            #navArea {
+                background: transparent;
+            }
+            QLabel#navSection {
+                font-size: 9px;
+                font-weight: 700;
+                color: #475569;
+                letter-spacing: 0.12em;
+                padding-left: 4px;
+            }
+            QPushButton#navBtn {
+                background: transparent;
+                color: #94a3b8;
+                border: none;
+                border-radius: 8px;
+                padding: 9px 12px;
+                text-align: left;
+                font-size: 13px;
+                font-weight: 500;
+                min-height: 36px;
+            }
+            QPushButton#navBtn:hover:!checked {
+                background: rgba(255, 255, 255, 0.06);
+                color: #e2e8f0;
+            }
+            QPushButton#navBtn:checked {
+                background: #6366f1;
+                color: #ffffff;
+            }
+
+            /* ── Tool Panel ──────────────────────────────────────────────────── */
+            #toolPanel {
+                background: #ffffff;
+                border-right: 1px solid #e5e7eb;
+            }
+            #toolHeader {
+                background: #ffffff;
+                border-bottom: 1px solid #f1f5f9;
+            }
+            #toolTitle {
+                font-size: 20px;
+                font-weight: 700;
                 color: #0f172a;
             }
-            QTabWidget#controlTabs::pane {
+            #toolStack {
+                background: #ffffff;
+            }
+            QFrame#assetSep {
                 border: none;
+                border-top: 1px solid #e5e7eb;
+                max-height: 1px;
+                min-height: 1px;
             }
-            QTabBar#controlTabBar {
-                qproperty-drawBase: 0;
-                padding: 2px 0;
+            #assetPanel {
+                background: #f8fafc;
             }
-            QTabBar#controlTabBar::tab {
-                background: #e5e7eb;
-                border: none;
-                border-radius: 12px;
-                padding: 4px 14px;
-                margin-right: 6px;
-                min-width: 88px;
-                min-height: 34px;
-                color: #1f2937;
-                font-weight: 600;
+
+            /* ── Project Panel ───────────────────────────────────────────────── */
+            #projectPanel {
+                background: #ffffff;
             }
-            QTabBar#controlTabBar::tab:selected {
-                background: #6366f1;
-                color: white;
+            #projectTitle {
+                font-size: 20px;
+                font-weight: 700;
+                color: #0f172a;
             }
-            QTabBar#controlTabBar::tab:hover:!selected {
-                background: #dbe1fe;
-            }
-            QTabBar#controlTabBar::tab:last {
-                margin-right: 0;
-            }
+
+            /* ── Buttons ─────────────────────────────────────────────────────── */
             QPushButton {
                 min-height: 32px;
-                padding: 4px 14px;
-                border-radius: 10px;
+                padding: 4px 12px;
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 500;
             }
             QPushButton[variant="primary"] {
@@ -724,10 +1128,10 @@ class MainWindow(QMainWindow):
             QPushButton[variant="pill"] {
                 background: #e5e7eb;
                 color: #1f2937;
-                border-radius: 12px;
+                border-radius: 10px;
                 border: none;
                 padding: 4px 12px;
-                min-width: 110px;
+                min-width: 80px;
             }
             QPushButton[variant="pill"]:checked {
                 background: #6366f1;
@@ -745,11 +1149,14 @@ class MainWindow(QMainWindow):
                 background: #fca5a5;
                 color: #fee2e2;
             }
+
+            /* ── Inputs ──────────────────────────────────────────────────────── */
             QLineEdit#searchField {
                 padding: 8px 12px;
                 border: 1px solid #d1d5db;
                 border-radius: 8px;
                 background: #ffffff;
+                font-size: 13px;
             }
             QLineEdit#searchField:focus {
                 border-color: #6366f1;
@@ -759,60 +1166,95 @@ class MainWindow(QMainWindow):
                 border: 1px solid #d1d5db;
                 border-radius: 8px;
                 background: #f9fafb;
+                font-size: 13px;
             }
             QLineEdit#assetPath:focus {
                 border-color: #6366f1;
                 background: #ffffff;
             }
-            QPushButton#assetBrowseButton {
-                min-width: 128px;
-            }
-            #durationFrame {
-                background: #f8fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-            }
-            #projectTable {
-                border: 1px solid #e5e7eb;
-                border-radius: 12px;
-                background: #ffffff;
-            }
-            #projectTable::item {
-                padding: 6px;
-            }
-            QHeaderView::section {
-                background: #f3f4f6;
-                color: #374151;
-                font-weight: 600;
-                border: none;
-                border-right: 1px solid #e5e7eb;
-                padding: 8px;
-            }
-            QHeaderView::section:last {
-                border-right: none;
-            }
-            #statusLabel {
-                font-size: 12px;
-                color: #4b5563;
-                padding-left: 4px;
-            }
+
+            /* ── Labels ──────────────────────────────────────────────────────── */
             QLabel#sectionLabel {
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 600;
-                text-transform: uppercase;
                 color: #64748b;
-                letter-spacing: 0.08em;
+                letter-spacing: 0.06em;
             }
             QLabel#assetCaption {
                 font-size: 11px;
                 font-weight: 600;
                 color: #475569;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
+                letter-spacing: 0.04em;
             }
             QLabel#hintLabel {
                 font-size: 12px;
                 color: #6b7280;
+            }
+            #statusLabel {
+                font-size: 12px;
+                color: #4b5563;
+                padding-left: 2px;
+            }
+
+            /* ── Duration Frame ──────────────────────────────────────────────── */
+            #durationFrame {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+            }
+
+            /* ── Preset Lists ────────────────────────────────────────────────── */
+            QListWidget#presetList {
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                background: #ffffff;
+                outline: none;
+                font-size: 13px;
+            }
+            QListWidget#presetList::item {
+                padding: 6px 10px;
+                border-radius: 4px;
+            }
+            QListWidget#presetList::item:selected {
+                background: #e0e7ff;
+                color: #3730a3;
+            }
+            QListWidget#presetList::item:hover:!selected {
+                background: #f5f3ff;
+            }
+
+            /* ── Project Table ───────────────────────────────────────────────── */
+            #projectTable {
+                border: 1px solid #e5e7eb;
+                border-radius: 10px;
+                background: #ffffff;
+                gridline-color: #f1f5f9;
+            }
+            #projectTable::item {
+                padding: 6px;
+                font-size: 13px;
+            }
+            QTableWidget QTableCornerButton::section {
+                background: #f8fafc;
+                border: none;
+            }
+            QHeaderView::section {
+                background: #f8fafc;
+                color: #374151;
+                font-weight: 600;
+                font-size: 12px;
+                border: none;
+                border-right: 1px solid #e5e7eb;
+                border-bottom: 1px solid #e5e7eb;
+                padding: 8px;
+            }
+            QHeaderView::section:last {
+                border-right: none;
+            }
+
+            /* ── Misc ────────────────────────────────────────────────────────── */
+            QPushButton#assetBrowseButton {
+                min-width: 116px;
             }
             QMessageBox {
                 background: #ffffff;
@@ -906,6 +1348,7 @@ class MainWindow(QMainWindow):
             getattr(self, "remove_effect_button", None),
             getattr(self, "transition_apply_btn", None),
             getattr(self, "transition_clear_btn", None),
+            getattr(self, "srt_generate_btn", None),
         )
         for button in controls:
             if button is not None:
@@ -1040,6 +1483,90 @@ class MainWindow(QMainWindow):
         if folder:
             self._set_image_folder(Path(folder))
 
+    # ── SRT Generator handlers ──────────────────────────────────────────────
+
+    def _toggle_srt_content_mode(self) -> None:
+        paste_mode = getattr(self, "srt_content_paste_radio", None) and self.srt_content_paste_radio.isChecked()
+        if hasattr(self, "srt_content_file_widget"):
+            self.srt_content_file_widget.setVisible(not paste_mode)
+        if hasattr(self, "srt_content_paste_widget"):
+            self.srt_content_paste_widget.setVisible(bool(paste_mode))
+
+    def _handle_srt_input_browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file SRT từ CapCut", str(Path.home()), "SRT files (*.srt);;All files (*)"
+        )
+        if path:
+            self.srt_input_path = Path(path)
+            if hasattr(self, "srt_input_path_edit"):
+                self.srt_input_path_edit.setText(path)
+
+    def _handle_content_file_browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file content", str(Path.home()),
+            "Text files (*.txt *.rtf *.md);;All files (*)"
+        )
+        if path:
+            self.srt_content_file_path = Path(path)
+            if hasattr(self, "srt_content_path_edit"):
+                self.srt_content_path_edit.setText(path)
+
+    def _handle_srt_generate(self) -> None:
+        # Validate SRT input
+        if not self.srt_input_path:
+            QMessageBox.information(self, "Thiếu input", "Vui lòng chọn file .srt từ CapCut.")
+            return
+
+        # Get content text
+        paste_mode = hasattr(self, "srt_content_paste_radio") and self.srt_content_paste_radio.isChecked()
+        if paste_mode:
+            content_text = self.srt_content_text.toPlainText().strip() if hasattr(self, "srt_content_text") else ""
+            if not content_text:
+                QMessageBox.information(self, "Thiếu content", "Vui lòng paste nội dung vào ô text.")
+                return
+        else:
+            if not self.srt_content_file_path:
+                QMessageBox.information(self, "Thiếu file", "Vui lòng chọn file content.")
+                return
+            try:
+                from autocapcut.services.srt_generator import _read_file_text
+                content_text = _read_file_text(self.srt_content_file_path)
+            except OSError as exc:
+                QMessageBox.warning(self, "Lỗi đọc file", str(exc))
+                return
+
+        # Generate
+        try:
+            self._generated_srt = generate_merged_srt(self.srt_input_path, content_text)
+            entry_count = self._generated_srt.count("\n\n") + 1
+            if hasattr(self, "srt_result_label"):
+                self.srt_result_label.setText(f"✅ Tạo thành công {entry_count} entries!")
+            if hasattr(self, "srt_save_btn"):
+                self.srt_save_btn.setEnabled(True)
+        except SRTGeneratorError as exc:
+            self._generated_srt = None
+            if hasattr(self, "srt_result_label"):
+                self.srt_result_label.setText(f"❌ Lỗi: {exc}")
+            if hasattr(self, "srt_save_btn"):
+                self.srt_save_btn.setEnabled(False)
+            QMessageBox.warning(self, "Lỗi tạo SRT", str(exc))
+
+    def _handle_srt_save(self) -> None:
+        if not self._generated_srt:
+            return
+        default_name = "output.srt"
+        if self.srt_input_path:
+            default_name = self.srt_input_path.stem + "_merged.srt"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Lưu file SRT", str(Path.home() / default_name), "SRT files (*.srt)"
+        )
+        if path:
+            try:
+                Path(path).write_text(self._generated_srt, encoding="utf-8")
+                QMessageBox.information(self, "Lưu thành công", f"Đã lưu:\n{path}")
+            except OSError as exc:
+                QMessageBox.warning(self, "Lỗi lưu file", str(exc))
+
     def _handle_remove_background(self) -> None:
         if not self.image_folder:
             QMessageBox.information(
@@ -1151,6 +1678,50 @@ class MainWindow(QMainWindow):
             f"Range: {summary.start:0{summary.width}d} \u2192 {summary.end:0{summary.width}d}"
         )
         QMessageBox.information(self, "Bulk rename", message)
+
+    def on_auto_render(self) -> None:
+        """Handle auto-render button click."""
+        if not self.image_folder: # Assuming image_folder is used as project_folder_path
+            QMessageBox.warning(self, "Error", "Please select a project folder first.")
+            return
+
+        # [NEW] Check for Screen Recording Permission
+        if not check_screen_recording_permission():
+            response = QMessageBox.warning(
+                self,
+                "Permission Required",
+                "Auto Render needs 'Screen Recording' permission to detect when CapCut finishes exporting.\n\n"
+                "Please enable it for your Terminal/IDE in System Settings, then restart the app.",
+                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel,
+            )
+            
+            # Change "Open" button text to "Open Settings" if possible, 
+            # but StandardButton usually has fixed text.
+            # We treat "Open" (first button) as confirm.
+            
+            if response == QMessageBox.StandardButton.Open:
+                open_screen_recording_settings()
+            
+            return
+
+        # projects = self.project_table.get_projects() # This line assumes self.project_table is a ProjectTable instance, but it's QTableWidget
+        # For now, we'll use the existing self.projects list and filter selected ones.
+        projects = [p for p in self.projects if p.is_selected]
+        if not projects:
+            QMessageBox.information(self, "No Project Selected", "Select at least one project to render.")
+            return
+
+        self._set_job_controls_state(True)
+        self._update_status_label("Starting auto render…")
+
+        self._render_worker = RenderWorker(projects)
+        self._render_worker.status_updated.connect(self._refresh_status_cells)
+        self._render_worker.job_finished.connect(self._handle_render_finished)
+        self._render_worker.progress_updated.connect(self._update_render_progress)
+        self._render_worker.log_message.connect(self._append_render_log)
+        self._render_worker.start()
+
+        self._show_render_log_dialog()
 
     def _handle_bulk_rename_range(self) -> None:
         if not self.image_folder:
@@ -1460,8 +2031,108 @@ class MainWindow(QMainWindow):
         self._update_status_label(f"Syncing captions… ({len(selected)} project(s))")
         self._worker.start()
 
+    def _handle_auto_render_clicked(self) -> None:
+        """Handle Auto Render button click."""
+        selected = [p for p in self.projects if p.is_selected]
+        if not selected:
+            QMessageBox.information(
+                self,
+                "No Project Selected",
+                "Please tick at least one project before auto-rendering.",
+            )
+            return
+
+        if self._render_worker and self._render_worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Render in progress",
+                "Another render job is already running.",
+            )
+            return
+
+        if self._worker and self._worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Sync in progress",
+                "Please wait for the current sync operation to complete.",
+            )
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
+            self,
+            "Start Auto Render",
+            f"This will render {len(selected)} project(s) using CapCut.\n\n"
+            "Make sure CapCut is open and you're on the Projects dashboard.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Reset project statuses
+        for project in selected:
+            project.status = ProjectStatus.pending
+            project.notes = ""
+        self._refresh_status_cells()
+
+        # Start render worker
+        self._last_job_projects = list(selected)
+        self._render_worker = RenderWorker(selected)
+        self._render_worker.status_updated.connect(self._refresh_status_cells)
+        self._render_worker.job_finished.connect(self._on_render_finished)
+        self._render_worker.log_message.connect(self._append_render_log)
+        self._render_worker.progress_updated.connect(self._update_render_progress)
+        self._set_job_controls_state(True)
+        self._update_status_label(f"Auto Rendering… ({len(selected)} project(s))")
+        self._show_render_log_dialog(len(selected))
+        self._render_worker.start()
+
+    def _on_render_finished(self, completed: int, total: int) -> None:
+        """Handle render worker completion."""
+        self._status_message_override = None
+        self._refresh_status_cells()
+        self._set_job_controls_state(False)
+        
+        # Wait for thread to fully finish before cleanup
+        if self._render_worker is not None:
+            try:
+                self._render_worker.wait(2000)  # Wait up to 2 seconds
+            except Exception:
+                pass
+            self._render_worker = None
+        
+        self._update_status_label()
+
+        # Show completion notification
+        if completed == total:
+            QMessageBox.information(
+                self,
+                "Auto Render Complete",
+                f"✅ Successfully rendered all {completed} project(s)!",
+            )
+        else:
+            failed = total - completed
+            QMessageBox.warning(
+                self,
+                "Auto Render Complete",
+                f"Rendered {completed}/{total} project(s).\n\n"
+                f"⚠️ {failed} project(s) failed. Check the Notes column for details.",
+            )
+        if self._render_log_text is not None:
+            self._append_render_log(f"Render summary: completed {completed}/{total}.")
+
     def _handle_stop_clicked(self) -> None:
-        QMessageBox.information(self, "No Sync Running", "There is no active job to stop.")
+        if self._render_worker and self._render_worker.isRunning():
+            self._render_worker.cancel()
+            self._update_status_label("Stopping render…")
+            return
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._update_status_label("Stopping sync…")
+            return
+        QMessageBox.information(self, "No Job Running", "There is no active job to stop.")
 
     def _selected_transition_keys(self) -> List[str]:
         keys: List[str] = []
@@ -1539,6 +2210,71 @@ class MainWindow(QMainWindow):
         if failures:
             result_lines.append("Failed projects: " + ", ".join(failures))
         QMessageBox.information(self, "Transitions complete", "\n".join(result_lines))
+
+    def _ensure_render_log_dialog(self) -> None:
+        if self._render_log_dialog is not None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Auto Render Progress")
+        dialog.setModal(False)
+        dialog.resize(640, 420)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        self._render_progress_label = QLabel("Progress: 0/0")
+        self._render_progress_label.setObjectName("renderProgressLabel")
+        layout.addWidget(self._render_progress_label)
+
+        self._render_progress_bar = QProgressBar()
+        self._render_progress_bar.setObjectName("renderProgressBar")
+        self._render_progress_bar.setRange(0, 0)
+        self._render_progress_bar.setValue(0)
+        layout.addWidget(self._render_progress_bar)
+
+        self._render_log_text = QTextEdit()
+        self._render_log_text.setObjectName("renderLogText")
+        self._render_log_text.setReadOnly(True)
+        layout.addWidget(self._render_log_text, 1)
+
+        close_button = QPushButton("Close")
+        close_button.setProperty("variant", "secondary")
+        close_button.clicked.connect(dialog.hide)
+        layout.addWidget(close_button)
+
+        self._render_log_dialog = dialog
+
+    def _show_render_log_dialog(self, total: int) -> None:
+        self._ensure_render_log_dialog()
+        if self._render_log_dialog is None:
+            return
+        if self._render_log_text is not None:
+            self._render_log_text.clear()
+        if self._render_progress_bar is not None:
+            self._render_progress_bar.setRange(0, max(total, 1))
+            self._render_progress_bar.setValue(0)
+        if self._render_progress_label is not None:
+            self._render_progress_label.setText(f"Progress: 0/{total}")
+        self._render_log_dialog.show()
+        self._render_log_dialog.raise_()
+        self._render_log_dialog.activateWindow()
+
+    def _append_render_log(self, message: str) -> None:
+        if self._render_log_text is None:
+            self._ensure_render_log_dialog()
+        if self._render_log_text is None:
+            return
+        self._render_log_text.append(message)
+
+    def _update_render_progress(self, completed: int, total: int) -> None:
+        if self._render_progress_bar is None or self._render_progress_label is None:
+            self._ensure_render_log_dialog()
+        if self._render_progress_bar is None or self._render_progress_label is None:
+            return
+        self._render_progress_bar.setRange(0, max(total, 1))
+        self._render_progress_bar.setValue(min(completed, total))
+        self._render_progress_label.setText(f"Progress: {completed}/{total}")
 
     def _handle_transition_clear(self) -> None:
         selected = [p for p in self.projects if p.is_selected]

@@ -49,12 +49,17 @@ class MockAutomation(AutomationBackend):
         time.sleep(self.delay_sec)
         return True
 
-    def start_render(self) -> bool:
+    def start_render(self, project_name: str | None = None) -> bool:
         logger.info("[MOCK] start render")
         time.sleep(self.delay_sec)
         return True
 
-    def wait_for_render_complete(self, timeout_sec: int) -> bool:
+    def wait_for_render_complete(
+        self,
+        timeout_sec: int,
+        export_folder: str | None = None,
+        export_name: str | None = None,
+    ) -> bool:
         logger.info("[MOCK] wait for render complete (timeout=%s)", timeout_sec)
         time.sleep(self.delay_sec)
         return True

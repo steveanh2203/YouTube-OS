@@ -12,7 +12,7 @@ class CapCutConfig:
     project_root: Path
     local_draft_dir: str = "com.lveditor.draft"
     cloud_draft_prefix: str = "com.lveditor.cloud.draft"
-    export_shortcut: tuple[str, ...] = ("shift", "e")
+    export_shortcut: tuple[str, ...] = ("command", "m")
     focus_delay_sec: float = 0.6
     menu_delay_sec: float = 0.4
     render_timeout_sec: int = 900

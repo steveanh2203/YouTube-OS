@@ -39,9 +39,22 @@ class AutomationBackend(ABC):
         """Trigger CapCut's image sync."""
 
     @abstractmethod
-    def start_render(self) -> bool:
+    def start_render(self, project_name: str | None = None) -> bool:
         """Kick off the export for the active project."""
 
     @abstractmethod
-    def wait_for_render_complete(self, timeout_sec: int) -> bool:
+    def wait_for_render_complete(
+        self,
+        timeout_sec: int,
+        export_folder: str | None = None,
+        export_name: str | None = None,
+    ) -> bool:
         """Wait for export to finish (poll UI)."""
+
+    def dismiss_dialogs(self) -> bool:
+        """Dismiss any open dialogs (e.g., Link media). Optional."""
+        return True
+
+    def close_project(self) -> bool:
+        """Close current project and return to dashboard. Optional."""
+        return True
