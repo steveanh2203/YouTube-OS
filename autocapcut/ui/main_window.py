@@ -205,7 +205,8 @@ class RenderWorker(QThread):
 
                 # Step 4: Close project
                 self._emit_log("[STEP 4/4] Closing project...")
-                automation.close_project()
+                if not automation.close_project():
+                    raise RuntimeError("Could not close project and return to dashboard")
                 self._emit_log("[STEP 4/4] ✓ Project closed, back to dashboard")
 
                 project.status = ProjectStatus.done
@@ -1392,6 +1393,16 @@ class MainWindow(QMainWindow):
                 image: none;
             }}
 
+            QTableWidget QLabel#rowSelectOrderLabel {{
+                min-width: 18px;
+                max-width: 18px;
+                color: #1D4ED8;
+                font-size: 11px;
+                font-weight: 700;
+                background: transparent;
+                border: none;
+            }}
+
             QMessageBox, QProgressDialog, QDialog#renderLogDialog {{
                 background: #FFFFFF;
                 border: 1px solid #D5DEE9;
@@ -1622,12 +1633,47 @@ class MainWindow(QMainWindow):
 
         project.notes = " · ".join(parts)
 
+    def _selected_projects_in_order(self) -> list[ProjectItem]:
+        selected = [p for p in self.projects if p.is_selected]
+        selected.sort(
+            key=lambda p: p.selection_order if p.selection_order is not None else 1_000_000
+        )
+        return selected
+
+    def _normalize_selection_orders(self) -> None:
+        order = 1
+        for project in self._selected_projects_in_order():
+            project.selection_order = order
+            order += 1
+        for project in self.projects:
+            if not project.is_selected:
+                project.selection_order = None
+
+    def _refresh_selection_order_widgets(self) -> None:
+        if self.project_table is None:
+            return
+        for row, project in enumerate(self.projects):
+            container = self.project_table.cellWidget(row, self.columns.select)
+            if container is None:
+                continue
+            label = container.findChild(QLabel, "rowSelectOrderLabel")
+            if label is None:
+                continue
+            if project.is_selected and project.selection_order is not None:
+                label.setText(str(project.selection_order))
+            else:
+                label.setText("")
+
     def refresh_projects(self) -> None:
-        previously_selected = {p.name for p in self.projects if p.is_selected}
+        previously_selected = self._selected_projects_in_order()
+        selected_order_by_path = {p.path: idx + 1 for idx, p in enumerate(previously_selected)}
         self.projects = discover_projects()
         for project in self.projects:
-            project.is_selected = project.name in previously_selected
+            previous_order = selected_order_by_path.get(project.path)
+            project.is_selected = previous_order is not None
+            project.selection_order = previous_order
             self._refresh_project_metadata(project)
+        self._normalize_selection_orders()
         if not self.projects:
             logger.warning("No CapCut projects found. Check your CapCut library path.")
         self._populate_table()
@@ -1647,7 +1693,15 @@ class MainWindow(QMainWindow):
             container_layout = QHBoxLayout(checkbox_container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            container_layout.setSpacing(6)
             container_layout.addWidget(checkbox)
+            order_label = QLabel("")
+            order_label.setObjectName("rowSelectOrderLabel")
+            order_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            order_label.setFixedWidth(18)
+            if project.is_selected and project.selection_order is not None:
+                order_label.setText(str(project.selection_order))
+            container_layout.addWidget(order_label)
             self.project_table.setCellWidget(row, self.columns.select, checkbox_container)
 
             name_item = QTableWidgetItem(project.name)
@@ -1670,8 +1724,21 @@ class MainWindow(QMainWindow):
 
     def _make_checkbox_handler(self, project: ProjectItem):
         def handler(state: int) -> None:
-            project.is_selected = Qt.CheckState(state) == Qt.CheckState.Checked
-            logger.debug("Project %s selection=%s", project.name, project.is_selected)
+            checked = Qt.CheckState(state) == Qt.CheckState.Checked
+            if checked and not project.is_selected:
+                next_order = max((p.selection_order or 0) for p in self.projects) + 1
+                project.selection_order = next_order
+            if not checked:
+                project.selection_order = None
+            project.is_selected = checked
+            self._normalize_selection_orders()
+            self._refresh_selection_order_widgets()
+            logger.debug(
+                "Project %s selection=%s order=%s",
+                project.name,
+                project.is_selected,
+                project.selection_order,
+            )
             if self._status_message_override is None:
                 self._update_status_label()
             else:
@@ -2301,7 +2368,7 @@ class MainWindow(QMainWindow):
 
     def _handle_auto_render_clicked(self) -> None:
         """Handle Auto Render button click."""
-        selected = [p for p in self.projects if p.is_selected]
+        selected = self._selected_projects_in_order()
         if not selected:
             QMessageBox.information(
                 self,

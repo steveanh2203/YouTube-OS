@@ -66,7 +66,9 @@ class AutomationController:
                 break
             
             if hasattr(self.backend, 'close_project'):
-                self.backend.close_project()
+                if not self.backend.close_project():
+                    self._fail(project, "Could not close project and return to dashboard", progress_callback)
+                    continue
 
             project.status = ProjectStatus.done
             project.notes = ""

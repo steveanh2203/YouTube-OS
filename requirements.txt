@@ -12,3 +12,4 @@ rembg>=2.0.50
 onnxruntime>=1.16
 webrtcvad-wheels>=2.0.14
 pyqtdarktheme>=0.1.7
+watchdog>=4.0
