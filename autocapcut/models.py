@@ -38,12 +38,14 @@ class ProjectItem:
     status: ProjectStatus = ProjectStatus.pending
     notes: str = ""
     is_selected: bool = False
+    selection_order: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def reset(self) -> None:
         self.status = ProjectStatus.pending
         self.notes = ""
         self.is_selected = False
+        self.selection_order = None
 
     def refresh_metadata(self) -> dict[str, Any]:
         """Reload lightweight metadata from the project folder."""

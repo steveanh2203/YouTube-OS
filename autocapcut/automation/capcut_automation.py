@@ -5,7 +5,7 @@ import re
 import unicodedata
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -17,6 +17,11 @@ from loguru import logger
 from autocapcut.automation.base import AutomationBackend
 from autocapcut.config import APP_CONFIG
 from autocapcut.models import ProjectItem
+from autocapcut.services.capcut_shortcuts import (
+    ShortcutProfile,
+    load_active_shortcut_profile,
+    resolve_action_shortcut,
+)
 
 # pylint: disable=import-error,no-name-in-module
 try:
@@ -33,6 +38,8 @@ class MacCapCutAutomation(AutomationBackend):
     bundle_id: str = "com.lemon.lvoverseas"
     last_export_folder: Path | None = None
     last_export_name: str | None = None
+    _shortcut_profile: ShortcutProfile | None = field(default=None, init=False, repr=False)
+    _shortcut_cache: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False, repr=False)
 
     def focus_capcut(self) -> None:
         logger.debug("Focusing CapCut application")
@@ -44,32 +51,132 @@ class MacCapCutAutomation(AutomationBackend):
             raise RuntimeError("atomacos not installed; install dependencies and enable accessibility")
         return atomacos.getAppRefByBundleId(self.bundle_id)
 
-    def open_project(self, project: ProjectItem) -> bool:
-        """Focus CapCut and open the requested project from the home screen list."""
-
+    def _iter_ui_roots(self) -> list:
+        """Safely return traversable UI roots even when AXWindows is unavailable."""
         try:
-            self.focus_capcut()
-            element = self._locate_project_element(project.name)
-            if element is None:
-                logger.warning("Could not locate project '%s' in CapCut home", project.name)
-                return False
+            app = self._get_app()
+        except Exception as exc:
+            logger.debug("Unable to access CapCut app: %s", exc)
+            return []
 
-            frame = element.AXFrame
-            center_x = frame.x + frame.width / 2
-            center_y = frame.y + frame.height / 2
-            logger.debug(
-                "Clicking project '%s' at screen position (%.1f, %.1f)",
-                project.name,
-                center_x,
-                center_y,
+        roots: list = []
+        visited: set[int] = set()
+
+        def add_node(node) -> None:
+            if node is None:
+                return
+            ref = getattr(node, "ref", None)
+            identifier = id(ref) if ref is not None else id(node)
+            if identifier in visited:
+                return
+            visited.add(identifier)
+            roots.append(node)
+
+        for attr in ("AXWindows", "AXMainWindow", "AXFocusedWindow"):
+            try:
+                value = getattr(app, attr)
+            except Exception:
+                continue
+            if not value:
+                continue
+            if isinstance(value, (list, tuple)):
+                for node in value:
+                    add_node(node)
+            else:
+                add_node(value)
+
+        if not roots:
+            add_node(app)
+        return roots
+
+    def _user_data_dir(self) -> Path:
+        # APP_CONFIG.project_root points to ".../User Data/Projects"
+        return APP_CONFIG.project_root.parent
+
+    def _ensure_shortcuts_loaded(self) -> None:
+        if self._shortcut_profile is not None:
+            return
+
+        profile = load_active_shortcut_profile(self._user_data_dir())
+        self._shortcut_profile = profile
+        self._shortcut_cache = {
+            "exportVideo": resolve_action_shortcut(profile, "exportVideo", APP_CONFIG.export_shortcut),
+            "closeDialog": resolve_action_shortcut(profile, "closeDialog", ("escape",)),
+            "closeWindow": resolve_action_shortcut(profile, "closeWindow", ("command", "w")),
+        }
+
+        if profile.name:
+            logger.info(
+                "Loaded CapCut shortcuts profile '%s' from %s",
+                profile.name,
+                profile.source or "(unknown source)",
             )
-            pyautogui.moveTo(center_x, center_y, duration=0.15)
-            pyautogui.doubleClick()
-            time.sleep(2.0)
-            return True
-        except Exception as exc:  # pragma: no cover - GUI automation
-            logger.exception("Failed to open project %s: %s", project.name, exc)
-            return False
+        else:
+            logger.warning("Could not detect active CapCut shortcut profile; using defaults.")
+
+    def _action_shortcut(self, action_name: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
+        self._ensure_shortcuts_loaded()
+        return self._shortcut_cache.get(action_name, fallback)
+
+    @staticmethod
+    def _send_shortcut(keys: tuple[str, ...]) -> None:
+        if not keys:
+            return
+        if len(keys) == 1:
+            pyautogui.press(keys[0])
+            return
+        pyautogui.hotkey(*keys)
+
+    def open_project(self, project: ProjectItem) -> bool:
+        """Focus CapCut and open the requested project from the home screen list.
+
+        Retries up to 3 times (with a 2-second pause between attempts) to
+        handle the case where the dashboard is still loading when this is called.
+        """
+        max_attempts = 3
+        retry_delay = 2.0
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.focus_capcut()
+                element = self._locate_project_element(project.name)
+                if element is None:
+                    logger.warning(
+                        "Could not locate project '%s' in CapCut home (attempt %d/%d)",
+                        project.name,
+                        attempt,
+                        max_attempts,
+                    )
+                    if attempt < max_attempts:
+                        time.sleep(retry_delay)
+                        continue
+                    return False
+
+                frame = element.AXFrame
+                center_x = frame.x + frame.width / 2
+                center_y = frame.y + frame.height / 2
+                logger.debug(
+                    "Clicking project '%s' at screen position (%.1f, %.1f)",
+                    project.name,
+                    center_x,
+                    center_y,
+                )
+                pyautogui.moveTo(center_x, center_y, duration=0.15)
+                pyautogui.doubleClick()
+                time.sleep(2.0)
+                return True
+            except Exception as exc:  # pragma: no cover - GUI automation
+                logger.exception(
+                    "Failed to open project %s (attempt %d/%d): %s",
+                    project.name,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    time.sleep(retry_delay)
+
+        return False
 
     def _locate_project_element(self, project_name: str):
         """Locate the accessibility element that contains the CapCut project title."""
@@ -77,13 +184,7 @@ class MacCapCutAutomation(AutomationBackend):
         target_suffix = project_name.strip()
         search_token = f"HomePageDraftTitle:{target_suffix}"
 
-        try:
-            app = self._get_app()
-        except Exception as exc:  # pragma: no cover
-            logger.debug("Unable to access CapCut app: %s", exc)
-            return None
-
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             try:
                 queue = deque([window])
             except Exception:
@@ -219,8 +320,9 @@ class MacCapCutAutomation(AutomationBackend):
             time.sleep(0.5)
             
             # Trigger export with keyboard shortcut
-            logger.info("Triggering export (Cmd+M)")
-            pyautogui.hotkey(*APP_CONFIG.export_shortcut)
+            export_shortcut = self._action_shortcut("exportVideo", APP_CONFIG.export_shortcut)
+            logger.info("Triggering export via shortcut: %s", "+".join(export_shortcut))
+            self._send_shortcut(export_shortcut)
             dialog_ready = self._wait_for_export_dialog_visible(True, timeout=10.0)
             if not dialog_ready:
                 logger.warning("Export dialog not detected; attempting to read export target anyway.")
@@ -260,20 +362,15 @@ class MacCapCutAutomation(AutomationBackend):
         export_folder: str | Path | None = None,
         export_name: str | None = None,
     ) -> bool:
-        """Wait for render to complete using 'lsof' + size activity check.
-        
-        1. Finds all CapCut processes (Main + Renderer).
-        2. Lists open files for these processes.
-        3. Filters out cache/resources.
-        4. Identifies the export file by checking if SIZE IS INCREASING.
-        5. Waits until file is released.
+        """Wait for render to complete.
+
+        Primary path  : watchdog FSEvents (macOS native, ~0ms latency).
+        Fallback path : lsof polling every 0.5s (when watchdog unavailable).
+        Priority check: checks Export Complete dialog every 0.2s loop iteration.
         """
-        import subprocess
-        from pathlib import Path
-        
-        logger.info("🟢 [DEBUG] Loaded File Growth Logic (v2.1)")
-        logger.info("Using 'lsof' on ALL CapCut processes to track export...")
-        logger.info("Timeout: %ds", timeout_sec)
+        import threading
+
+        logger.info("⏳ Waiting for render to complete (timeout=%ds)", timeout_sec)
 
         if export_folder is None:
             export_folder = self.last_export_folder
@@ -281,246 +378,296 @@ class MacCapCutAutomation(AutomationBackend):
             export_name = self.last_export_name
 
         start_time = time.time()
-        # [MODIFIED] Use "Inactivity Timeout" instead of fixed total duration.
-        # We track when we last saw progress (file growth). start_time acts as "last_activity_time".
         last_activity_time = time.time()
-        
-        check_interval = 2.0
 
         expected_path = self._resolve_expected_export_path(export_folder, export_name)
-        expected_seen = False
-        expected_last_size = -1
-        expected_stable = 0
-        expected_grace_sec = 20
-        expected_stable_required = 6
-        expected_unknown_required = 20
-        if expected_path is not None:
-            logger.info("Tracking expected export file: %s", expected_path)
-        
-        tracked_file: Path | None = None
-        last_size = -1
-        stable_count = 0
-        has_grown = False
-        
-        # Keep track of static files to ignore them effectively
-        static_files = set()
-        fallback_unknown_required = 20
-        
-        
-        while time.time() - last_activity_time < timeout_sec:
-            # [NEW] Priority UI Check: If we see the "Share" or "Exported" screen, we are done.
-            if self._is_export_success_dialog_visible():
-                logger.info("  ✅ Detected 'Export Complete' dialog on screen. Render finished.")
-                self._finish_render()
-                return True
+        if expected_path:
+            logger.info("Expected export path: %s", expected_path)
 
-            elapsed = int(time.time() - start_time)
-            
-            if expected_path is not None:
-                if expected_path.exists():
-                    expected_seen = True
-                    try:
-                        current_size = expected_path.stat().st_size
-                    except OSError:
-                        current_size = 0
-                    size_mb = current_size / (1024 * 1024)
-                    open_files_str = self._get_capcut_open_files()
-                    open_state: bool | None = None
-                    if open_files_str:
-                        open_state = str(expected_path) in open_files_str
+        target_name_key: str | None = None
+        if isinstance(export_name, str) and export_name.strip():
+            target_name_key = self._normalize_name_key(Path(export_name).stem)
 
-                    if current_size > expected_last_size:
-                        expected_last_size = current_size
-                        expected_stable = 0
-                        last_activity_time = time.time()  # [NEW] Reset timeout on activity
-                        if elapsed % 3 == 0:
-                            logger.info("  Exporting... %.2f MB (expected file growing)", size_mb)
-                    else:
-                        if open_state is True:
-                            expected_stable = 0
-                            if elapsed % 5 == 0:
-                                logger.info("  Exporting... %.2f MB (expected file still open)", size_mb)
-                        else:
-                            expected_stable += 1
-                        stable_limit = expected_stable_required if open_state is False else expected_unknown_required
-                        if expected_stable >= stable_limit and current_size > 0 and open_state is not True:
-                            logger.info(
-                                "  Export complete via expected file: %s (%.2f MB)",
-                                expected_path.name,
-                                size_mb,
-                            )
-                            self._finish_render()
-                            return True
-                        if elapsed % 5 == 0:
-                            logger.info("  Exporting... %.2f MB (expected file stable)", size_mb)
-                    time.sleep(check_interval)
-                    continue
-                else:
-                    candidate = self._find_export_candidate(export_folder, export_name)
-                    if candidate is not None:
-                        expected_path = candidate
-                        logger.info("  🎥 Detected export file (by folder scan): %s", expected_path.name)
-                        continue
-                    if elapsed % 5 == 0:
-                        logger.info("  Waiting for export file: %s", expected_path.name)
-                    if not expected_seen and elapsed >= expected_grace_sec:
-                        logger.warning(
-                            "Expected export file not detected after %ds; falling back to lsof.",
-                            expected_grace_sec,
-                        )
-                        expected_path = None
-                    if expected_path is not None:
-                        time.sleep(check_interval)
-                        continue
+        # ── Watchdog shared state ──────────────────────────────────────────
+        _detected_file: list[Path | None] = [None]
+        _file_size: list[int] = [-1]
+        _last_event_t: list[float] = [time.time()]
+        _state_lock = threading.Lock()
 
-            # Step 1: Get all open files from all CapCut PIDs
-            open_files_str = self._get_capcut_open_files()
-            
-            # Step 2: Filter candidates
-            candidates = []
-            target_name_key = None
-            if isinstance(export_name, str) and export_name.strip():
-                target_name_key = self._normalize_name_key(Path(export_name).stem)
-            for f in open_files_str:
-                # Stronger filtering of internal files
-                # Must be a file that exists
+        watch_dir = Path(export_folder) if export_folder else None
+        if watch_dir and not watch_dir.exists():
+            try:
+                watch_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+
+        def _on_fs_event(path_str: str) -> None:
+            p = Path(path_str)
+            try:
+                if not p.is_file():
+                    return
+                ext = p.suffix.lower()
+                if ext not in ('.mp4', '.mov', '.m4v', '.mkv', '.webm', '.tmp'):
+                    return
+                if any(x in path_str for x in (
+                    "User Data", "Resources", ".app/", "Library/Containers", "Movies/CapCut"
+                )):
+                    return
+                size = p.stat().st_size
+            except OSError:
+                return
+
+            with _state_lock:
+                cur = _detected_file[0]
+                # Prioritise the exact expected file
+                if expected_path is not None and p.resolve() == expected_path.resolve():
+                    if size >= _file_size[0]:
+                        _detected_file[0] = p
+                        if size > _file_size[0]:
+                            _file_size[0] = size
+                            _last_event_t[0] = time.time()
+                    return
+                # Accept any growing video file in the folder
+                if cur is None or p.resolve() == cur.resolve():
+                    if size >= _file_size[0]:
+                        _detected_file[0] = p
+                        if size > _file_size[0]:
+                            _file_size[0] = size
+                            _last_event_t[0] = time.time()
+
+        observer = None
+        if watch_dir:
+            try:
+                from watchdog.observers.fsevents import Observer as _FSObserver
+                from watchdog.events import FileSystemEventHandler as _FsHandler
+
+                class _Handler(_FsHandler):
+                    def on_created(self, event):  # noqa: D401
+                        if not event.is_directory:
+                            _on_fs_event(event.src_path)
+
+                    def on_modified(self, event):  # noqa: D401
+                        if not event.is_directory:
+                            _on_fs_event(event.src_path)
+
+                observer = _FSObserver()
+                observer.schedule(_Handler(), str(watch_dir), recursive=False)
+                observer.start()
+                logger.info("📡 Watchdog FSEvents started → %s", watch_dir)
+            except Exception as exc:
+                logger.warning("Watchdog unavailable (%s) — falling back to lsof polling", exc)
+                observer = None
+
+        # Tuning constants
+        POLL_INTERVAL   = 0.2   # Main loop: how often to check dialog (seconds)
+        LSOF_INTERVAL   = 0.5   # lsof fallback poll interval
+        STABLE_RELEASED = 2.0   # Watchdog: secs stable after lsof confirms "not open"
+        STABLE_UNKNOWN  = 10.0  # Watchdog: secs stable when open-state unknown
+        GRACE_SEC       = 20    # Grace before giving up on expected_path
+        LSOF_STABLE_REL = 6     # lsof fallback stable ticks when released
+        LSOF_STABLE_UNK = 20    # lsof fallback stable ticks when unknown
+
+        # lsof-fallback state
+        lsof_tracked: Path | None = None
+        lsof_last_size: int = -1
+        lsof_stable: int = 0
+        lsof_grown: bool = False
+        static_files: set[str] = set()
+
+        # Seed watchdog with expected_path if it already exists
+        if expected_path and expected_path.exists():
+            try:
+                _on_fs_event(str(expected_path))
+            except Exception:
+                pass
+
+        def _cleanup() -> None:
+            if observer:
                 try:
-                    p = Path(f)
-                    if not p.exists() or not p.is_file():
-                        continue
-                except (OSError, PermissionError):
-                    # Cannot access this file (system file/permissions), ignore it
+                    observer.stop()
+                    observer.join(timeout=3.0)
+                except Exception:
+                    pass
+
+        try:
+            while time.time() - last_activity_time < timeout_sec:
+                elapsed = int(time.time() - start_time)
+
+                # ── Priority: Export Complete dialog ──────────────────────
+                if self._is_export_success_dialog_visible():
+                    logger.info("  ✅ Detected Export Complete dialog. Render finished.")
+                    if self._finish_render():
+                        return True
+                    logger.warning("  ⚠️ Dialog found but could not dismiss yet.")
+
+                # ── Watchdog path ─────────────────────────────────────────
+                if observer is not None:
+                    with _state_lock:
+                        dfile = _detected_file[0]
+                        dsize = _file_size[0]
+                        dlast = _last_event_t[0]
+
+                    if dfile is not None and dsize > 0:
+                        stable_sec = time.time() - dlast
+                        size_mb = dsize / (1024 * 1024)
+
+                        # File still changing → keep inactivity timer alive
+                        if stable_sec < STABLE_UNKNOWN:
+                            last_activity_time = time.time()
+
+                        if stable_sec >= STABLE_RELEASED:
+                            open_files = self._get_capcut_open_files()
+                            is_open: bool | None = (
+                                str(dfile) in open_files if open_files else None
+                            )
+                            if is_open is False:
+                                logger.info(
+                                    "  ✅ Export complete! File released: %s (%.2f MB)",
+                                    dfile.name, size_mb,
+                                )
+                                if self._finish_render():
+                                    return True
+                            elif is_open is None and stable_sec >= STABLE_UNKNOWN:
+                                logger.info(
+                                    "  ✅ Export complete (stable %.0fs): %s (%.2f MB)",
+                                    stable_sec, dfile.name, size_mb,
+                                )
+                                if self._finish_render():
+                                    return True
+
+                        if elapsed % 5 == 0:
+                            logger.info(
+                                "  📝 Exporting... %.2f MB (stable %.1fs)",
+                                size_mb, time.time() - dlast,
+                            )
+                    else:
+                        # No file detected yet — also poll expected_path directly
+                        if expected_path and expected_path.exists():
+                            try:
+                                _on_fs_event(str(expected_path))
+                            except Exception:
+                                pass
+                        if elapsed % 5 == 0:
+                            logger.info("  ⏳ Waiting for export file to appear...")
+
+                    time.sleep(POLL_INTERVAL)
                     continue
 
-                if target_name_key:
-                    stem_key = self._normalize_name_key(p.stem)
-                    if stem_key == target_name_key or stem_key.startswith(target_name_key):
+                # ── lsof fallback path ────────────────────────────────────
+                open_files_str = self._get_capcut_open_files()
+
+                if not lsof_tracked:
+                    candidates: list[Path] = []
+                    for f in open_files_str:
+                        try:
+                            p = Path(f)
+                            if not p.exists() or not p.is_file():
+                                continue
+                        except (OSError, PermissionError):
+                            continue
+                        if target_name_key:
+                            stem_key = self._normalize_name_key(p.stem)
+                            if stem_key == target_name_key or stem_key.startswith(target_name_key):
+                                candidates.append(p)
+                                continue
+                        if any(x in f for x in (
+                            "/System/", "/usr/", "/dev/", ".app/",
+                            "User Data", "Resources", ".ttf", ".dylib",
+                            "Library/Containers", "Movies/CapCut",
+                        )):
+                            continue
+                        if f in static_files:
+                            continue
                         candidates.append(p)
+
+                    if not candidates:
+                        if elapsed % 5 == 0:
+                            logger.info("  ⏳ Waiting for export start... (No candidate files)")
+                    else:
+                        for cand in candidates:
+                            try:
+                                s = cand.stat().st_size
+                            except OSError:
+                                continue
+                            if target_name_key:
+                                stem = self._normalize_name_key(cand.stem)
+                                if stem == target_name_key or stem.startswith(target_name_key):
+                                    lsof_tracked = cand
+                                    lsof_last_size = s
+                                    logger.info("  🎥 Tracking (name match): %s", cand.name)
+                                    break
+                            if export_folder and str(cand).startswith(str(export_folder)):
+                                lsof_tracked = cand
+                                lsof_last_size = s
+                                logger.info("  🎥 Tracking (folder match): %s", cand.name)
+                                break
+                        if not lsof_tracked:
+                            lsof_tracked = candidates[0]
+                            try:
+                                lsof_last_size = lsof_tracked.stat().st_size
+                            except OSError:
+                                lsof_last_size = 0
+                            logger.info("  🎥 Monitoring: %s", lsof_tracked.name)
+                else:
+                    is_open_lsof: bool | None = (
+                        str(lsof_tracked) in open_files_str if open_files_str else None
+                    )
+                    try:
+                        cur_size = lsof_tracked.stat().st_size
+                    except OSError:
+                        logger.warning("  ⚠️ Tracked file gone. Re-detecting.")
+                        lsof_tracked = None
+                        lsof_grown = False
+                        lsof_stable = 0
+                        time.sleep(LSOF_INTERVAL)
                         continue
 
-                if any(x in f for x in ("/System/", "/usr/", "/dev/", ".app/", "User Data", "Resources", ".ttf", ".dylib", "Library/Containers", "Movies/CapCut")):
-                    continue
-                    
-                if f in static_files:
-                    continue
-                candidates.append(p)
+                    size_mb = cur_size / (1024 * 1024)
 
-            if not tracked_file:
-                # PHASE 1: Detection - Look for a GROWING file
-                if not candidates:
-                    if elapsed % 5 == 0:
-                        logger.info("  ⏳ Waiting for export start... (No candidate files)")
-                else:
-                    # Check candidates for size changes
-                    active_candidates = []
-                    target_name = target_name_key
-                    for cand in candidates:
-                        try:
-                            s = cand.stat().st_size
-                            # If we haven't seen this file size before, just store it?
-                            # No, we need to track if it changes.
-                            # For simplicity: If we have candidates, let's just pick one that looks like an export
-                            # But to be safe vs cache files, we ideally want to see growth.
-                            
-                            # If export_name matches, heavily prioritize it
-                            if target_name:
-                                stem = self._normalize_name_key(cand.stem)
-                                if stem == target_name or stem.startswith(target_name) or target_name.startswith(stem):
-                                    tracked_file = cand
-                                    last_size = s
-                                    logger.info("  🎥 Detected export file (by name): %s", cand.name)
-                                    break
-
-                            # If export_folder matches, heavily prioritize it
-                            if export_folder and str(cand).startswith(export_folder):
-                                tracked_file = cand
-                                last_size = s
-                                logger.info("  🎥 Detected export file (by folder): %s", cand.name)
-                                break
-                            
-                            active_candidates.append(cand)
-                        except OSError:
-                            pass
-                    
-                    if not tracked_file and active_candidates:
-                        # Fallback: Pick the most likely video file if we can't match folder
-                        # or wait for growth? Let's pick the first one but verify growth in Phase 2
-                        tracked_file = active_candidates[0]
-                        try:
-                            last_size = tracked_file.stat().st_size
-                        except:
-                            last_size = 0
-                        logger.info("  🎥 Monitoring potential export file: %s", tracked_file.name)
-
-            else:
-                # PHASE 2: Monitoring
-                open_state: bool | None = None
-                if open_files_str:
-                    open_state = str(tracked_file) in open_files_str
-                
-                try:
-                    current_size = tracked_file.stat().st_size
-                except OSError:
-                    # File deleted/moved? considered done? or failed?
-                    logger.info("  ⚠️ Tracked file disappeared from disk. Re-detecting.")
-                    tracked_file = None
-                    has_grown = False
-                    stable_count = 0
-                    continue
-
-                size_mb = current_size / (1024 * 1024)
-                
-                if open_state is False:
-                    # File released by CapCut.
-                    logger.info("  ✅ Export complete! File released: %s (%.2f MB)", tracked_file.name, size_mb)
-                    self._finish_render()
-                    return True
-                
-                # Still open (or unknown). Check activity.
-                if current_size > last_size:
-                    # It is growing! This confirms it's the export file.
-                    has_grown = True
-                    stable_count = 0
-                    last_activity_time = time.time()  # [NEW] Reset timeout on activity
-                    if elapsed % 3 == 0:
-                        logger.info("  📝 Exporting... %.2f MB (Growing)", size_mb)
-                elif current_size == last_size:
-                    # Not growing. Might be finished but kept open, OR it's a static cache file.
-                    if open_state is True:
-                        stable_count = 0
-                    else:
-                        stable_count += 1
-                    
-                    # Check if it's a known video extension - we trust video files more!
-                    is_video = tracked_file.suffix.lower() in ('.mp4', '.mov', '.m4v', '.mkv', '.webm')
-                    
-                    if has_grown:
-                        if open_state is None and stable_count >= fallback_unknown_required:
-                            logger.info(
-                                "  ✅ Export complete! File stable (unknown open state): %s (%.2f MB)",
-                                tracked_file.name,
-                                size_mb,
-                            )
-                            self._finish_render()
+                    if is_open_lsof is False:
+                        logger.info(
+                            "  ✅ File released: %s (%.2f MB)", lsof_tracked.name, size_mb
+                        )
+                        if self._finish_render():
                             return True
-                        if elapsed % 5 == 0:
-                            logger.info("  📝 Exporting... %.2f MB (Finishing...)", size_mb)
-                    elif not is_video:
-                        # Never grew and NOT a video file. Likely a static system/cache file.
-                        if stable_count > 10: # 20 seconds of no growth
-                             logger.warning("  ⚠️ File %s not growing for 20s. Ignoring as static/cache.", tracked_file.name)
-                             static_files.add(str(tracked_file))
-                             tracked_file = None # Reset and look for another file
-                             stable_count = 0
-                             continue
-                        
-                        if elapsed % 5 == 0:
-                            logger.info("  📝 Exporting... %.2f MB (Static...)")
-                        
-                last_size = current_size
-            
-            time.sleep(check_interval)
-            
+
+                    if cur_size > lsof_last_size:
+                        lsof_grown = True
+                        lsof_stable = 0
+                        last_activity_time = time.time()
+                        if elapsed % 3 == 0:
+                            logger.info("  📝 Exporting... %.2f MB (Growing)", size_mb)
+                    elif is_open_lsof is True:
+                        lsof_stable = 0
+                    else:
+                        lsof_stable += 1
+                        required = LSOF_STABLE_REL if is_open_lsof is False else LSOF_STABLE_UNK
+                        if lsof_grown and lsof_stable >= required and cur_size > 0:
+                            logger.info(
+                                "  ✅ Export complete (stable): %s (%.2f MB)",
+                                lsof_tracked.name, size_mb,
+                            )
+                            if self._finish_render():
+                                return True
+                        is_video = lsof_tracked.suffix.lower() in (
+                            '.mp4', '.mov', '.m4v', '.mkv', '.webm'
+                        )
+                        if not lsof_grown and not is_video and lsof_stable > 10:
+                            logger.warning(
+                                "  ⚠️ %s not growing for 5s. Ignoring as static.",
+                                lsof_tracked.name,
+                            )
+                            static_files.add(str(lsof_tracked))
+                            lsof_tracked = None
+                            lsof_stable = 0
+
+                    lsof_last_size = cur_size
+
+                time.sleep(LSOF_INTERVAL)
+
+        finally:
+            _cleanup()
+
         logger.warning("  ❌ Timeout reached.")
         self._finish_render()
         return False
@@ -557,14 +704,92 @@ class MacCapCutAutomation(AutomationBackend):
             logger.debug("lsof error: %s", exc)
             return []
 
-    def _finish_render(self):
-        """Helper to dismiss dialogs after render."""
+    def _wait_for_dashboard(self, timeout: float = 30.0) -> bool:
+        """Poll the AX tree until the CapCut home/dashboard screen is visible.
+
+        Returns True as soon as any ``HomePageDraftTitle`` element is found,
+        False if the timeout is reached without detecting the home screen.
+        """
+        logger.info("Waiting for CapCut dashboard to be ready (timeout=%.0fs)…", timeout)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                for window in self._iter_ui_roots():
+                    queue = deque([window])
+                    visited: set[int] = set()
+                    while queue:
+                        node = queue.popleft()
+                        ref = getattr(node, "ref", None)
+                        identifier = id(ref) if ref is not None else id(node)
+                        if identifier in visited:
+                            continue
+                        visited.add(identifier)
+                        try:
+                            value = node.AXValue
+                        except Exception:
+                            value = None
+                        if isinstance(value, str) and "HomePageDraftTitle:" in value:
+                            logger.info("  ✅ Dashboard detected — home screen is ready.")
+                            return True
+                        try:
+                            children = node.AXChildren
+                        except Exception:
+                            children = []
+                        for child in children:
+                            queue.append(child)
+            except Exception as exc:
+                logger.debug("_wait_for_dashboard poll error: %s", exc)
+            time.sleep(1.0)
+        logger.warning("  ⚠️ Dashboard not detected within %.0fs.", timeout)
+        return False
+
+    def _finish_render(self) -> bool:
+        """Dismiss the export-complete / Share dialog and return to the editor.
+
+        Uses the active CapCut ``closeDialog`` shortcut (from keymap config)
+        and falls back to Escape if needed.
+        """
+        self.focus_capcut()
+        if not self._is_export_success_dialog_visible():
+            return True
+
         logger.info("Dismissing completion dialog")
-        time.sleep(0.5)
-        pyautogui.press("escape")
-        time.sleep(0.5)
-        pyautogui.press("escape")
-        time.sleep(1.0) # Wait a bit longer for dialog to close
+        dismiss_keywords = (
+            "automationcancel",
+            "Cancel",
+            "Close",
+            "Done",
+            "OK",
+            "Đóng",
+            "Hủy",
+            "Huỷ",
+        )
+
+        for _ in range(5):
+            if self._click_button_by_keywords(dismiss_keywords):
+                time.sleep(0.6)
+                if not self._is_export_success_dialog_visible():
+                    return True
+
+            close_dialog_shortcut = self._action_shortcut("closeDialog", ("escape",))
+            self._send_shortcut(close_dialog_shortcut)
+            time.sleep(0.5)
+            if not self._is_export_success_dialog_visible():
+                return True
+
+            # Additional fallback: some mac keyboards/CapCut states respond to fn+Esc.
+            pyautogui.hotkey("fn", "escape")
+            time.sleep(0.4)
+            if not self._is_export_success_dialog_visible():
+                return True
+
+            pyautogui.press("escape")
+            time.sleep(0.5)
+            if not self._is_export_success_dialog_visible():
+                return True
+
+        logger.warning("Completion dialog is still visible after all dismiss attempts.")
+        return not self._is_export_success_dialog_visible()
 
     def _get_video_files(self, folder) -> set:
         """Get set of video file paths in folder."""
@@ -587,34 +812,48 @@ class MacCapCutAutomation(AutomationBackend):
 
     def close_project(self) -> bool:
         """Close current project and return to dashboard.
-        
-        Uses Cmd+W to close the current window/project.
+
+        Uses the active CapCut ``closeWindow`` shortcut then waits until the
+        home/dashboard screen is visible before returning.
         """
         try:
             self.focus_capcut()
-            logger.info("Closing project (Cmd+W)")
-            pyautogui.hotkey("command", "w")
-            time.sleep(1.5)  # Wait for project to close
-            
-            # Press Escape to dismiss any "save" dialogs if they appear
-            pyautogui.press("escape")
-            time.sleep(0.5)
-            
-            logger.info("Project closed, returned to dashboard")
-            return True
+
+            for attempt in range(1, 4):
+                if self._is_export_success_dialog_visible():
+                    logger.info("Share dialog visible (attempt %d) — dismissing first", attempt)
+                    if not self._finish_render():
+                        logger.warning("Share dialog still visible after dismiss attempt %d.", attempt)
+                        time.sleep(0.8)
+                        continue
+                    time.sleep(0.6)
+
+                close_window_shortcut = self._action_shortcut("closeWindow", ("command", "w"))
+                logger.info(
+                    "Closing project via shortcut %s, attempt %d",
+                    "+".join(close_window_shortcut),
+                    attempt,
+                )
+                self._send_shortcut(close_window_shortcut)
+                time.sleep(1.2)
+
+                # Dismiss "save changes?" if it appears
+                pyautogui.press("escape")
+                time.sleep(0.4)
+
+                if self._wait_for_dashboard(timeout=12.0):
+                    logger.info("Project closed, returned to dashboard")
+                    return True
+
+            logger.warning("Failed to confirm dashboard after close attempts.")
+            return False
         except Exception as exc:  # pragma: no cover
             logger.exception("close_project failed: %s", exc)
             return False
 
     def _click_export_button(self) -> bool:
-        try:
-            app = self._get_app()
-        except Exception as exc:  # pragma: no cover
-            logger.debug("Unable to access CapCut for export button: %s", exc)
-            return False
-
         export_keywords = ("ExportOkBtn", "Export video", "Export", "Start export")
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             button = self._find_button(window, export_keywords)
             if button is None:
                 continue
@@ -628,6 +867,22 @@ class MacCapCutAutomation(AutomationBackend):
                 return True
             except Exception as exc:
                 logger.debug("Failed to click export button: %s", exc)
+        return False
+
+    def _click_button_by_keywords(self, keywords: tuple[str, ...]) -> bool:
+        for window in self._iter_ui_roots():
+            button = self._find_button(window, keywords)
+            if button is None:
+                continue
+            try:
+                frame = button.AXFrame
+                center_x = frame.x + frame.width / 2
+                center_y = frame.y + frame.height / 2
+                pyautogui.moveTo(center_x, center_y, duration=0.15)
+                pyautogui.click()
+                return True
+            except Exception:
+                continue
         return False
 
     def _find_button(self, root, keywords: tuple[str, ...]):
@@ -680,13 +935,9 @@ class MacCapCutAutomation(AutomationBackend):
 
     def _is_export_success_dialog_visible(self) -> bool:
         """Check if the 'Export Complete' / 'Share' dialog is visible (UI Detection)."""
-        try:
-            app = self._get_app()
-        except Exception:
-            return False
-
         # Strong indicators of the success screen
-        # "Share to TikTok", "YouTube" are buttons usually present after export.
+        # Covers both the Share screen AND the simpler "Export complete" dialog
+        # that just shows "Open folder" + "OK".
         success_keywords = (
             "Share to TikTok",
             "YouTube",
@@ -697,9 +948,11 @@ class MacCapCutAutomation(AutomationBackend):
             "Exported",
             "Complete",
             "Hoàn thành",
+            "Open folder",   # simple export-done dialog
+            "Mở thư mục",    # Vietnamese variant
         )
 
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             # Check buttons first (Share buttons)
             if self._find_button(window, success_keywords):
                 return True
@@ -739,12 +992,6 @@ class MacCapCutAutomation(AutomationBackend):
     def _export_dialog_visible(self) -> bool:
         """Best-effort detection of CapCut's export window."""
 
-        try:
-            app = self._get_app()
-        except Exception as exc:  # pragma: no cover - tolerate lookup failures
-            logger.debug("Export dialog probe failed: %s", exc)
-            return False
-
         export_keywords = (
             "ExportOkBtn",
             "Export video",
@@ -760,7 +1007,7 @@ class MacCapCutAutomation(AutomationBackend):
         cancel_keywords = ("automationcancel", "Cancel", "Huỷ", "Hủy", "Đóng")
         label_keywords = ("ExportDialog", "Export", "Xuất", "Share")
 
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             if self._find_button(window, export_keywords):
                 return True
             if self._find_button(window, cancel_keywords):
@@ -770,12 +1017,6 @@ class MacCapCutAutomation(AutomationBackend):
         return False
 
     def _get_export_dialog_root(self):
-        try:
-            app = self._get_app()
-        except Exception as exc:  # pragma: no cover - tolerate lookup failures
-            logger.debug("Export dialog lookup failed: %s", exc)
-            return None
-
         export_keywords = (
             "ExportOkBtn",
             "Export video",
@@ -793,7 +1034,7 @@ class MacCapCutAutomation(AutomationBackend):
         cancel_keywords = ("automationcancel", "Cancel", "Huỷ", "Hủy", "Đóng")
         label_keywords = ("ExportDialog", "Export", "Xuất", "Share")
 
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             if self._find_button(window, export_keywords):
                 return window
             if self._find_button(window, cancel_keywords):
@@ -1010,12 +1251,7 @@ class MacCapCutAutomation(AutomationBackend):
         if dialog is not None:
             return self._read_export_destination_from_root(dialog, fallback_name)
 
-        try:
-            app = self._get_app()
-        except Exception:
-            return None, fallback_name
-
-        for window in app.AXWindows:
+        for window in self._iter_ui_roots():
             export_folder, export_name = self._read_export_destination_from_root(window, fallback_name)
             if export_folder is not None:
                 return export_folder, export_name

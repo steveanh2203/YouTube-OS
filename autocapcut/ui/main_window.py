@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import List
 
 from loguru import logger
 from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QFont, QFontDatabase, QTextCursor
+from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -203,7 +205,8 @@ class RenderWorker(QThread):
 
                 # Step 4: Close project
                 self._emit_log("[STEP 4/4] Closing project...")
-                automation.close_project()
+                if not automation.close_project():
+                    raise RuntimeError("Could not close project and return to dashboard")
                 self._emit_log("[STEP 4/4] ✓ Project closed, back to dashboard")
 
                 project.status = ProjectStatus.done
@@ -231,7 +234,14 @@ class RenderWorker(QThread):
         self._emit_log("========== RENDER WORKER FINISHED ==========")
         self._emit_log(f"Completed: {self._completed}, Failed: {self._failed}")
         self.job_finished.emit(self._completed, len(self.projects))
+class PasteAwareTextEdit(QTextEdit):
+    """QTextEdit that emits a signal whenever content is pasted."""
 
+    pasted = Signal()
+
+    def insertFromMimeData(self, source) -> None:  # pragma: no cover - Qt callback
+        super().insertFromMimeData(source)
+        self.pasted.emit()
 
 
 def _format_summary(summary: SyncSummary) -> str:
@@ -303,6 +313,8 @@ class MainWindow(QMainWindow):
         self._nav_group: QButtonGroup | None = None
         self._tool_stack: QStackedWidget | None = None
         self._tool_title_label: QLabel | None = None
+        self._font_family: str = "Space Grotesk"
+        self._updating_srt_paste_text: bool = False
 
         self._build_ui()
         self.refresh_projects()
@@ -340,26 +352,60 @@ class MainWindow(QMainWindow):
     # endregion
 
     def _build_ui(self) -> None:
+        self._font_family = self._load_fonts()
+
         container = QWidget(self)
         container.setObjectName("rootWidget")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
 
-        layout.addWidget(self._build_sidebar())
-        layout.addWidget(self._build_tool_panel(), 1)
-        layout.addWidget(self._build_project_panel(), 2)
+        sidebar = self._build_sidebar()
+        tool_panel = self._build_tool_panel()
+        project_panel = self._build_project_panel()
+
+        # Subtle drop shadows for depth
+        for widget, blur, opacity in (
+            (tool_panel, 24, 18),
+            (project_panel, 24, 18),
+        ):
+            fx = QGraphicsDropShadowEffect()
+            fx.setBlurRadius(blur)
+            fx.setXOffset(0)
+            fx.setYOffset(2)
+            fx.setColor(QColor(0, 0, 0, opacity))
+            widget.setGraphicsEffect(fx)
+
+        layout.addWidget(sidebar)
+        layout.addWidget(tool_panel, 5)
+        layout.addWidget(project_panel, 8)
 
         container.setLayout(layout)
         self.setCentralWidget(container)
         self._apply_styles()
         self._set_job_controls_state(False)
 
+    def _load_fonts(self) -> str:
+        """Load Space Grotesk from resources/fonts/. Returns family name."""
+        here = Path(__file__).resolve().parent.parent.parent
+        font_path = here / "resources" / "fonts" / "SpaceGrotesk.ttf"
+        family = "Space Grotesk"
+        if font_path.exists():
+            fid = QFontDatabase.addApplicationFont(str(font_path))
+            if fid != -1:
+                loaded = QFontDatabase.applicationFontFamilies(fid)
+                if loaded:
+                    family = loaded[0]
+        app = QApplication.instance()
+        if app:
+            app.setFont(QFont(family, 14))
+        return family
+
     def _build_sidebar(self) -> QFrame:
         """Build the dark left navigation sidebar."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(184)
+        sidebar.setFixedWidth(216)
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -396,9 +442,9 @@ class MainWindow(QMainWindow):
         nav_layout.addSpacing(4)
 
         for key, label in (
-            ("animation",  "🎞  Animation"),
-            ("effect",     "✨  Effect"),
-            ("transition", "⇌  Transition"),
+            ("animation", "Animation"),
+            ("effect", "Effects"),
+            ("transition", "Transitions"),
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -416,9 +462,9 @@ class MainWindow(QMainWindow):
         nav_layout.addSpacing(4)
 
         for key, label in (
-            ("remove_bg",  "🖼  Remove BG"),
-            ("rename",     "✏  Rename"),
-            ("srt",        "📄  Tạo SRT"),
+            ("remove_bg", "Background Removal"),
+            ("rename", "File Rename"),
+            ("srt", "SRT Generator"),
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -469,13 +515,6 @@ class MainWindow(QMainWindow):
         self._tool_stack.addWidget(self._build_srt_generator_tab())       # 5
         layout.addWidget(self._tool_stack, 1)
 
-        # ── Asset Panel (shared workspace folder) ────────────────────────────
-        sep = QFrame()
-        sep.setObjectName("assetSep")
-        sep.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(sep)
-        layout.addWidget(self._build_asset_panel())
-
         return panel
 
     def _switch_tool(self, key: str) -> None:
@@ -489,61 +528,17 @@ class MainWindow(QMainWindow):
             "srt":       5,
         }
         titles = {
-            "animation":  "Animation",
-            "effect":     "Effect",
-            "transition": "Transition",
+            "animation": "Animation",
+            "effect": "Effects",
+            "transition": "Transitions",
             "remove_bg":  "Remove Background",
-            "rename":     "Rename Files",
-            "srt":        "Tạo SRT",
+            "rename": "Rename Files",
+            "srt": "SRT Generator",
         }
         if self._tool_stack is not None:
             self._tool_stack.setCurrentIndex(index_map.get(key, 0))
         if self._tool_title_label is not None:
             self._tool_title_label.setText(titles.get(key, ""))
-
-    def _build_asset_panel(self) -> QWidget:
-        frame = QFrame()
-        frame.setObjectName("assetPanel")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 8, 0, 0)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(10)
-
-        label = QLabel("Image Preparation")
-        label.setObjectName("sectionLabel")
-        grid.addWidget(label, 0, 0, 1, 3)
-
-        image_caption = QLabel("Image Folder")
-        image_caption.setObjectName("assetCaption")
-        grid.addWidget(image_caption, 1, 0, 1, 3)
-
-        self.image_path_edit = QLineEdit()
-        self.image_path_edit.setPlaceholderText("Choose image folder…")
-        self.image_path_edit.setReadOnly(True)
-        self.image_path_edit.setObjectName("assetPath")
-        grid.addWidget(self.image_path_edit, 2, 0, 1, 2)
-
-        image_button = QPushButton("Browse Images")
-        image_button.setProperty("variant", "secondary")
-        image_button.setObjectName("assetBrowseButton")
-        image_button.clicked.connect(self._handle_select_image_folder)
-        grid.addWidget(image_button, 2, 2, 1, 1)
-
-        self.bulk_rename_btn = QPushButton("Bulk Rename")
-        self.bulk_rename_btn.setProperty("variant", "primary")
-        self.bulk_rename_btn.clicked.connect(self._handle_bulk_rename)
-        grid.addWidget(self.bulk_rename_btn, 3, 0, 1, 3)
-
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnMinimumWidth(2, 140)
-        layout.addLayout(grid)
-
-        return frame
 
     def _build_animation_tab(self) -> QWidget:
         tab = QWidget()
@@ -621,7 +616,7 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(12)
         self.insert_animation_button = QPushButton("Insert Animation")
-        self.insert_animation_button.setProperty("variant", "success")
+        self.insert_animation_button.setProperty("variant", "primary")
         self.insert_animation_button.clicked.connect(self._handle_animation_insert)
         self.remove_animation_button = QPushButton("Remove Animation")
         self.remove_animation_button.setProperty("variant", "danger")
@@ -732,6 +727,23 @@ class MainWindow(QMainWindow):
         info.setWordWrap(True)
         layout.addWidget(info)
 
+        folder_label = QLabel("Image Folder")
+        folder_label.setObjectName("sectionLabel")
+        layout.addWidget(folder_label)
+
+        folder_row = QHBoxLayout()
+        self.bg_path_edit = QLineEdit()
+        self.bg_path_edit.setPlaceholderText("Choose image folder…")
+        self.bg_path_edit.setReadOnly(True)
+        self.bg_path_edit.setObjectName("assetPath")
+        folder_row.addWidget(self.bg_path_edit, 1)
+
+        bg_browse_btn = QPushButton("Browse Folder")
+        bg_browse_btn.setProperty("variant", "secondary")
+        bg_browse_btn.clicked.connect(self._handle_select_image_folder)
+        folder_row.addWidget(bg_browse_btn)
+        layout.addLayout(folder_row)
+
         # Mode selection
         mode_layout = QHBoxLayout()
         mode_label = QLabel("Mode:")
@@ -809,7 +821,7 @@ class MainWindow(QMainWindow):
         self.rename_end_spin.valueChanged.connect(self._update_rename_preview)
         grid.addWidget(self.rename_end_spin, 1, 1)
 
-        self.rename_until_end = QCheckBox("Đến hết số file trong thư mục")
+        self.rename_until_end = QCheckBox("Use all files in folder")
         self.rename_until_end.setChecked(True)
         self.rename_until_end.toggled.connect(self._toggle_rename_end_state)
         grid.addWidget(self.rename_until_end, 2, 0, 1, 2)
@@ -839,13 +851,13 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         # ── SRT Input ──────────────────────────────────────────────
-        srt_label = QLabel("File SRT từ CapCut")
+        srt_label = QLabel("CapCut SRT File")
         srt_label.setObjectName("sectionLabel")
         layout.addWidget(srt_label)
 
         srt_row = QHBoxLayout()
         self.srt_input_path_edit = QLineEdit()
-        self.srt_input_path_edit.setPlaceholderText("Chọn file .srt…")
+        self.srt_input_path_edit.setPlaceholderText("Select .srt file…")
         self.srt_input_path_edit.setReadOnly(True)
         self.srt_input_path_edit.setObjectName("assetPath")
         srt_row.addWidget(self.srt_input_path_edit, 1)
@@ -857,7 +869,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(srt_row)
 
         # ── Content Input ──────────────────────────────────────────
-        content_label = QLabel("Content gốc")
+        content_label = QLabel("Source Content")
         content_label.setObjectName("sectionLabel")
         layout.addWidget(content_label)
 
@@ -876,7 +888,7 @@ class MainWindow(QMainWindow):
         file_row = QHBoxLayout(self.srt_content_file_widget)
         file_row.setContentsMargins(0, 0, 0, 0)
         self.srt_content_path_edit = QLineEdit()
-        self.srt_content_path_edit.setPlaceholderText("Chọn file content (.txt, .rtf…)")
+        self.srt_content_path_edit.setPlaceholderText("Select content file (.txt, .rtf…)")
         self.srt_content_path_edit.setReadOnly(True)
         self.srt_content_path_edit.setObjectName("assetPath")
         file_row.addWidget(self.srt_content_path_edit, 1)
@@ -889,18 +901,24 @@ class MainWindow(QMainWindow):
         self.srt_content_paste_widget = QWidget()
         paste_layout = QVBoxLayout(self.srt_content_paste_widget)
         paste_layout.setContentsMargins(0, 0, 0, 0)
-        self.srt_content_text = QTextEdit()
+        self.srt_content_text = PasteAwareTextEdit()
         self.srt_content_text.setPlaceholderText(
-            "Paste nội dung vào đây (mỗi dòng = 1 câu content)\n"
-            "Ví dụ:\n"
+            "Paste content here (one line = one caption)\n"
+            "Example:\n"
             "1. Have you noticed your hands tingling…\n"
             "2. or your legs feeling weaker…"
         )
         self.srt_content_text.setObjectName("contentPasteArea")
+        self.srt_content_text.pasted.connect(self._auto_number_srt_paste_content)
+        self.srt_content_text.textChanged.connect(self._handle_srt_content_text_changed)
         paste_layout.addWidget(self.srt_content_text)
 
         layout.addWidget(self.srt_content_file_widget)
         layout.addWidget(self.srt_content_paste_widget, 1)
+
+        self.srt_content_count_label = QLabel("Total content lines: 0")
+        self.srt_content_count_label.setObjectName("hintLabel")
+        layout.addWidget(self.srt_content_count_label)
 
         # Connect radios → toggle visibility
         self.srt_content_file_radio.toggled.connect(self._toggle_srt_content_mode)
@@ -908,8 +926,8 @@ class MainWindow(QMainWindow):
         self._toggle_srt_content_mode()
 
         # ── Generate button ────────────────────────────────────────
-        self.srt_generate_btn = QPushButton("Tạo file SRT")
-        self.srt_generate_btn.setProperty("variant", "success")
+        self.srt_generate_btn = QPushButton("Generate SRT")
+        self.srt_generate_btn.setProperty("variant", "primary")
         self.srt_generate_btn.clicked.connect(self._handle_srt_generate)
         layout.addWidget(self.srt_generate_btn)
 
@@ -919,8 +937,8 @@ class MainWindow(QMainWindow):
         self.srt_result_label.setWordWrap(True)
         layout.addWidget(self.srt_result_label)
 
-        self.srt_save_btn = QPushButton("Lưu file SRT output")
-        self.srt_save_btn.setProperty("variant", "primary")
+        self.srt_save_btn = QPushButton("Save Output SRT")
+        self.srt_save_btn.setProperty("variant", "secondary")
         self.srt_save_btn.setEnabled(False)
         self.srt_save_btn.clicked.connect(self._handle_srt_save)
         layout.addWidget(self.srt_save_btn)
@@ -930,7 +948,7 @@ class MainWindow(QMainWindow):
     def _build_project_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("projectPanel")
-        panel.setMinimumWidth(580)
+        panel.setMinimumWidth(640)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(24, 24, 24, 20)
         panel_layout.setSpacing(16)
@@ -948,7 +966,7 @@ class MainWindow(QMainWindow):
         self.project_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.project_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.project_table.verticalHeader().setVisible(False)
-        self.project_table.verticalHeader().setDefaultSectionSize(36)
+        self.project_table.verticalHeader().setDefaultSectionSize(40)
         self.project_table.setHorizontalHeaderLabels(
             ["Select", "Project", "Source", "Status", "Notes"]
         )
@@ -968,299 +986,510 @@ class MainWindow(QMainWindow):
         button_row.setSpacing(12)
 
         self.reload_button = QPushButton("Reload Projects")
-        self.reload_button.setProperty("variant", "secondary")
+        self.reload_button.setProperty("variant", "reload")
         self.reload_button.clicked.connect(self.refresh_projects)
 
         self.sync_audio_button = QPushButton("Sync Audio")
-        self.sync_audio_button.setProperty("variant", "success")
+        self.sync_audio_button.setProperty("variant", "audio")
         self.sync_audio_button.clicked.connect(self._handle_sync_clicked)
 
         self.sync_images_button = QPushButton("Sync Images")
-        self.sync_images_button.setProperty("variant", "primary")
+        self.sync_images_button.setProperty("variant", "images")
         self.sync_images_button.clicked.connect(self._handle_sync_images_clicked)
 
-        self.sync_caption_button = QPushButton("Sync Caption")
-        self.sync_caption_button.setProperty("variant", "primary")
+        self.sync_caption_button = QPushButton("Sync Captions")
+        self.sync_caption_button.setProperty("variant", "captions")
         self.sync_caption_button.clicked.connect(self._handle_sync_captions_clicked)
 
         self.auto_render_button = QPushButton("Auto Render")
-        self.auto_render_button.setProperty("variant", "success")
+        self.auto_render_button.setProperty("variant", "primary")
         self.auto_render_button.clicked.connect(self._handle_auto_render_clicked)
 
         button_row.addWidget(self.reload_button)
         button_row.addWidget(self.sync_audio_button)
         button_row.addWidget(self.sync_images_button)
         button_row.addWidget(self.sync_caption_button)
+        button_row.addStretch(1)
         button_row.addWidget(self.auto_render_button)
         panel_layout.addLayout(button_row)
 
         return panel
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet(
-            """
-            /* ── Root ────────────────────────────────────────────────────────── */
-            #rootWidget {
-                background: #e8eaf0;
-            }
+        import qdarktheme  # light theme base provided by pyqtdarktheme plugin
 
-            /* ── Sidebar ─────────────────────────────────────────────────────── */
-            #sidebar {
-                background: #1e293b;
-            }
-            #sidebarHeader {
-                background: #0f172a;
-            }
-            #appName {
-                font-size: 16px;
-                font-weight: 700;
-                color: #f1f5f9;
-                letter-spacing: -0.2px;
-            }
-            #appTagline {
-                font-size: 10px;
-                color: #475569;
-            }
-            #navArea {
+        base = qdarktheme.load_stylesheet("light")
+        ff = self._font_family
+
+        custom = f"""
+            * {{
+                font-family: "{ff}";
+                color: #0F172A;
+            }}
+
+            #rootWidget {{
+                background: #F1F5F9;
+            }}
+
+            #sidebar, #toolPanel, #projectPanel {{
+                background: #FFFFFF;
+                border: 1px solid #E2E8F0;
+                border-radius: 14px;
+            }}
+
+            #sidebarHeader {{
                 background: transparent;
-            }
-            QLabel#navSection {
-                font-size: 9px;
-                font-weight: 700;
-                color: #475569;
-                letter-spacing: 0.12em;
-                padding-left: 4px;
-            }
-            QPushButton#navBtn {
-                background: transparent;
-                color: #94a3b8;
                 border: none;
-                border-radius: 8px;
-                padding: 9px 12px;
+                border-bottom: 1px solid #E2E8F0;
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }}
+
+            #sidebarHeader QLabel, #navArea QLabel {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+            }}
+
+            #appName {{
+                font-size: 17px;
+                font-weight: 700;
+                color: #0F172A;
+                letter-spacing: -0.02em;
+            }}
+
+            #appTagline {{
+                font-size: 11px;
+                color: #64748B;
+            }}
+
+            #navArea {{
+                background: transparent;
+                border: none;
+            }}
+
+            QLabel#navSection {{
+                font-size: 10px;
+                font-weight: 700;
+                color: #94A3B8;
+                letter-spacing: 0.08em;
+                background: transparent;
+                border: none;
+            }}
+
+            QPushButton#navBtn {{
+                background: transparent;
+                border: none;
+                border-radius: 9px;
+                padding: 9px 14px;
+                min-height: 38px;
                 text-align: left;
                 font-size: 13px;
-                font-weight: 500;
-                min-height: 36px;
-            }
-            QPushButton#navBtn:hover:!checked {
-                background: rgba(255, 255, 255, 0.06);
-                color: #e2e8f0;
-            }
-            QPushButton#navBtn:checked {
-                background: #6366f1;
-                color: #ffffff;
-            }
-
-            /* ── Tool Panel ──────────────────────────────────────────────────── */
-            #toolPanel {
-                background: #ffffff;
-                border-right: 1px solid #e5e7eb;
-            }
-            #toolHeader {
-                background: #ffffff;
-                border-bottom: 1px solid #f1f5f9;
-            }
-            #toolTitle {
-                font-size: 20px;
-                font-weight: 700;
-                color: #0f172a;
-            }
-            #toolStack {
-                background: #ffffff;
-            }
-            QFrame#assetSep {
-                border: none;
-                border-top: 1px solid #e5e7eb;
-                max-height: 1px;
-                min-height: 1px;
-            }
-            #assetPanel {
-                background: #f8fafc;
-            }
-
-            /* ── Project Panel ───────────────────────────────────────────────── */
-            #projectPanel {
-                background: #ffffff;
-            }
-            #projectTitle {
-                font-size: 20px;
-                font-weight: 700;
-                color: #0f172a;
-            }
-
-            /* ── Buttons ─────────────────────────────────────────────────────── */
-            QPushButton {
-                min-height: 32px;
-                padding: 4px 12px;
-                border-radius: 8px;
-                font-size: 13px;
-                font-weight: 500;
-            }
-            QPushButton[variant="primary"] {
-                background: #6366f1;
-                color: white;
-                border: none;
-            }
-            QPushButton[variant="primary"]:hover:!disabled {
-                background: #4f46e5;
-            }
-            QPushButton[variant="primary"]:disabled {
-                background: #c7d2fe;
-                color: #e0e7ff;
-            }
-            QPushButton[variant="success"] {
-                background: #10b981;
-                color: white;
-                border: none;
-            }
-            QPushButton[variant="success"]:hover:!disabled {
-                background: #059669;
-            }
-            QPushButton[variant="secondary"] {
-                background: transparent;
-                color: #374151;
-                border: 1px solid #d1d5db;
-            }
-            QPushButton[variant="secondary"]:hover:!disabled {
-                border-color: #9ca3af;
-                color: #111827;
-            }
-            QPushButton[variant="pill"] {
-                background: #e5e7eb;
-                color: #1f2937;
-                border-radius: 10px;
-                border: none;
-                padding: 4px 12px;
-                min-width: 80px;
-            }
-            QPushButton[variant="pill"]:checked {
-                background: #6366f1;
-                color: white;
-            }
-            QPushButton[variant="danger"] {
-                background: #ef4444;
-                color: white;
-                border: none;
-            }
-            QPushButton[variant="danger"]:hover:!disabled {
-                background: #dc2626;
-            }
-            QPushButton[variant="danger"]:disabled {
-                background: #fca5a5;
-                color: #fee2e2;
-            }
-
-            /* ── Inputs ──────────────────────────────────────────────────────── */
-            QLineEdit#searchField {
-                padding: 8px 12px;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                background: #ffffff;
-                font-size: 13px;
-            }
-            QLineEdit#searchField:focus {
-                border-color: #6366f1;
-            }
-            QLineEdit#assetPath {
-                padding: 8px 12px;
-                border: 1px solid #d1d5db;
-                border-radius: 8px;
-                background: #f9fafb;
-                font-size: 13px;
-            }
-            QLineEdit#assetPath:focus {
-                border-color: #6366f1;
-                background: #ffffff;
-            }
-
-            /* ── Labels ──────────────────────────────────────────────────────── */
-            QLabel#sectionLabel {
-                font-size: 11px;
-                font-weight: 600;
-                color: #64748b;
-                letter-spacing: 0.06em;
-            }
-            QLabel#assetCaption {
-                font-size: 11px;
                 font-weight: 600;
                 color: #475569;
-                letter-spacing: 0.04em;
-            }
-            QLabel#hintLabel {
-                font-size: 12px;
-                color: #6b7280;
-            }
-            #statusLabel {
-                font-size: 12px;
-                color: #4b5563;
-                padding-left: 2px;
-            }
+            }}
 
-            /* ── Duration Frame ──────────────────────────────────────────────── */
-            #durationFrame {
-                background: #f8fafc;
-                border: 1px solid #e2e8f0;
-                border-radius: 10px;
-            }
+            QPushButton#navBtn:hover:!checked {{
+                background: #F8FAFC;
+                color: #0F172A;
+            }}
 
-            /* ── Preset Lists ────────────────────────────────────────────────── */
-            QListWidget#presetList {
-                border: 1px solid #e5e7eb;
-                border-radius: 8px;
-                background: #ffffff;
-                outline: none;
-                font-size: 13px;
-            }
-            QListWidget#presetList::item {
-                padding: 6px 10px;
-                border-radius: 4px;
-            }
-            QListWidget#presetList::item:selected {
-                background: #e0e7ff;
-                color: #3730a3;
-            }
-            QListWidget#presetList::item:hover:!selected {
-                background: #f5f3ff;
-            }
+            QPushButton#navBtn:checked {{
+                background: #EFF6FF;
+                color: #1D4ED8;
+                border-left: 3px solid #2563EB;
+                padding-left: 11px;
+            }}
 
-            /* ── Project Table ───────────────────────────────────────────────── */
-            #projectTable {
-                border: 1px solid #e5e7eb;
-                border-radius: 10px;
-                background: #ffffff;
-                gridline-color: #f1f5f9;
-            }
-            #projectTable::item {
-                padding: 6px;
-                font-size: 13px;
-            }
-            QTableWidget QTableCornerButton::section {
-                background: #f8fafc;
+            #toolHeader {{
+                background: #F8FAFC;
                 border: none;
-            }
-            QHeaderView::section {
-                background: #f8fafc;
-                color: #374151;
+                border-bottom: 1px solid #E2E8F0;
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }}
+
+            #toolTitle, #projectTitle {{
+                font-size: 18px;
+                font-weight: 700;
+                color: #0F172A;
+                letter-spacing: -0.02em;
+            }}
+
+            #toolStack {{
+                background: #FFFFFF;
+                border: none;
+            }}
+
+            QPushButton {{
+                min-height: 36px;
+                padding: 5px 16px;
+                border-radius: 10px;
+                font-size: 13px;
                 font-weight: 600;
-                font-size: 12px;
-                border: none;
-                border-right: 1px solid #e5e7eb;
-                border-bottom: 1px solid #e5e7eb;
-                padding: 8px;
-            }
-            QHeaderView::section:last {
-                border-right: none;
-            }
+            }}
 
-            /* ── Misc ────────────────────────────────────────────────────────── */
-            QPushButton#assetBrowseButton {
-                min-width: 116px;
-            }
-            QMessageBox {
-                background: #ffffff;
-            }
-            """
-        )
+            QPushButton:disabled {{
+                background: #E2E8F0;
+                color: #94A3B8;
+                border: 1px solid #CBD5E1;
+            }}
+
+            QPushButton[variant="primary"] {{
+                background: #2563EB;
+                color: #FFFFFF;
+                border: 1px solid #2563EB;
+            }}
+
+            QPushButton[variant="primary"]:hover:!disabled {{
+                background: #1D4ED8;
+                border-color: #1D4ED8;
+            }}
+
+            QPushButton[variant="primary"]:pressed:!disabled {{
+                background: #1E40AF;
+                border-color: #1E40AF;
+            }}
+
+            QPushButton[variant="secondary"] {{
+                background: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+            }}
+
+            QPushButton[variant="secondary"]:hover:!disabled {{
+                background: #F8FAFC;
+                border-color: #94A3B8;
+            }}
+
+            QPushButton[variant="reload"] {{
+                background: #FFFFFF;
+                color: #334155;
+                border: 1px solid #CBD5E1;
+            }}
+
+            QPushButton[variant="reload"]:hover:!disabled {{
+                background: #F8FAFC;
+                border-color: #94A3B8;
+                color: #0F172A;
+            }}
+
+            QPushButton[variant="audio"] {{
+                background: #EFF6FF;
+                color: #1D4ED8;
+                border: 1px solid #BFDBFE;
+            }}
+
+            QPushButton[variant="audio"]:hover:!disabled {{
+                background: #DBEAFE;
+                border-color: #93C5FD;
+                color: #1E40AF;
+            }}
+
+            QPushButton[variant="images"] {{
+                background: #ECFDF5;
+                color: #047857;
+                border: 1px solid #A7F3D0;
+            }}
+
+            QPushButton[variant="images"]:hover:!disabled {{
+                background: #D1FAE5;
+                border-color: #6EE7B7;
+                color: #065F46;
+            }}
+
+            QPushButton[variant="captions"] {{
+                background: #EEF2FF;
+                color: #4338CA;
+                border: 1px solid #C7D2FE;
+            }}
+
+            QPushButton[variant="captions"]:hover:!disabled {{
+                background: #E0E7FF;
+                border-color: #A5B4FC;
+                color: #3730A3;
+            }}
+
+            QPushButton[variant="pill"] {{
+                min-width: 86px;
+                border-radius: 11px;
+                background: #E2E8F0;
+                border: 1px solid #E2E8F0;
+                color: #334155;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+
+            QPushButton[variant="pill"]:checked {{
+                background: #1D4ED8;
+                border-color: #1D4ED8;
+                color: #FFFFFF;
+            }}
+
+            QPushButton[variant="success"] {{
+                background: #059669;
+                border: 1px solid #059669;
+                color: #FFFFFF;
+            }}
+
+            QPushButton[variant="success"]:hover:!disabled {{
+                background: #047857;
+                border-color: #047857;
+            }}
+
+            QPushButton[variant="danger"] {{
+                background: #DC2626;
+                border: 1px solid #DC2626;
+                color: #FFFFFF;
+            }}
+
+            QPushButton[variant="danger"]:hover:!disabled {{
+                background: #B91C1C;
+                border-color: #B91C1C;
+            }}
+
+            QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTextEdit {{
+                font-size: 13px;
+                border: 1px solid #CBD5E1;
+                border-radius: 10px;
+                background: #FFFFFF;
+                padding: 8px 11px;
+                color: #0F172A;
+                selection-background-color: #DBEAFE;
+                selection-color: #1E3A8A;
+            }}
+
+            QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QTextEdit:focus {{
+                border: 1px solid #2563EB;
+                background: #FFFFFF;
+            }}
+
+            QLineEdit#assetPath {{
+                background: #F8FAFC;
+                color: #334155;
+            }}
+
+            QLabel#sectionLabel, QLabel#assetCaption {{
+                font-size: 11px;
+                font-weight: 700;
+                color: #64748B;
+                letter-spacing: 0.06em;
+            }}
+
+            QLabel#hintLabel {{
+                font-size: 13px;
+                color: #64748B;
+            }}
+
+            #statusLabel {{
+                font-size: 13px;
+                color: #475569;
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+            }}
+
+            #durationFrame {{
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }}
+
+            QListWidget#presetList {{
+                font-size: 13px;
+                border: 1px solid #CBD5E1;
+                border-radius: 10px;
+                background: #FFFFFF;
+            }}
+
+            QListWidget#presetList::item {{
+                padding: 8px 12px;
+                border-radius: 6px;
+            }}
+
+            QListWidget#presetList::item:hover:!selected {{
+                background: #F8FAFC;
+            }}
+
+            QListWidget#presetList::item:selected {{
+                background: #DBEAFE;
+                color: #1E3A8A;
+                font-weight: 600;
+            }}
+
+            #projectTable {{
+                font-size: 13px;
+                border: 1px solid #CBD5E1;
+                border-radius: 12px;
+                background: #FFFFFF;
+                alternate-background-color: #F8FAFC;
+                gridline-color: #E2E8F0;
+            }}
+
+            #projectTable::item {{
+                padding: 7px 8px;
+                color: #334155;
+            }}
+
+            #projectTable::item:selected {{
+                background: #DBEAFE;
+                color: #1E3A8A;
+            }}
+
+            QTableWidget QTableCornerButton::section {{
+                background: #F1F5F9;
+                border: none;
+            }}
+
+            QHeaderView::section {{
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                background: #F1F5F9;
+                color: #475569;
+                border: none;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+                padding: 10px 8px;
+            }}
+
+            QHeaderView::section:last {{
+                border-right: none;
+            }}
+
+            QTableWidget QWidget, QTableWidget QCheckBox {{
+                background: transparent;
+                border: none;
+            }}
+
+            QTableWidget QCheckBox#rowSelectCheckbox {{
+                spacing: 0px;
+                margin: 0px;
+                padding: 0px;
+            }}
+
+            QTableWidget QCheckBox#rowSelectCheckbox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 1px solid #94A3B8;
+                border-radius: 4px;
+                background: #FFFFFF;
+                image: none;
+            }}
+
+            QTableWidget QCheckBox#rowSelectCheckbox::indicator:hover {{
+                border-color: #2563EB;
+            }}
+
+            QTableWidget QCheckBox#rowSelectCheckbox::indicator:unchecked {{
+                image: none;
+            }}
+
+            QTableWidget QCheckBox#rowSelectCheckbox::indicator:checked {{
+                background: #2563EB;
+                border-color: #2563EB;
+                image: none;
+            }}
+
+            QTableWidget QLabel#rowSelectOrderLabel {{
+                min-width: 18px;
+                max-width: 18px;
+                color: #1D4ED8;
+                font-size: 11px;
+                font-weight: 700;
+                background: transparent;
+                border: none;
+            }}
+
+            QMessageBox, QProgressDialog, QDialog#renderLogDialog {{
+                background: #FFFFFF;
+                border: 1px solid #D5DEE9;
+                border-radius: 12px;
+                font-family: "{ff}";
+            }}
+
+            QMessageBox QLabel, QProgressDialog QLabel, QDialog#renderLogDialog QLabel {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                color: #334155;
+            }}
+
+            QMessageBox QLabel#qt_msgbox_label {{
+                min-width: 280px;
+            }}
+
+            QMessageBox QPushButton, QProgressDialog QPushButton {{
+                min-height: 34px;
+                padding: 4px 14px;
+                border-radius: 9px;
+                background: #FFFFFF;
+                color: #0F172A;
+                border: 1px solid #CBD5E1;
+            }}
+
+            QMessageBox QPushButton:hover:!disabled, QProgressDialog QPushButton:hover:!disabled {{
+                background: #F8FAFC;
+                border-color: #94A3B8;
+            }}
+
+            QProgressDialog QProgressBar, QDialog#renderLogDialog QProgressBar#renderProgressBar {{
+                min-height: 12px;
+                max-height: 12px;
+                border-radius: 6px;
+                border: 1px solid #D6DEE9;
+                background: #EEF2F7;
+                text-align: center;
+                color: #334155;
+            }}
+
+            QProgressDialog QProgressBar::chunk, QDialog#renderLogDialog QProgressBar#renderProgressBar::chunk {{
+                border-radius: 5px;
+                background: #2563EB;
+            }}
+
+            QDialog#renderLogDialog QLabel#renderProgressLabel {{
+                font-size: 13px;
+                font-weight: 600;
+                color: #334155;
+            }}
+
+            QDialog#renderLogDialog QTextEdit#renderLogText {{
+                background: #F8FAFC;
+                border: 1px solid #D6DEE9;
+                border-radius: 10px;
+                color: #0F172A;
+                padding: 8px 10px;
+            }}
+
+            QDialog#renderLogDialog QPushButton#renderCloseButton {{
+                min-width: 88px;
+            }}
+
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 2px;
+            }}
+
+            QScrollBar::handle:vertical {{
+                background: #94A3B8;
+                border-radius: 4px;
+                min-height: 42px;
+            }}
+
+            QScrollBar::handle:vertical:hover {{
+                background: #64748B;
+            }}
+
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """
+        self.setStyleSheet(base + "\n" + custom)
 
     def _current_animation_mode(self) -> str:
         for key, button in (self.animation_mode_buttons or {}).items():
@@ -1339,7 +1568,6 @@ class MainWindow(QMainWindow):
             getattr(self, "sync_audio_button", None),
             getattr(self, "sync_images_button", None),
             getattr(self, "sync_caption_button", None),
-            getattr(self, "bulk_rename_btn", None),
             getattr(self, "rename_run_btn", None),
             getattr(self, "rename_browse_btn", None),
             getattr(self, "insert_animation_button", None),
@@ -1375,6 +1603,16 @@ class MainWindow(QMainWindow):
         return
 
     # region project table helpers
+    @staticmethod
+    def _status_color(status: ProjectStatus) -> QColor:
+        palette = {
+            ProjectStatus.pending: QColor("#64748B"),
+            ProjectStatus.processing: QColor("#2563EB"),
+            ProjectStatus.done: QColor("#059669"),
+            ProjectStatus.failed: QColor("#DC2626"),
+        }
+        return palette.get(status, QColor("#374151"))
+
     def _refresh_project_metadata(self, project: ProjectItem) -> None:
         info = project.refresh_metadata()
         project.status = ProjectStatus.pending
@@ -1395,12 +1633,47 @@ class MainWindow(QMainWindow):
 
         project.notes = " · ".join(parts)
 
+    def _selected_projects_in_order(self) -> list[ProjectItem]:
+        selected = [p for p in self.projects if p.is_selected]
+        selected.sort(
+            key=lambda p: p.selection_order if p.selection_order is not None else 1_000_000
+        )
+        return selected
+
+    def _normalize_selection_orders(self) -> None:
+        order = 1
+        for project in self._selected_projects_in_order():
+            project.selection_order = order
+            order += 1
+        for project in self.projects:
+            if not project.is_selected:
+                project.selection_order = None
+
+    def _refresh_selection_order_widgets(self) -> None:
+        if self.project_table is None:
+            return
+        for row, project in enumerate(self.projects):
+            container = self.project_table.cellWidget(row, self.columns.select)
+            if container is None:
+                continue
+            label = container.findChild(QLabel, "rowSelectOrderLabel")
+            if label is None:
+                continue
+            if project.is_selected and project.selection_order is not None:
+                label.setText(str(project.selection_order))
+            else:
+                label.setText("")
+
     def refresh_projects(self) -> None:
-        previously_selected = {p.name for p in self.projects if p.is_selected}
+        previously_selected = self._selected_projects_in_order()
+        selected_order_by_path = {p.path: idx + 1 for idx, p in enumerate(previously_selected)}
         self.projects = discover_projects()
         for project in self.projects:
-            project.is_selected = project.name in previously_selected
+            previous_order = selected_order_by_path.get(project.path)
+            project.is_selected = previous_order is not None
+            project.selection_order = previous_order
             self._refresh_project_metadata(project)
+        self._normalize_selection_orders()
         if not self.projects:
             logger.warning("No CapCut projects found. Check your CapCut library path.")
         self._populate_table()
@@ -1413,19 +1686,29 @@ class MainWindow(QMainWindow):
         self.project_table.setRowCount(len(self.projects))
         for row, project in enumerate(self.projects):
             checkbox = QCheckBox()
+            checkbox.setObjectName("rowSelectCheckbox")
             checkbox.setChecked(project.is_selected)
             checkbox.stateChanged.connect(self._make_checkbox_handler(project))
             checkbox_container = QWidget()
             container_layout = QHBoxLayout(checkbox_container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            container_layout.setSpacing(6)
             container_layout.addWidget(checkbox)
+            order_label = QLabel("")
+            order_label.setObjectName("rowSelectOrderLabel")
+            order_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            order_label.setFixedWidth(18)
+            if project.is_selected and project.selection_order is not None:
+                order_label.setText(str(project.selection_order))
+            container_layout.addWidget(order_label)
             self.project_table.setCellWidget(row, self.columns.select, checkbox_container)
 
             name_item = QTableWidgetItem(project.name)
             source_item = QTableWidgetItem(project.source.label())
             status_item = QTableWidgetItem(project.status.label())
             notes_item = QTableWidgetItem(project.notes)
+            status_item.setForeground(QBrush(self._status_color(project.status)))
 
             for column, item in (
                 (self.columns.name, name_item),
@@ -1441,8 +1724,21 @@ class MainWindow(QMainWindow):
 
     def _make_checkbox_handler(self, project: ProjectItem):
         def handler(state: int) -> None:
-            project.is_selected = Qt.CheckState(state) == Qt.CheckState.Checked
-            logger.debug("Project %s selection=%s", project.name, project.is_selected)
+            checked = Qt.CheckState(state) == Qt.CheckState.Checked
+            if checked and not project.is_selected:
+                next_order = max((p.selection_order or 0) for p in self.projects) + 1
+                project.selection_order = next_order
+            if not checked:
+                project.selection_order = None
+            project.is_selected = checked
+            self._normalize_selection_orders()
+            self._refresh_selection_order_widgets()
+            logger.debug(
+                "Project %s selection=%s order=%s",
+                project.name,
+                project.is_selected,
+                project.selection_order,
+            )
             if self._status_message_override is None:
                 self._update_status_label()
             else:
@@ -1457,6 +1753,7 @@ class MainWindow(QMainWindow):
             notes_item = self.project_table.item(row, self.columns.notes)
             if status_item is not None:
                 status_item.setText(project.status.label())
+                status_item.setForeground(QBrush(self._status_color(project.status)))
             if notes_item is not None:
                 notes_item.setText(project.notes)
         if self._status_message_override is None:
@@ -1468,8 +1765,8 @@ class MainWindow(QMainWindow):
 
     def _set_image_folder(self, folder: Path) -> None:
         self.image_folder = folder
-        if getattr(self, "image_path_edit", None):
-            self.image_path_edit.setText(str(folder))
+        if getattr(self, "bg_path_edit", None):
+            self.bg_path_edit.setText(str(folder))
         if getattr(self, "rename_path_edit", None):
             self.rename_path_edit.setText(str(folder))
 
@@ -1491,10 +1788,63 @@ class MainWindow(QMainWindow):
             self.srt_content_file_widget.setVisible(not paste_mode)
         if hasattr(self, "srt_content_paste_widget"):
             self.srt_content_paste_widget.setVisible(bool(paste_mode))
+        if hasattr(self, "srt_content_count_label"):
+            self.srt_content_count_label.setVisible(bool(paste_mode))
+        if paste_mode:
+            self._handle_srt_content_text_changed()
+
+    @staticmethod
+    def _extract_srt_content_lines(raw_text: str) -> list[str]:
+        lines: list[str] = []
+        for raw_line in raw_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            # Remove existing numbering prefixes such as "1. ", "2) ", "3: ".
+            match = re.match(r"^\d+\s*[.):-]\s*(.+)$", line)
+            if match:
+                line = match.group(1).strip()
+            if line:
+                lines.append(line)
+        return lines
+
+    def _set_srt_content_count(self, count: int) -> None:
+        if not hasattr(self, "srt_content_count_label"):
+            return
+        noun = "line" if count == 1 else "lines"
+        self.srt_content_count_label.setText(f"Total content {noun}: {count}")
+
+    def _handle_srt_content_text_changed(self) -> None:
+        if not hasattr(self, "srt_content_text"):
+            return
+        if self._updating_srt_paste_text:
+            return
+        lines = self._extract_srt_content_lines(self.srt_content_text.toPlainText())
+        self._set_srt_content_count(len(lines))
+
+    def _auto_number_srt_paste_content(self) -> None:
+        if not hasattr(self, "srt_content_text"):
+            return
+        if self._updating_srt_paste_text:
+            return
+
+        lines = self._extract_srt_content_lines(self.srt_content_text.toPlainText())
+        numbered_text = "\n".join(f"{idx}. {line}" for idx, line in enumerate(lines, 1))
+
+        self._updating_srt_paste_text = True
+        try:
+            self.srt_content_text.setPlainText(numbered_text)
+            cursor = self.srt_content_text.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.srt_content_text.setTextCursor(cursor)
+        finally:
+            self._updating_srt_paste_text = False
+
+        self._set_srt_content_count(len(lines))
 
     def _handle_srt_input_browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file SRT từ CapCut", str(Path.home()), "SRT files (*.srt);;All files (*)"
+            self, "Select CapCut SRT file", str(Path.home()), "SRT files (*.srt);;All files (*)"
         )
         if path:
             self.srt_input_path = Path(path)
@@ -1503,7 +1853,7 @@ class MainWindow(QMainWindow):
 
     def _handle_content_file_browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Chọn file content", str(Path.home()),
+            self, "Select content file", str(Path.home()),
             "Text files (*.txt *.rtf *.md);;All files (*)"
         )
         if path:
@@ -1514,7 +1864,7 @@ class MainWindow(QMainWindow):
     def _handle_srt_generate(self) -> None:
         # Validate SRT input
         if not self.srt_input_path:
-            QMessageBox.information(self, "Thiếu input", "Vui lòng chọn file .srt từ CapCut.")
+            QMessageBox.information(self, "Missing input", "Please select a CapCut .srt file.")
             return
 
         # Get content text
@@ -1522,17 +1872,17 @@ class MainWindow(QMainWindow):
         if paste_mode:
             content_text = self.srt_content_text.toPlainText().strip() if hasattr(self, "srt_content_text") else ""
             if not content_text:
-                QMessageBox.information(self, "Thiếu content", "Vui lòng paste nội dung vào ô text.")
+                QMessageBox.information(self, "Missing content", "Please paste content into the text area.")
                 return
         else:
             if not self.srt_content_file_path:
-                QMessageBox.information(self, "Thiếu file", "Vui lòng chọn file content.")
+                QMessageBox.information(self, "Missing file", "Please select a content file.")
                 return
             try:
                 from autocapcut.services.srt_generator import _read_file_text
                 content_text = _read_file_text(self.srt_content_file_path)
             except OSError as exc:
-                QMessageBox.warning(self, "Lỗi đọc file", str(exc))
+                QMessageBox.warning(self, "File read error", str(exc))
                 return
 
         # Generate
@@ -1540,16 +1890,16 @@ class MainWindow(QMainWindow):
             self._generated_srt = generate_merged_srt(self.srt_input_path, content_text)
             entry_count = self._generated_srt.count("\n\n") + 1
             if hasattr(self, "srt_result_label"):
-                self.srt_result_label.setText(f"✅ Tạo thành công {entry_count} entries!")
+                self.srt_result_label.setText(f"Generated successfully: {entry_count} entries.")
             if hasattr(self, "srt_save_btn"):
                 self.srt_save_btn.setEnabled(True)
         except SRTGeneratorError as exc:
             self._generated_srt = None
             if hasattr(self, "srt_result_label"):
-                self.srt_result_label.setText(f"❌ Lỗi: {exc}")
+                self.srt_result_label.setText(f"Error: {exc}")
             if hasattr(self, "srt_save_btn"):
                 self.srt_save_btn.setEnabled(False)
-            QMessageBox.warning(self, "Lỗi tạo SRT", str(exc))
+            QMessageBox.warning(self, "SRT generation failed", str(exc))
 
     def _handle_srt_save(self) -> None:
         if not self._generated_srt:
@@ -1558,14 +1908,14 @@ class MainWindow(QMainWindow):
         if self.srt_input_path:
             default_name = self.srt_input_path.stem + "_merged.srt"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Lưu file SRT", str(Path.home() / default_name), "SRT files (*.srt)"
+            self, "Save SRT file", str(Path.home() / default_name), "SRT files (*.srt)"
         )
         if path:
             try:
                 Path(path).write_text(self._generated_srt, encoding="utf-8")
-                QMessageBox.information(self, "Lưu thành công", f"Đã lưu:\n{path}")
+                QMessageBox.information(self, "Saved", f"Saved to:\n{path}")
             except OSError as exc:
-                QMessageBox.warning(self, "Lỗi lưu file", str(exc))
+                QMessageBox.warning(self, "Save failed", str(exc))
 
     def _handle_remove_background(self) -> None:
         if not self.image_folder:
@@ -1663,21 +2013,6 @@ class MainWindow(QMainWindow):
         else:
             text = f"Format: image_{start:0{width}d}, image_{second:0{width}d}…"
         self.rename_hint_label.setText(text)
-
-    def _handle_bulk_rename(self) -> None:
-        if not self.image_folder:
-            QMessageBox.information(self, "No folder", "Select an image folder before renaming.")
-            return
-        try:
-            summary = bulk_rename(self.image_folder, "image")
-        except BulkRenameError as exc:
-            QMessageBox.warning(self, "Bulk rename failed", str(exc))
-            return
-        message = (
-            f"{summary.folder}: renamed {summary.renamed}, skipped {summary.skipped}\n"
-            f"Range: {summary.start:0{summary.width}d} \u2192 {summary.end:0{summary.width}d}"
-        )
-        QMessageBox.information(self, "Bulk rename", message)
 
     def on_auto_render(self) -> None:
         """Handle auto-render button click."""
@@ -2033,7 +2368,7 @@ class MainWindow(QMainWindow):
 
     def _handle_auto_render_clicked(self) -> None:
         """Handle Auto Render button click."""
-        selected = [p for p in self.projects if p.is_selected]
+        selected = self._selected_projects_in_order()
         if not selected:
             QMessageBox.information(
                 self,
@@ -2215,6 +2550,7 @@ class MainWindow(QMainWindow):
         if self._render_log_dialog is not None:
             return
         dialog = QDialog(self)
+        dialog.setObjectName("renderLogDialog")
         dialog.setWindowTitle("Auto Render Progress")
         dialog.setModal(False)
         dialog.resize(640, 420)
@@ -2240,6 +2576,7 @@ class MainWindow(QMainWindow):
 
         close_button = QPushButton("Close")
         close_button.setProperty("variant", "secondary")
+        close_button.setObjectName("renderCloseButton")
         close_button.clicked.connect(dialog.hide)
         layout.addWidget(close_button)
 
