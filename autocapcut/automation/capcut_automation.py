@@ -744,51 +744,62 @@ class MacCapCutAutomation(AutomationBackend):
         return False
 
     def _finish_render(self) -> bool:
-        """Dismiss the export-complete / Share dialog and return to the editor.
-
-        Uses the active CapCut ``closeDialog`` shortcut (from keymap config)
-        and falls back to Escape if needed.
-        """
+        """Dismiss the export-complete / Share dialog and return to the editor."""
         self.focus_capcut()
         if not self._is_export_success_dialog_visible():
             return True
 
         logger.info("Dismissing completion dialog")
-        dismiss_keywords = (
-            "automationcancel",
-            "Cancel",
-            "Close",
-            "Done",
-            "OK",
-            "Đóng",
-            "Hủy",
-            "Huỷ",
-        )
+        # "Cancel" closes the Share / export-done dialog without uploading.
+        cancel_keywords = ("Cancel", "Hủy", "Huỷ", "Đóng", "Close", "Done", "OK")
 
-        for _ in range(5):
-            if self._click_button_by_keywords(dismiss_keywords):
+        for attempt in range(6):
+            # ── Strategy 1: AX Press on Cancel button (most reliable) ──────
+            cancelled = False
+            for window in self._iter_ui_roots():
+                button = self._find_button(window, cancel_keywords)
+                if button is None:
+                    continue
+                # Try native AX action first
+                try:
+                    button.Press()
+                    cancelled = True
+                    logger.debug("  Dismissed via AXPress (attempt %d)", attempt + 1)
+                    break
+                except Exception:
+                    pass
+                # Fallback: pyautogui click at button coordinates
+                try:
+                    frame = button.AXFrame
+                    cx = frame.x + frame.width / 2
+                    cy = frame.y + frame.height / 2
+                    pyautogui.moveTo(cx, cy, duration=0.1)
+                    pyautogui.click()
+                    cancelled = True
+                    logger.debug("  Dismissed via pyautogui click (attempt %d)", attempt + 1)
+                    break
+                except Exception:
+                    pass
+                break  # tried this window; move on
+
+            if cancelled:
                 time.sleep(0.6)
                 if not self._is_export_success_dialog_visible():
                     return True
 
-            close_dialog_shortcut = self._action_shortcut("closeDialog", ("escape",))
-            self._send_shortcut(close_dialog_shortcut)
+            # ── Strategy 2: fn+Esc (confirmed shortcut for this dialog) ───
+            pyautogui.hotkey("fn", "escape")
             time.sleep(0.5)
             if not self._is_export_success_dialog_visible():
                 return True
 
-            # Additional fallback: some mac keyboards/CapCut states respond to fn+Esc.
-            pyautogui.hotkey("fn", "escape")
-            time.sleep(0.4)
-            if not self._is_export_success_dialog_visible():
-                return True
-
+            # ── Strategy 3: plain Escape ───────────────────────────────────
             pyautogui.press("escape")
             time.sleep(0.5)
             if not self._is_export_success_dialog_visible():
                 return True
 
-        logger.warning("Completion dialog is still visible after all dismiss attempts.")
+        logger.warning("Completion dialog still visible after all dismiss attempts.")
         return not self._is_export_success_dialog_visible()
 
     def _get_video_files(self, folder) -> set:
@@ -934,47 +945,36 @@ class MacCapCutAutomation(AutomationBackend):
         return None
 
     def _is_export_success_dialog_visible(self) -> bool:
-        """Check if the 'Export Complete' / 'Share' dialog is visible (UI Detection)."""
-        # Strong indicators of the success screen
-        # Covers both the Share screen AND the simpler "Export complete" dialog
-        # that just shows "Open folder" + "OK".
-        success_keywords = (
-            "Share to TikTok",
-            "YouTube",
-            "Facebook",
-            "Other platforms",
-            "Nền tảng khác",
-            "Đã xuất",
-            "Exported",
-            "Complete",
-            "Hoàn thành",
-            "Open folder",   # simple export-done dialog
-            "Mở thư mục",    # Vietnamese variant
-        )
+        """Check if the export-complete / Share dialog is visible.
 
+        Uses *only* highly-specific indicators to avoid false positives from
+        CapCut's main editor UI (which also contains YouTube/TikTok labels).
+        """
+        # 1. Window title – CapCut names the dialog "Export-<project name>"
         for window in self._iter_ui_roots():
-            # Check buttons first (Share buttons)
-            if self._find_button(window, success_keywords):
-                return True
-            # Check labels that might say "Exported"
-            if self._find_element_with_keywords(window, success_keywords, roles=("AXStaticText", "AXSheet")):
-                return True
-
-        # [NEW] Image-based Detection (Fallback & Robustness)
-        # Attempt to find the "Share" button visually using a template.
-        template_path = Path(__file__).parent.parent.parent / "resources" / "share_button_template.png"
-        if template_path.exists():
             try:
-                # Use a reliable confidence. 0.8 is usually good for templates.
-                # Only works if user has Screen Recording permissions.
-                location = pyautogui.locateOnScreen(str(template_path), confidence=0.8, grayscale=False)
-                if location:
-                    logger.info("  📸 Detected 'Share' button via Image Matching! Dialog is visible.")
+                title = getattr(window, "AXTitle", None) or ""
+                if title.lower().startswith("export") and len(title) > len("export"):
                     return True
-            except Exception as e:
-                # Usually 'could not create image from display' (Permission denied)
-                # or 'opencv' missing (for confidence). We log once.
+            except Exception:
                 pass
+
+        # 2. Buttons/text that are unique to the export-done dialog.
+        #    "Open folder" / "Mở thư mục" only appear in this dialog.
+        #    "Video is saved" is the body text of the Share dialog.
+        specific_keywords = (
+            "Open folder",      # English export-done dialog
+            "Mở thư mục",       # Vietnamese "Open folder"
+            "Video is saved",   # Share dialog body text
+            "đã được lưu",      # Vietnamese "has been saved"
+        )
+        for window in self._iter_ui_roots():
+            if self._find_button(window, specific_keywords):
+                return True
+            if self._find_element_with_keywords(
+                window, specific_keywords, roles=("AXStaticText", "AXSheet")
+            ):
+                return True
 
         return False
 
