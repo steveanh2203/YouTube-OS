@@ -659,6 +659,15 @@ class MacCapCutAutomation(AutomationBackend):
         """
         try:
             self.focus_capcut()
+
+            # Safety net: Share/export dialog may still be open if _finish_render()
+            # fired before the dialog appeared (timing gap between file-done and
+            # dialog appearing). Dismiss it now before closing the project.
+            if self._is_export_success_dialog_visible():
+                logger.info("Share dialog still open — dismissing before Cmd+W")
+                self._finish_render()
+                time.sleep(1.0)
+
             logger.info("Closing project (Cmd+W)")
             pyautogui.hotkey("command", "w")
             time.sleep(1.5)  # Give CapCut a moment to start closing
