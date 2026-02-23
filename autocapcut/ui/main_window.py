@@ -7,8 +7,8 @@ import re
 from typing import List
 
 from loguru import logger
-from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QBrush, QCloseEvent, QColor, QFont, QFontDatabase, QTextCursor
+from PySide6.QtCore import QSettings, QThread, Qt, QUrl, Signal
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QDesktopServices, QFont, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtWidgets import (
     QApplication,
@@ -315,6 +315,8 @@ class MainWindow(QMainWindow):
         self._tool_title_label: QLabel | None = None
         self._font_family: str = "Space Grotesk"
         self._updating_srt_paste_text: bool = False
+        self._settings = QSettings("AutoCapCut", "AutoCapCut")
+        self._last_srt_output_dir: Path = self._load_last_srt_output_dir()
 
         self._build_ui()
         self.refresh_projects()
@@ -931,17 +933,11 @@ class MainWindow(QMainWindow):
         self.srt_generate_btn.clicked.connect(self._handle_srt_generate)
         layout.addWidget(self.srt_generate_btn)
 
-        # ── Result label + Save button ─────────────────────────────
+        # ── Result label ───────────────────────────────────────────
         self.srt_result_label = QLabel("")
         self.srt_result_label.setObjectName("hintLabel")
         self.srt_result_label.setWordWrap(True)
         layout.addWidget(self.srt_result_label)
-
-        self.srt_save_btn = QPushButton("Save Output SRT")
-        self.srt_save_btn.setProperty("variant", "secondary")
-        self.srt_save_btn.setEnabled(False)
-        self.srt_save_btn.clicked.connect(self._handle_srt_save)
-        layout.addWidget(self.srt_save_btn)
 
         return tab
 
@@ -971,11 +967,16 @@ class MainWindow(QMainWindow):
             ["Select", "Project", "Source", "Status", "Notes"]
         )
         header_view = self.project_table.horizontalHeader()
-        header_view.setSectionResizeMode(self.columns.select, header_view.ResizeMode.ResizeToContents)
+        header_view.setHighlightSections(False)
+        header_view.setSectionsClickable(False)
+        header_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        header_view.setSectionResizeMode(self.columns.select, header_view.ResizeMode.Fixed)
+        header_view.setMinimumSectionSize(40)
         header_view.setSectionResizeMode(self.columns.name, header_view.ResizeMode.Stretch)
         header_view.setSectionResizeMode(self.columns.source, header_view.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(self.columns.status, header_view.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(self.columns.notes, header_view.ResizeMode.Stretch)
+        self.project_table.setColumnWidth(self.columns.select, 78)
         panel_layout.addWidget(self.project_table, 1)
 
         self.status_label = QLabel("Loading projects…")
@@ -1115,6 +1116,14 @@ class MainWindow(QMainWindow):
                 font-weight: 700;
                 color: #0F172A;
                 letter-spacing: -0.02em;
+            }}
+
+            #projectTitle {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;
             }}
 
             #toolStack {{
@@ -1355,7 +1364,26 @@ class MainWindow(QMainWindow):
                 padding: 10px 8px;
             }}
 
+            QHeaderView::section:checked,
+            QHeaderView::section:selected,
+            QHeaderView::section:pressed,
+            QHeaderView::section:focus {{
+                background: #F1F5F9;
+                color: #475569;
+                border: none;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+                outline: none;
+            }}
+
             QHeaderView::section:last {{
+                border-right: none;
+            }}
+
+            QHeaderView::section:last:checked,
+            QHeaderView::section:last:selected,
+            QHeaderView::section:last:pressed,
+            QHeaderView::section:last:focus {{
                 border-right: none;
             }}
 
@@ -1782,6 +1810,58 @@ class MainWindow(QMainWindow):
 
     # ── SRT Generator handlers ──────────────────────────────────────────────
 
+    def _load_last_srt_output_dir(self) -> Path:
+        raw = self._settings.value("srt/last_output_dir", "", type=str)
+        if raw:
+            candidate = Path(raw)
+            if candidate.exists() and candidate.is_dir():
+                return candidate
+        return Path.home()
+
+    def _remember_srt_output_dir(self, folder: Path) -> None:
+        self._last_srt_output_dir = folder
+        self._settings.setValue("srt/last_output_dir", str(folder))
+        self._settings.sync()
+
+    def _build_default_srt_output_name(self) -> str:
+        if self.srt_input_path:
+            return f"{self.srt_input_path.stem}_merged.srt"
+        return "output.srt"
+
+    def _prompt_srt_output_path(self) -> Path | None:
+        initial_dir = self._last_srt_output_dir if self._last_srt_output_dir.exists() else Path.home()
+        suggested_path = initial_dir / self._build_default_srt_output_name()
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save output SRT",
+            str(suggested_path),
+            "SRT files (*.srt)",
+        )
+        if not path:
+            return None
+        selected_path = Path(path)
+        final_path = selected_path
+        if selected_path.suffix.lower() != ".srt":
+            final_path = selected_path.with_suffix(".srt")
+        self._remember_srt_output_dir(final_path.parent)
+        return final_path
+
+    def _show_srt_success_dialog(self, output_path: Path, entry_count: int) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setWindowTitle("SRT created")
+        dialog.setText(f"Created successfully: {entry_count} entries.")
+        dialog.setInformativeText(str(output_path))
+        open_folder_btn = dialog.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
+        close_btn = dialog.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+        dialog.setDefaultButton(close_btn)
+        dialog.exec()
+
+        if dialog.clickedButton() == open_folder_btn:
+            opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path.parent)))
+            if not opened:
+                QMessageBox.warning(self, "Open folder failed", f"Could not open folder:\n{output_path.parent}")
+
     def _toggle_srt_content_mode(self) -> None:
         paste_mode = getattr(self, "srt_content_paste_radio", None) and self.srt_content_paste_radio.isChecked()
         if hasattr(self, "srt_content_file_widget"):
@@ -1885,37 +1965,50 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "File read error", str(exc))
                 return
 
+        output_path = self._prompt_srt_output_path()
+        if output_path is None:
+            return
+
+        progress = QProgressDialog("Preparing SRT generation...", None, 0, 100, self)
+        progress.setWindowTitle("Generating SRT")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
+        def update_progress(percent: int, message: str) -> None:
+            progress.setValue(max(0, min(100, percent)))
+            progress.setLabelText(message)
+            QApplication.processEvents()
+
         # Generate
         try:
-            self._generated_srt = generate_merged_srt(self.srt_input_path, content_text)
+            update_progress(4, "Preparing generation inputs...")
+            self._generated_srt = generate_merged_srt(
+                self.srt_input_path,
+                content_text,
+                progress_cb=update_progress,
+            )
+            update_progress(96, "Saving output SRT file...")
+            output_path.write_text(self._generated_srt, encoding="utf-8")
             entry_count = self._generated_srt.count("\n\n") + 1
             if hasattr(self, "srt_result_label"):
-                self.srt_result_label.setText(f"Generated successfully: {entry_count} entries.")
-            if hasattr(self, "srt_save_btn"):
-                self.srt_save_btn.setEnabled(True)
-        except SRTGeneratorError as exc:
+                self.srt_result_label.setText(f"Generated and saved: {output_path}")
+            update_progress(100, "SRT generated successfully.")
+            progress.close()
+            self._show_srt_success_dialog(output_path, entry_count)
+        except (SRTGeneratorError, OSError) as exc:
             self._generated_srt = None
             if hasattr(self, "srt_result_label"):
                 self.srt_result_label.setText(f"Error: {exc}")
-            if hasattr(self, "srt_save_btn"):
-                self.srt_save_btn.setEnabled(False)
             QMessageBox.warning(self, "SRT generation failed", str(exc))
-
-    def _handle_srt_save(self) -> None:
-        if not self._generated_srt:
-            return
-        default_name = "output.srt"
-        if self.srt_input_path:
-            default_name = self.srt_input_path.stem + "_merged.srt"
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save SRT file", str(Path.home() / default_name), "SRT files (*.srt)"
-        )
-        if path:
-            try:
-                Path(path).write_text(self._generated_srt, encoding="utf-8")
-                QMessageBox.information(self, "Saved", f"Saved to:\n{path}")
-            except OSError as exc:
-                QMessageBox.warning(self, "Save failed", str(exc))
+        finally:
+            progress.close()
+            progress.deleteLater()
 
     def _handle_remove_background(self) -> None:
         if not self.image_folder:

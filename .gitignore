@@ -41,3 +41,6 @@ env/
 # Runtime logs & debug
 logs/
 .waylog/
+
+# Rust build artifacts
+rust/**/target/
