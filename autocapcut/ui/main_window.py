@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
+import json
 from pathlib import Path
 import re
 from typing import List
+from uuid import uuid4
 
 from loguru import logger
-from PySide6.QtCore import QSettings, QThread, Qt, QUrl, Signal
+from PySide6.QtCore import QDateTime, QSettings, QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QBrush, QCloseEvent, QColor, QDesktopServices, QFont, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtWidgets import (
@@ -19,6 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QDialog,
+    QDateTimeEdit,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -32,9 +36,10 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QRadioButton,
+    QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -70,7 +75,25 @@ from autocapcut.services.animation_presets import (
 )
 from autocapcut.services.bulk_rename import BulkRenameError, bulk_rename
 from autocapcut.services.background_removal import BackgroundRemovalError, remove_white_background
+from autocapcut.services.raw_seo import (
+    RawSEOError,
+    apply_raw_seo,
+    parse_keywords,
+    read_raw_seo_metadata,
+    write_raw_seo_payload,
+)
+from autocapcut.services.roxy_upload import (
+    RoxyApiClient,
+    RoxyPreflightResult,
+    RoxyUploadError,
+    get_roxy_rate_limit_snapshot,
+    run_roxy_upload_preflight,
+    upload_video_via_roxy,
+)
 from autocapcut.services.srt_generator import SRTGeneratorError, generate_merged_srt
+
+DEFAULT_AUTOMATE_ROXY_PROFILE_ID = "2c7168a71197394052ee67be8e0a7fc0"
+VIDEO_EXPORT_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm")
 
 
 class SyncWorker(QThread):
@@ -234,6 +257,305 @@ class RenderWorker(QThread):
         self._emit_log("========== RENDER WORKER FINISHED ==========")
         self._emit_log(f"Completed: {self._completed}, Failed: {self._failed}")
         self.job_finished.emit(self._completed, len(self.projects))
+
+
+class AutomateWorker(QThread):
+    """Background worker for full automate pipeline: Render -> Raw SEO -> Upload."""
+
+    status_updated = Signal()
+    job_finished = Signal(int, int, int, bool)  # completed, failed, total, stopped_early
+    progress_updated = Signal(int, int)
+    log_message = Signal(str)
+
+    def __init__(
+        self,
+        jobs: list[AutomateJobItem],
+        *,
+        api_host: str,
+        api_key: str,
+        workspace_id: int,
+        profile_id: str,
+        close_profile_after_start: bool,
+        strict_raw_seo: bool,
+        debug_root: Path,
+    ) -> None:
+        super().__init__()
+        self.jobs = jobs
+        self.api_host = api_host
+        self.api_key = api_key
+        self.workspace_id = workspace_id
+        self.profile_id = profile_id
+        self.close_profile_after_start = close_profile_after_start
+        self.strict_raw_seo = strict_raw_seo
+        self.debug_root = debug_root
+        self._cancelled = False
+        self._completed = 0
+        self._failed = 0
+        self._stopped_early = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def _emit_log(self, message: str) -> None:
+        logger.info(message)
+        self.log_message.emit(message)
+
+    @staticmethod
+    def _resolve_rendered_file(
+        automation,
+        *,
+        export_folder: Path | str | None,
+        export_name: str | None,
+        project_name: str,
+    ) -> Path:
+        cached_file = getattr(automation, "last_export_file", None)
+        if isinstance(cached_file, Path):
+            try:
+                if cached_file.exists() and cached_file.is_file():
+                    return cached_file.resolve()
+            except OSError:
+                pass
+
+        find_candidate = getattr(automation, "_find_export_candidate", None)
+        if callable(find_candidate):
+            try:
+                resolved = find_candidate(export_folder, export_name or project_name)
+            except Exception:
+                resolved = None
+            if isinstance(resolved, Path) and resolved.exists() and resolved.is_file():
+                return resolved.resolve()
+
+        resolve_expected = getattr(automation, "_resolve_expected_export_path", None)
+        if callable(resolve_expected):
+            try:
+                expected = resolve_expected(export_folder, export_name or project_name)
+            except Exception:
+                expected = None
+            if isinstance(expected, Path) and expected.exists() and expected.is_file():
+                return expected.resolve()
+
+        folder = Path(export_folder).expanduser() if export_folder else None
+        if folder and folder.is_dir():
+            hint = Path(export_name or project_name).stem.casefold().strip()
+            hinted: list[Path] = []
+            all_candidates: list[Path] = []
+            for entry in folder.iterdir():
+                if not entry.is_file():
+                    continue
+                if entry.suffix.lower() not in VIDEO_EXPORT_EXTENSIONS:
+                    continue
+                all_candidates.append(entry)
+                entry_stem = entry.stem.casefold().strip()
+                if hint and (hint in entry_stem or entry_stem in hint):
+                    hinted.append(entry)
+            if hinted:
+                return max(hinted, key=lambda path: path.stat().st_mtime).resolve()
+            if all_candidates:
+                return max(all_candidates, key=lambda path: path.stat().st_mtime).resolve()
+
+        raise RuntimeError(
+            "Could not locate rendered video file. "
+            f"folder={export_folder or '(unknown)'} name={export_name or project_name}"
+        )
+
+    def run(self) -> None:
+        from autocapcut.automation.capcut_automation import MacCapCutAutomation
+        from autocapcut.config import APP_CONFIG
+
+        total = len(self.jobs)
+        self._emit_log("========== AUTOMATE WORKER STARTED ==========")
+        self._emit_log(f"Total videos to automate: {total}")
+        automation = MacCapCutAutomation()
+        self.progress_updated.emit(0, total)
+
+        for idx, job in enumerate(self.jobs, 1):
+            project = job.project
+            self._emit_log("")
+            self._emit_log(f"------ VIDEO {idx}/{total}: {project.name} ------")
+
+            if self._cancelled:
+                self._emit_log(f"[CANCELLED] Automate cancelled before project {project.name}")
+                project.status = ProjectStatus.failed
+                project.notes = "Cancelled by user"
+                self._stopped_early = True
+                self.status_updated.emit()
+                break
+
+            project.status = ProjectStatus.processing
+            project.notes = "Opening project..."
+            self.status_updated.emit()
+
+            try:
+                self._emit_log("[STEP 1/6] Opening project in CapCut...")
+                if not automation.open_project(project):
+                    raise RuntimeError("Could not open project")
+                self._emit_log("[STEP 1/6] ✓ Project opened")
+
+                project.notes = "Exporting..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 2/6] Starting export (Cmd+M + Enter)...")
+                if not automation.start_render(project.name):
+                    raise RuntimeError("Could not start render")
+                self._emit_log("[STEP 2/6] ✓ Export started")
+
+                project.notes = "Rendering..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 3/6] Waiting for export to complete...")
+                export_folder = getattr(automation, "last_export_folder", None)
+                export_name = getattr(automation, "last_export_name", None)
+                if not automation.wait_for_render_complete(
+                    APP_CONFIG.render_timeout_sec,
+                    export_folder,
+                    export_name,
+                ):
+                    raise RuntimeError("Render timeout")
+                self._emit_log("[STEP 3/6] ✓ Export completed")
+
+                export_file = getattr(automation, "last_export_file", None)
+                if export_file:
+                    self._emit_log(f"[STEP 3/6] Export file detected: {export_file}")
+
+                rendered_file = self._resolve_rendered_file(
+                    automation,
+                    export_folder=export_folder,
+                    export_name=export_name,
+                    project_name=project.name,
+                )
+                self._emit_log(f"[STEP 3/6] Resolved output: {rendered_file}")
+
+                if job.raw_seo_enabled:
+                    project.notes = "Applying Raw SEO..."
+                    self.status_updated.emit()
+                    self._emit_log(f"[STEP 4/6] Applying Raw SEO ({job.raw_seo_source})...")
+                    raw_summary = apply_raw_seo(
+                        [rendered_file],
+                        title=job.raw_seo_title,
+                        description=job.raw_seo_description,
+                        keywords=job.raw_seo_keywords,
+                        extra_tags=job.raw_seo_extra_tags,
+                        rename_to_title=False,
+                        strict_verify=self.strict_raw_seo,
+                    )
+                    first_result = raw_summary.results[0] if raw_summary.results else None
+                    if raw_summary.failed > 0 or first_result is None or not first_result.success:
+                        detail = first_result.message if first_result is not None else "Unknown Raw SEO failure"
+                        raise RawSEOError(detail)
+                    rendered_file = first_result.file
+                    self._emit_log("[STEP 4/6] ✓ Raw SEO applied")
+                else:
+                    self._emit_log("[STEP 4/6] Raw SEO skipped (all fields are empty)")
+
+                project.notes = "Uploading via Roxy..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 5/6] Running Roxy preflight...")
+                preflight = run_roxy_upload_preflight(
+                    api_host=self.api_host,
+                    api_token=self.api_key,
+                    workspace_id=self.workspace_id,
+                    profile_id=self.profile_id,
+                    video_path=rendered_file,
+                )
+                self._emit_log(
+                    "[STEP 5/6] ✓ Preflight passed "
+                    f"(workspace={preflight.workspace_id}, profile={preflight.profile_display_name})"
+                )
+
+                self._emit_log("[STEP 6/6] Uploading video via Roxy...")
+                upload_video_via_roxy(
+                    api_host=self.api_host,
+                    api_token=self.api_key,
+                    workspace_id=preflight.workspace_id,
+                    profile_id=preflight.profile_id,
+                    video_path=preflight.video_path,
+                    close_profile_after_start=self.close_profile_after_start,
+                    progress_cb=lambda msg: self._emit_log(f"  [Roxy] {msg}"),
+                    debug_root=self.debug_root,
+                )
+                self._emit_log("[STEP 6/6] ✓ Upload started")
+                self._emit_log("[DONE] Automate flow completed (project left open by design).")
+
+                project.status = ProjectStatus.done
+                project.notes = "Automated: render -> raw SEO -> upload started (no auto close)"
+                self._completed += 1
+                self._emit_log(f"[SUCCESS] Video '{project.name}' automated successfully!")
+
+            except Exception as exc:
+                logger.exception("[ERROR] Automate failed for %s: %s", project.name, exc)
+                project.status = ProjectStatus.failed
+                project.notes = str(exc)
+                self._failed += 1
+                self._emit_log(f"[ERROR] Automate failed for {project.name}: {exc}")
+                try:
+                    self._emit_log("[CLEANUP] Attempting to close project...")
+                    automation.close_project()
+                except Exception:
+                    pass
+                self._emit_log("[STOP] Pipeline stopped after failure. Please check logs.")
+                self._stopped_early = True
+                self.status_updated.emit()
+                self.progress_updated.emit(self._completed + self._failed, total)
+                break
+
+            self.status_updated.emit()
+            self.progress_updated.emit(self._completed + self._failed, total)
+
+        self._emit_log("")
+        self._emit_log("========== AUTOMATE WORKER FINISHED ==========")
+        self._emit_log(f"Completed: {self._completed}, Failed: {self._failed}")
+        self.job_finished.emit(self._completed, self._failed, total, self._stopped_early)
+
+
+class RoxyUploadWorker(QThread):
+    """Background worker for Roxy + YouTube upload startup."""
+
+    progress_message = Signal(str)
+    upload_finished = Signal(bool, str, object)
+
+    def __init__(
+        self,
+        *,
+        api_host: str,
+        api_key: str,
+        workspace_id: int,
+        profile_id: str,
+        video_path: Path,
+        close_profile_after_start: bool,
+        debug_root: Path,
+    ) -> None:
+        super().__init__()
+        self.api_host = api_host
+        self.api_key = api_key
+        self.workspace_id = workspace_id
+        self.profile_id = profile_id
+        self.video_path = video_path
+        self.close_profile_after_start = close_profile_after_start
+        self.debug_root = debug_root
+
+    def run(self) -> None:  # pragma: no cover - thread execution
+        try:
+            summary = upload_video_via_roxy(
+                api_host=self.api_host,
+                api_token=self.api_key,
+                workspace_id=self.workspace_id,
+                profile_id=self.profile_id,
+                video_path=self.video_path,
+                close_profile_after_start=self.close_profile_after_start,
+                progress_cb=self.progress_message.emit,
+                debug_root=self.debug_root,
+            )
+        except RoxyUploadError as exc:
+            logger.warning("Roxy upload failed: {}", exc)
+            self.upload_finished.emit(False, str(exc), None)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.exception("Unexpected Roxy upload error")
+            self.upload_finished.emit(False, f"Unexpected error: {exc}", None)
+        else:
+            self.upload_finished.emit(True, "", summary)
+
+
 class PasteAwareTextEdit(QTextEdit):
     """QTextEdit that emits a signal whenever content is pasted."""
 
@@ -281,7 +603,18 @@ class TableColumns:
     name: int = 1
     source: int = 2
     status: int = 3
-    notes: int = 4
+    project: int = 4
+
+
+@dataclass
+class AutomateJobItem:
+    project: ProjectItem
+    raw_seo_title: str
+    raw_seo_description: str
+    raw_seo_keywords: list[str]
+    raw_seo_extra_tags: dict[str, str]
+    raw_seo_enabled: bool
+    raw_seo_source: str
 
 
 class MainWindow(QMainWindow):
@@ -298,6 +631,7 @@ class MainWindow(QMainWindow):
         self.project_table: QTableWidget | None = None
         self._worker: SyncWorker | None = None
         self._render_worker: RenderWorker | None = None
+        self._automate_worker: AutomateWorker | None = None
         self._last_job_projects: list[ProjectItem] = []
         self.image_folder: Path | None = None
         self.status_label: QLabel | None = None
@@ -306,6 +640,23 @@ class MainWindow(QMainWindow):
         self._render_log_text: QTextEdit | None = None
         self._render_progress_bar: QProgressBar | None = None
         self._render_progress_label: QLabel | None = None
+        self._render_current_video_label: QLabel | None = None
+        self._render_current_stage_label: QLabel | None = None
+        self._render_total_chip: QLabel | None = None
+        self._render_done_chip: QLabel | None = None
+        self._render_failed_chip: QLabel | None = None
+        self._render_remaining_chip: QLabel | None = None
+        self._render_total_jobs: int = 0
+        self._render_done_jobs: int = 0
+        self._render_failed_jobs: int = 0
+        self._render_current_video: str = "-"
+        self._render_current_stage: str = "Waiting..."
+        self.raw_seo_files: list[Path] = []
+        self.raw_seo_draft: dict[str, object] = self._default_raw_seo_draft()
+        self.roxy_video_path: Path | None = None
+        self._roxy_rate_timer: QTimer | None = None
+        self._roxy_upload_worker: RoxyUploadWorker | None = None
+        self._roxy_upload_progress: QProgressDialog | None = None
         self.srt_input_path: Path | None = None
         self.srt_content_file_path: Path | None = None
         self._generated_srt: str | None = None
@@ -317,12 +668,27 @@ class MainWindow(QMainWindow):
         self._updating_srt_paste_text: bool = False
         self._settings = QSettings("AutoCapCut", "AutoCapCut")
         self._last_srt_output_dir: Path = self._load_last_srt_output_dir()
+        self.project_presets: list[dict[str, object]] = []
+        self.project_assignment_by_path: dict[str, str] = {}
+        self.video_child_settings_by_path: dict[str, dict[str, object]] = {}
+        self.project_hierarchy_scroll: QScrollArea | None = None
+        self.project_hierarchy_root: QWidget | None = None
+        self.project_hierarchy_layout: QVBoxLayout | None = None
+        self._load_project_dashboard_settings()
 
         self._build_ui()
         self.refresh_projects()
 
     # region Qt overrides
     def closeEvent(self, event: QCloseEvent) -> None:  # pragma: no cover - GUI callback
+        if self._roxy_upload_worker and self._roxy_upload_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Upload in progress",
+                "Roxy upload is still running. Please wait until it finishes.",
+            )
+            event.ignore()
+            return
         if self._render_worker and self._render_worker.isRunning():
             choice = QMessageBox.question(
                 self,
@@ -332,6 +698,19 @@ class MainWindow(QMainWindow):
             if choice == QMessageBox.StandardButton.Yes:
                 self._render_worker.cancel()
                 self._render_worker.wait(2000)
+                super().closeEvent(event)
+            else:
+                event.ignore()
+            return
+        if self._automate_worker and self._automate_worker.isRunning():
+            choice = QMessageBox.question(
+                self,
+                "Automation in progress",
+                "Automate workflow is still running. Stop and exit?",
+            )
+            if choice == QMessageBox.StandardButton.Yes:
+                self._automate_worker.cancel()
+                self._automate_worker.wait(2000)
                 super().closeEvent(event)
             else:
                 event.ignore()
@@ -447,6 +826,7 @@ class MainWindow(QMainWindow):
             ("animation", "Animation"),
             ("effect", "Effects"),
             ("transition", "Transitions"),
+            ("project", "Project"),
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -466,7 +846,9 @@ class MainWindow(QMainWindow):
         for key, label in (
             ("remove_bg", "Background Removal"),
             ("rename", "File Rename"),
+            ("raw_seo", "Raw SEO"),
             ("srt", "SRT Generator"),
+            ("roxy_upload", "Upload Roxy"),
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -512,9 +894,12 @@ class MainWindow(QMainWindow):
         self._tool_stack.addWidget(self._build_animation_tab())          # 0
         self._tool_stack.addWidget(self._build_effect_tab())              # 1
         self._tool_stack.addWidget(self._build_transition_tab())          # 2
-        self._tool_stack.addWidget(self._build_remove_background_tab())   # 3
-        self._tool_stack.addWidget(self._build_rename_tab())              # 4
-        self._tool_stack.addWidget(self._build_srt_generator_tab())       # 5
+        self._tool_stack.addWidget(self._build_project_presets_tab())     # 3
+        self._tool_stack.addWidget(self._build_remove_background_tab())   # 4
+        self._tool_stack.addWidget(self._build_rename_tab())              # 5
+        self._tool_stack.addWidget(self._build_raw_seo_tab())             # 6
+        self._tool_stack.addWidget(self._build_srt_generator_tab())       # 7
+        self._tool_stack.addWidget(self._build_roxy_upload_tab())         # 8
         layout.addWidget(self._tool_stack, 1)
 
         return panel
@@ -525,17 +910,23 @@ class MainWindow(QMainWindow):
             "animation": 0,
             "effect":    1,
             "transition": 2,
-            "remove_bg": 3,
-            "rename":    4,
-            "srt":       5,
+            "project":   3,
+            "remove_bg": 4,
+            "rename":    5,
+            "raw_seo":   6,
+            "srt":       7,
+            "roxy_upload": 8,
         }
         titles = {
             "animation": "Animation",
             "effect": "Effects",
             "transition": "Transitions",
+            "project": "Project",
             "remove_bg":  "Remove Background",
             "rename": "Rename Files",
+            "raw_seo": "Raw SEO",
             "srt": "SRT Generator",
+            "roxy_upload": "Upload Roxy",
         }
         if self._tool_stack is not None:
             self._tool_stack.setCurrentIndex(index_map.get(key, 0))
@@ -716,6 +1107,45 @@ class MainWindow(QMainWindow):
 
         return tab
 
+    def _build_project_presets_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        info = QLabel("Project cha hiển thị dạng card; mỗi card chứa bảng video con theo phong cách CapCut.")
+        info.setObjectName("hintLabel")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        actions = QHBoxLayout()
+        self.project_preset_add_btn = QPushButton("Add Project")
+        self.project_preset_add_btn.setProperty("variant", "secondary")
+        self.project_preset_add_btn.clicked.connect(self._handle_project_preset_add)
+        actions.addWidget(self.project_preset_add_btn)
+        self.project_hierarchy_refresh_btn = QPushButton("Refresh")
+        self.project_hierarchy_refresh_btn.setProperty("variant", "secondary")
+        self.project_hierarchy_refresh_btn.clicked.connect(lambda: self._refresh_project_preset_tab())
+        actions.addWidget(self.project_hierarchy_refresh_btn)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.project_hierarchy_scroll = QScrollArea()
+        self.project_hierarchy_scroll.setObjectName("projectHierarchyScroll")
+        self.project_hierarchy_scroll.setWidgetResizable(True)
+        self.project_hierarchy_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.project_hierarchy_root = QWidget()
+        self.project_hierarchy_root.setObjectName("projectHierarchyRoot")
+        self.project_hierarchy_layout = QVBoxLayout(self.project_hierarchy_root)
+        self.project_hierarchy_layout.setContentsMargins(4, 4, 4, 4)
+        self.project_hierarchy_layout.setSpacing(10)
+        self.project_hierarchy_scroll.setWidget(self.project_hierarchy_root)
+        layout.addWidget(self.project_hierarchy_scroll, 1)
+
+        self._refresh_project_preset_tab()
+        return tab
+
     def _build_remove_background_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -846,6 +1276,95 @@ class MainWindow(QMainWindow):
         self._update_rename_preview()
         return tab
 
+    def _build_raw_seo_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Apply basic SEO metadata (title, description, keywords) to media files using ExifTool."
+        )
+        info.setObjectName("hintLabel")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        files_label = QLabel("Media Files")
+        files_label.setObjectName("sectionLabel")
+        layout.addWidget(files_label)
+
+        file_row = QHBoxLayout()
+        self.raw_seo_files_edit = QLineEdit()
+        self.raw_seo_files_edit.setPlaceholderText("Select one or more files…")
+        self.raw_seo_files_edit.setReadOnly(True)
+        self.raw_seo_files_edit.setObjectName("assetPath")
+        file_row.addWidget(self.raw_seo_files_edit, 1)
+
+        self.raw_seo_browse_btn = QPushButton("Browse Files")
+        self.raw_seo_browse_btn.setProperty("variant", "secondary")
+        self.raw_seo_browse_btn.clicked.connect(self._handle_select_raw_seo_files)
+        file_row.addWidget(self.raw_seo_browse_btn)
+
+        self.raw_seo_clear_btn = QPushButton("Clear")
+        self.raw_seo_clear_btn.setProperty("variant", "secondary")
+        self.raw_seo_clear_btn.clicked.connect(self._handle_clear_raw_seo_files)
+        file_row.addWidget(self.raw_seo_clear_btn)
+        layout.addLayout(file_row)
+
+        self.raw_seo_file_list = QListWidget()
+        self.raw_seo_file_list.setObjectName("presetList")
+        self.raw_seo_file_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        layout.addWidget(self.raw_seo_file_list, 1)
+
+        editor_row = QHBoxLayout()
+        self.raw_seo_open_editor_btn = QPushButton("Edit Metadata Fields")
+        self.raw_seo_open_editor_btn.setProperty("variant", "secondary")
+        self.raw_seo_open_editor_btn.clicked.connect(self._open_raw_seo_editor)
+        editor_row.addWidget(self.raw_seo_open_editor_btn)
+
+        self.raw_seo_clear_metadata_btn = QPushButton("Reset Fields")
+        self.raw_seo_clear_metadata_btn.setProperty("variant", "secondary")
+        self.raw_seo_clear_metadata_btn.clicked.connect(self._clear_raw_seo_metadata_draft)
+        editor_row.addWidget(self.raw_seo_clear_metadata_btn)
+        layout.addLayout(editor_row)
+
+        self.raw_seo_draft_summary_label = QLabel("")
+        self.raw_seo_draft_summary_label.setObjectName("hintLabel")
+        self.raw_seo_draft_summary_label.setWordWrap(True)
+        layout.addWidget(self.raw_seo_draft_summary_label)
+        self._update_raw_seo_draft_summary()
+
+        self.raw_seo_strict_check = QCheckBox("Strict mode (verify metadata after write)")
+        self.raw_seo_strict_check.setChecked(True)
+        layout.addWidget(self.raw_seo_strict_check)
+
+        action_grid = QGridLayout()
+        action_grid.setHorizontalSpacing(10)
+        action_grid.setVerticalSpacing(8)
+        self.raw_seo_apply_btn = QPushButton("Apply Raw SEO")
+        self.raw_seo_apply_btn.setProperty("variant", "primary")
+        self.raw_seo_apply_btn.clicked.connect(self._handle_raw_seo_apply)
+        action_grid.addWidget(self.raw_seo_apply_btn, 0, 0, 1, 2)
+
+        self.raw_seo_export_btn = QPushButton("Export JSON Payload")
+        self.raw_seo_export_btn.setProperty("variant", "secondary")
+        self.raw_seo_export_btn.clicked.connect(self._handle_raw_seo_export_payload)
+        action_grid.addWidget(self.raw_seo_export_btn, 1, 0)
+
+        self.raw_seo_view_btn = QPushButton("View Metadata")
+        self.raw_seo_view_btn.setProperty("variant", "secondary")
+        self.raw_seo_view_btn.clicked.connect(self._handle_raw_seo_view_metadata)
+        action_grid.addWidget(self.raw_seo_view_btn, 1, 1)
+        action_grid.setColumnStretch(0, 1)
+        action_grid.setColumnStretch(1, 1)
+        layout.addLayout(action_grid)
+
+        self.raw_seo_result_label = QLabel("")
+        self.raw_seo_result_label.setObjectName("hintLabel")
+        self.raw_seo_result_label.setWordWrap(True)
+        layout.addWidget(self.raw_seo_result_label)
+        return tab
+
     def _build_srt_generator_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -941,6 +1460,124 @@ class MainWindow(QMainWindow):
 
         return tab
 
+    def _build_roxy_upload_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Upload one SEO-processed video to YouTube Studio via a selected Roxy anti-detect profile."
+        )
+        info.setObjectName("hintLabel")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        api_label = QLabel("Roxy API")
+        api_label.setObjectName("sectionLabel")
+        layout.addWidget(api_label)
+
+        host_row = QHBoxLayout()
+        self.roxy_api_host_edit = QLineEdit()
+        self.roxy_api_host_edit.setPlaceholderText("http://127.0.0.1:50000")
+        self.roxy_api_host_edit.setText(
+            self._settings.value("roxy/api_host", "http://127.0.0.1:50000", type=str)
+        )
+        host_row.addWidget(self.roxy_api_host_edit, 1)
+        layout.addLayout(host_row)
+
+        token_row = QHBoxLayout()
+        self.roxy_api_key_edit = QLineEdit()
+        self.roxy_api_key_edit.setPlaceholderText("Roxy API key/token")
+        self.roxy_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.roxy_api_key_edit.setText(self._settings.value("roxy/api_key", "", type=str))
+        token_row.addWidget(self.roxy_api_key_edit, 1)
+        layout.addLayout(token_row)
+
+        self.roxy_rate_limit_label = QLabel("")
+        self.roxy_rate_limit_label.setObjectName("hintLabel")
+        self.roxy_rate_limit_label.setWordWrap(True)
+        layout.addWidget(self.roxy_rate_limit_label)
+        self._start_roxy_rate_timer()
+        self._refresh_roxy_rate_limit_label()
+
+        workspace_label = QLabel("Workspace + Profile")
+        workspace_label.setObjectName("sectionLabel")
+        layout.addWidget(workspace_label)
+
+        workspace_row = QHBoxLayout()
+        self.roxy_workspace_spin = QSpinBox()
+        self.roxy_workspace_spin.setRange(1, 1_000_000)
+        raw_workspace_id = self._settings.value("roxy/workspace_id", 1)
+        try:
+            workspace_id = int(raw_workspace_id)
+        except (TypeError, ValueError):
+            workspace_id = 1
+        self.roxy_workspace_spin.setValue(max(1, workspace_id))
+        workspace_row.addWidget(QLabel("Workspace ID"))
+        workspace_row.addWidget(self.roxy_workspace_spin)
+        workspace_row.addStretch(1)
+        layout.addLayout(workspace_row)
+
+        profile_row = QHBoxLayout()
+        self.roxy_profile_combo = QComboBox()
+        self.roxy_profile_combo.setObjectName("profileCombo")
+        self.roxy_profile_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.roxy_profile_combo.currentIndexChanged.connect(self._handle_roxy_profile_changed)
+        profile_row.addWidget(self.roxy_profile_combo, 1)
+
+        self.roxy_load_profiles_btn = QPushButton("Load Profiles")
+        self.roxy_load_profiles_btn.setProperty("variant", "secondary")
+        self.roxy_load_profiles_btn.clicked.connect(self._handle_roxy_load_profiles)
+        profile_row.addWidget(self.roxy_load_profiles_btn)
+        layout.addLayout(profile_row)
+
+        self.roxy_profile_id_edit = QLineEdit()
+        self.roxy_profile_id_edit.setPlaceholderText("Optional: paste profile dirId manually")
+        self.roxy_profile_id_edit.setText(self._settings.value("roxy/profile_id", "", type=str))
+        layout.addWidget(self.roxy_profile_id_edit)
+
+        video_label = QLabel("Video File")
+        video_label.setObjectName("sectionLabel")
+        layout.addWidget(video_label)
+
+        video_row = QHBoxLayout()
+        self.roxy_video_path_edit = QLineEdit()
+        self.roxy_video_path_edit.setPlaceholderText("Select video to upload...")
+        self.roxy_video_path_edit.setReadOnly(True)
+        self.roxy_video_path_edit.setObjectName("assetPath")
+        video_row.addWidget(self.roxy_video_path_edit, 1)
+
+        self.roxy_video_browse_btn = QPushButton("Browse Video")
+        self.roxy_video_browse_btn.setProperty("variant", "secondary")
+        self.roxy_video_browse_btn.clicked.connect(self._handle_roxy_select_video)
+        video_row.addWidget(self.roxy_video_browse_btn)
+        layout.addLayout(video_row)
+
+        self.roxy_close_profile_check = QCheckBox("Close profile right after upload starts")
+        self.roxy_close_profile_check.setChecked(False)
+        layout.addWidget(self.roxy_close_profile_check)
+
+        self.roxy_upload_btn = QPushButton("Upload via Roxy")
+        self.roxy_upload_btn.setProperty("variant", "primary")
+        self.roxy_upload_btn.clicked.connect(self._handle_roxy_upload)
+        layout.addWidget(self.roxy_upload_btn)
+
+        self.roxy_result_label = QLabel("")
+        self.roxy_result_label.setObjectName("hintLabel")
+        self.roxy_result_label.setWordWrap(True)
+        layout.addWidget(self.roxy_result_label)
+
+        last_video_path = self._settings.value("roxy/video_path", "", type=str)
+        if last_video_path:
+            self._set_roxy_video_path(Path(last_video_path))
+
+        # Load profiles once when tab is created so user can select immediately.
+        self._handle_roxy_load_profiles(silent=True)
+        return tab
+
     def _build_project_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("projectPanel")
@@ -949,7 +1586,7 @@ class MainWindow(QMainWindow):
         panel_layout.setContentsMargins(24, 24, 24, 20)
         panel_layout.setSpacing(16)
 
-        title = QLabel("Projects")
+        title = QLabel("Videos")
         title.setObjectName("projectTitle")
         panel_layout.addWidget(title)
 
@@ -964,7 +1601,7 @@ class MainWindow(QMainWindow):
         self.project_table.verticalHeader().setVisible(False)
         self.project_table.verticalHeader().setDefaultSectionSize(40)
         self.project_table.setHorizontalHeaderLabels(
-            ["Select", "Project", "Source", "Status", "Notes"]
+            ["Select", "Video", "Source", "Status", "Project"]
         )
         header_view = self.project_table.horizontalHeader()
         header_view.setHighlightSections(False)
@@ -975,7 +1612,7 @@ class MainWindow(QMainWindow):
         header_view.setSectionResizeMode(self.columns.name, header_view.ResizeMode.Stretch)
         header_view.setSectionResizeMode(self.columns.source, header_view.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(self.columns.status, header_view.ResizeMode.ResizeToContents)
-        header_view.setSectionResizeMode(self.columns.notes, header_view.ResizeMode.Stretch)
+        header_view.setSectionResizeMode(self.columns.project, header_view.ResizeMode.Stretch)
         self.project_table.setColumnWidth(self.columns.select, 78)
         panel_layout.addWidget(self.project_table, 1)
 
@@ -983,8 +1620,12 @@ class MainWindow(QMainWindow):
         self.status_label.setObjectName("statusLabel")
         panel_layout.addWidget(self.status_label)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(12)
+        action_panel = QFrame()
+        action_panel.setObjectName("actionPanel")
+        action_grid = QGridLayout(action_panel)
+        action_grid.setContentsMargins(14, 14, 14, 14)
+        action_grid.setHorizontalSpacing(12)
+        action_grid.setVerticalSpacing(12)
 
         self.reload_button = QPushButton("Reload Projects")
         self.reload_button.setProperty("variant", "reload")
@@ -1006,13 +1647,34 @@ class MainWindow(QMainWindow):
         self.auto_render_button.setProperty("variant", "primary")
         self.auto_render_button.clicked.connect(self._handle_auto_render_clicked)
 
-        button_row.addWidget(self.reload_button)
-        button_row.addWidget(self.sync_audio_button)
-        button_row.addWidget(self.sync_images_button)
-        button_row.addWidget(self.sync_caption_button)
-        button_row.addStretch(1)
-        button_row.addWidget(self.auto_render_button)
-        panel_layout.addLayout(button_row)
+        self.automate_button = QPushButton("Automate")
+        self.automate_button.setProperty("variant", "success")
+        self.automate_button.clicked.connect(self._handle_automate_clicked)
+
+        quick_actions = (
+            self.reload_button,
+            self.sync_audio_button,
+            self.sync_images_button,
+            self.sync_caption_button,
+            self.auto_render_button,
+            self.automate_button,
+        )
+        for button in quick_actions:
+            button.setProperty("actionRole", "quick")
+            button.setMinimumWidth(170)
+            button.setMinimumHeight(44)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        action_grid.addWidget(self.reload_button, 0, 0)
+        action_grid.addWidget(self.sync_audio_button, 0, 1)
+        action_grid.addWidget(self.sync_images_button, 0, 2)
+        action_grid.addWidget(self.sync_caption_button, 1, 0)
+        action_grid.addWidget(self.auto_render_button, 1, 1)
+        action_grid.addWidget(self.automate_button, 1, 2)
+        for column in range(3):
+            action_grid.setColumnStretch(column, 1)
+
+        panel_layout.addWidget(action_panel)
 
         return panel
 
@@ -1124,6 +1786,20 @@ class MainWindow(QMainWindow):
                 border-radius: 0px;
                 padding: 0px;
                 margin: 0px;
+            }}
+
+            #actionPanel {{
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+            }}
+
+            QPushButton[actionRole="quick"] {{
+                min-height: 44px;
+                padding: 0px 16px;
+                font-size: 14px;
+                font-weight: 700;
+                text-align: center;
             }}
 
             #toolStack {{
@@ -1328,6 +2004,72 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }}
 
+            #projectHierarchyScroll {{
+                border: 1px solid #CBD5E1;
+                border-radius: 12px;
+                background: #F8FAFC;
+            }}
+
+            #projectHierarchyRoot {{
+                background: transparent;
+            }}
+
+            QFrame#projectParentCard {{
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+                background: #FFFFFF;
+            }}
+
+            QLabel#projectParentTitle {{
+                font-size: 15px;
+                font-weight: 700;
+                color: #0F172A;
+                background: transparent;
+                border: none;
+            }}
+
+            QLabel#projectParentCount {{
+                font-size: 11px;
+                font-weight: 700;
+                color: #1D4ED8;
+                background: #DBEAFE;
+                border: 1px solid #BFDBFE;
+                border-radius: 999px;
+                padding: 2px 8px;
+            }}
+
+            QLabel#projectParentMeta {{
+                font-size: 12px;
+                color: #64748B;
+                background: transparent;
+                border: none;
+            }}
+
+            QTableWidget#projectChildrenTable {{
+                font-size: 12px;
+                border: 1px solid #E2E8F0;
+                border-radius: 10px;
+                background: #FFFFFF;
+                alternate-background-color: #F8FAFC;
+            }}
+
+            QTableWidget#projectChildrenTable::item {{
+                padding: 4px 6px;
+                color: #334155;
+            }}
+
+            QTableWidget#projectChildrenTable QHeaderView::section {{
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                background: #F1F5F9;
+                color: #475569;
+                border: none;
+                border-right: 1px solid #E2E8F0;
+                border-bottom: 1px solid #E2E8F0;
+                padding: 6px 6px;
+            }}
+
             #projectTable {{
                 font-size: 13px;
                 border: 1px solid #CBD5E1;
@@ -1431,6 +2173,49 @@ class MainWindow(QMainWindow):
                 border: none;
             }}
 
+            QTableWidget QComboBox#rowProjectPresetCombo {{
+                min-height: 24px;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                padding: 2px 22px 2px 8px;
+                background: #EFF6FF;
+                color: #1E3A8A;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+
+            QTableWidget QComboBox#rowProjectPresetCombo[hasProject="false"] {{
+                background: #F8FAFC;
+                color: #64748B;
+                font-weight: 500;
+            }}
+
+            QTableWidget QComboBox#rowProjectPresetCombo:hover {{
+                border-color: #BFDBFE;
+                background: #E0F2FE;
+            }}
+
+            QTableWidget QComboBox#rowProjectPresetCombo:focus {{
+                border: 1px solid #2563EB;
+                background: #DBEAFE;
+            }}
+
+            QTableWidget QComboBox#rowProjectPresetCombo::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 18px;
+                border: none;
+                background: transparent;
+            }}
+
+            QTableWidget QComboBox#rowProjectPresetCombo QAbstractItemView {{
+                border: 1px solid #CBD5E1;
+                background: #FFFFFF;
+                selection-background-color: #DBEAFE;
+                selection-color: #1E3A8A;
+                padding: 4px;
+            }}
+
             QMessageBox, QProgressDialog, QDialog#renderLogDialog {{
                 background: #FFFFFF;
                 border: 1px solid #D5DEE9;
@@ -1483,6 +2268,44 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
                 font-weight: 600;
                 color: #334155;
+            }}
+
+            QDialog#renderLogDialog QFrame#renderStatusCard {{
+                background: #F8FAFC;
+                border: 1px solid #D6DEE9;
+                border-radius: 10px;
+            }}
+
+            QDialog#renderLogDialog QLabel#renderCurrentVideoLabel {{
+                font-size: 15px;
+                font-weight: 700;
+                color: #0F172A;
+            }}
+
+            QDialog#renderLogDialog QLabel#renderCurrentStageLabel {{
+                font-size: 13px;
+                font-weight: 600;
+                color: #334155;
+            }}
+
+            QDialog#renderLogDialog QLabel#renderStatChip {{
+                background: #E2E8F0;
+                border: 1px solid #CBD5E1;
+                border-radius: 9px;
+                color: #334155;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 4px 9px;
+            }}
+
+            QDialog#renderLogDialog QLabel#renderStatChipDanger {{
+                background: #FEE2E2;
+                border: 1px solid #FCA5A5;
+                border-radius: 9px;
+                color: #991B1B;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 4px 9px;
             }}
 
             QDialog#renderLogDialog QTextEdit#renderLogText {{
@@ -1604,7 +2427,21 @@ class MainWindow(QMainWindow):
             getattr(self, "remove_effect_button", None),
             getattr(self, "transition_apply_btn", None),
             getattr(self, "transition_clear_btn", None),
+            getattr(self, "raw_seo_apply_btn", None),
+            getattr(self, "raw_seo_browse_btn", None),
+            getattr(self, "raw_seo_clear_btn", None),
+            getattr(self, "raw_seo_export_btn", None),
+            getattr(self, "raw_seo_view_btn", None),
+            getattr(self, "raw_seo_open_editor_btn", None),
+            getattr(self, "raw_seo_clear_metadata_btn", None),
+            getattr(self, "raw_seo_strict_check", None),
             getattr(self, "srt_generate_btn", None),
+            getattr(self, "roxy_load_profiles_btn", None),
+            getattr(self, "roxy_video_browse_btn", None),
+            getattr(self, "roxy_upload_btn", None),
+            getattr(self, "project_preset_add_btn", None),
+            getattr(self, "project_hierarchy_refresh_btn", None),
+            getattr(self, "automate_button", None),
         )
         for button in controls:
             if button is not None:
@@ -1623,12 +2460,743 @@ class MainWindow(QMainWindow):
         selected = sum(1 for p in self.projects if p.is_selected)
         completed = sum(1 for p in self.projects if p.status == ProjectStatus.done)
         self.status_label.setText(
-            f"Loaded {total} project(s) · Selected {selected} · Completed {completed}"
+            f"Loaded {total} video(s) · Selected {selected} · Completed {completed}"
         )
 
     def _update_ffmpeg_button_state(self) -> None:
         """Compatibility shim for legacy FFmpeg controls (currently no-op)."""
         return
+
+    @staticmethod
+    def _default_project_preset_draft() -> dict[str, object]:
+        return {
+            "name": "",
+            "keywords_raw": "",
+            "author": "",
+            "publisher": "",
+            "copyright": "",
+            "rating": 5,
+        }
+
+    @staticmethod
+    def _default_video_child_settings_draft() -> dict[str, object]:
+        return {
+            "description": "",
+            "keywords_raw": "",
+            "author": "",
+            "publisher": "",
+            "copyright": "",
+            "rating": 5,
+        }
+
+    @classmethod
+    def _normalize_video_child_settings(cls, raw: object) -> dict[str, object]:
+        base = cls._default_video_child_settings_draft()
+        if not isinstance(raw, dict):
+            return dict(base)
+        payload = dict(base)
+        payload["description"] = str(raw.get("description", "")).strip()
+        payload["keywords_raw"] = str(raw.get("keywords_raw", "")).strip()
+        payload["author"] = str(raw.get("author", "")).strip()
+        payload["publisher"] = str(raw.get("publisher", "")).strip()
+        payload["copyright"] = str(raw.get("copyright", "")).strip()
+        try:
+            rating = int(raw.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        payload["rating"] = max(0, min(5, rating))
+        return payload
+
+    @staticmethod
+    def _normalize_project_preset(raw: object) -> dict[str, object] | None:
+        if not isinstance(raw, dict):
+            return None
+        name = str(raw.get("name", "")).strip()
+        if not name:
+            return None
+        preset_id = str(raw.get("id", "")).strip() or uuid4().hex[:12]
+        try:
+            rating = int(raw.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        rating = max(0, min(5, rating))
+        return {
+            "id": preset_id,
+            "name": name,
+            "keywords_raw": str(raw.get("keywords_raw", "")).strip(),
+            "author": str(raw.get("author", "")).strip(),
+            "publisher": str(raw.get("publisher", "")).strip(),
+            "copyright": str(raw.get("copyright", "")).strip(),
+            "rating": rating,
+        }
+
+    def _project_preset_ids(self) -> set[str]:
+        return {
+            str(preset.get("id", "")).strip()
+            for preset in self.project_presets
+            if str(preset.get("id", "")).strip()
+        }
+
+    def _load_project_dashboard_settings(self) -> None:
+        self.project_presets = []
+        self.project_assignment_by_path = {}
+        self.video_child_settings_by_path = {}
+
+        presets_raw = self._settings.value("project_dashboard/presets", "", type=str) or ""
+        if presets_raw:
+            try:
+                parsed = json.loads(presets_raw)
+            except json.JSONDecodeError:
+                parsed = []
+            if isinstance(parsed, list):
+                seen_ids: set[str] = set()
+                for item in parsed:
+                    normalized = self._normalize_project_preset(item)
+                    if normalized is None:
+                        continue
+                    preset_id = str(normalized["id"])
+                    if preset_id in seen_ids:
+                        normalized["id"] = uuid4().hex[:12]
+                    seen_ids.add(str(normalized["id"]))
+                    self.project_presets.append(normalized)
+
+        assignments_raw = self._settings.value("project_dashboard/assignments", "", type=str) or ""
+        if assignments_raw:
+            try:
+                parsed = json.loads(assignments_raw)
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                valid_ids = self._project_preset_ids()
+                for path, preset_id in parsed.items():
+                    clean_path = str(path).strip()
+                    clean_preset_id = str(preset_id).strip()
+                    if clean_path and clean_preset_id and clean_preset_id in valid_ids:
+                        self.project_assignment_by_path[clean_path] = clean_preset_id
+
+        child_settings_raw = (
+            self._settings.value("project_dashboard/video_child_settings", "", type=str) or ""
+        )
+        if child_settings_raw:
+            try:
+                parsed = json.loads(child_settings_raw)
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                for path, settings in parsed.items():
+                    clean_path = str(path).strip()
+                    if not clean_path:
+                        continue
+                    self.video_child_settings_by_path[clean_path] = self._normalize_video_child_settings(settings)
+
+    def _save_project_dashboard_settings(self) -> None:
+        self._settings.setValue(
+            "project_dashboard/presets",
+            json.dumps(self.project_presets, ensure_ascii=False),
+        )
+        self._settings.setValue(
+            "project_dashboard/assignments",
+            json.dumps(self.project_assignment_by_path, ensure_ascii=False),
+        )
+        self._settings.setValue(
+            "project_dashboard/video_child_settings",
+            json.dumps(self.video_child_settings_by_path, ensure_ascii=False),
+        )
+
+    def _project_preset_name(self, preset_id: str) -> str:
+        for preset in self.project_presets:
+            if str(preset.get("id", "")) == preset_id:
+                return str(preset.get("name", "")).strip()
+        return ""
+
+    def _sorted_project_presets(self) -> list[dict[str, object]]:
+        return sorted(
+            self.project_presets,
+            key=lambda item: str(item.get("name", "")).strip().casefold(),
+        )
+
+    def _set_project_assignment(self, project: ProjectItem, preset_id: str) -> None:
+        project.assigned_project_id = preset_id
+        if preset_id:
+            self.project_assignment_by_path[project.path] = preset_id
+        else:
+            self.project_assignment_by_path.pop(project.path, None)
+        self._save_project_dashboard_settings()
+
+    @staticmethod
+    def _update_project_combo_visual_state(combo: QComboBox) -> None:
+        has_project = bool(str(combo.currentData() or "").strip())
+        combo.setProperty("hasProject", "true" if has_project else "false")
+        combo.style().unpolish(combo)
+        combo.style().polish(combo)
+        combo.update()
+
+    def _handle_project_assignment_changed(self, project: ProjectItem, preset_id: object) -> None:
+        assigned_id = str(preset_id or "").strip()
+        valid_ids = self._project_preset_ids()
+        if assigned_id and assigned_id not in valid_ids:
+            assigned_id = ""
+        if project.assigned_project_id == assigned_id:
+            return
+        self._set_project_assignment(project, assigned_id)
+        self._refresh_project_preset_tab()
+
+    def _open_project_preset_editor(
+        self,
+        *,
+        initial: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        draft = self._default_project_preset_draft()
+        if initial:
+            for key in draft:
+                if key in initial:
+                    draft[key] = initial[key]
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Project Preset")
+        dialog.resize(640, 480)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        name_label = QLabel("Project Name")
+        name_label.setObjectName("sectionLabel")
+        layout.addWidget(name_label)
+        name_edit = QLineEdit()
+        name_edit.setPlaceholderText("e.g. Seniorforge 365")
+        name_edit.setText(str(draft.get("name", "")).strip())
+        layout.addWidget(name_edit)
+
+        keywords_label = QLabel("Keywords")
+        keywords_label.setObjectName("sectionLabel")
+        layout.addWidget(keywords_label)
+        keywords_edit = QTextEdit()
+        keywords_edit.setPlaceholderText("keyword 1, keyword 2")
+        keywords_edit.setPlainText(str(draft.get("keywords_raw", "")))
+        keywords_edit.setFixedHeight(92)
+        layout.addWidget(keywords_edit)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        author_label = QLabel("Author")
+        author_label.setObjectName("sectionLabel")
+        grid.addWidget(author_label, 0, 0)
+        author_edit = QLineEdit()
+        author_edit.setText(str(draft.get("author", "")).strip())
+        grid.addWidget(author_edit, 1, 0)
+
+        publisher_label = QLabel("Publisher")
+        publisher_label.setObjectName("sectionLabel")
+        grid.addWidget(publisher_label, 0, 1)
+        publisher_edit = QLineEdit()
+        publisher_edit.setText(str(draft.get("publisher", "")).strip())
+        grid.addWidget(publisher_edit, 1, 1)
+
+        copyright_label = QLabel("Copyright Note")
+        copyright_label.setObjectName("sectionLabel")
+        grid.addWidget(copyright_label, 2, 0)
+        copyright_edit = QLineEdit()
+        copyright_edit.setPlaceholderText("Channel URL")
+        copyright_edit.setText(str(draft.get("copyright", "")).strip())
+        grid.addWidget(copyright_edit, 3, 0, 1, 2)
+
+        rating_label = QLabel("Rating (0-5)")
+        rating_label.setObjectName("sectionLabel")
+        grid.addWidget(rating_label, 4, 0)
+        rating_spin = QSpinBox()
+        rating_spin.setRange(0, 5)
+        try:
+            rating_spin.setValue(int(draft.get("rating", 5)))
+        except (TypeError, ValueError):
+            rating_spin.setValue(5)
+        grid.addWidget(rating_spin, 5, 0)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("variant", "secondary")
+        save_btn = QPushButton("Save")
+        save_btn.setProperty("variant", "primary")
+        actions.addWidget(cancel_btn)
+        actions.addWidget(save_btn)
+        layout.addLayout(actions)
+
+        result: dict[str, object] | None = None
+
+        def save_and_close() -> None:
+            nonlocal result
+            name = name_edit.text().strip()
+            if not name:
+                QMessageBox.information(dialog, "Missing name", "Project name is required.")
+                return
+            result = {
+                "name": name,
+                "keywords_raw": keywords_edit.toPlainText().strip(),
+                "author": author_edit.text().strip(),
+                "publisher": publisher_edit.text().strip(),
+                "copyright": copyright_edit.text().strip(),
+                "rating": rating_spin.value(),
+            }
+            dialog.accept()
+
+        save_btn.clicked.connect(save_and_close)
+        cancel_btn.clicked.connect(dialog.reject)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return result
+        return None
+
+    def _open_project_preset_manager(self) -> None:
+        # Backward-compatible entrypoint if any old button still calls this.
+        self._switch_tool("project")
+
+    def _find_project_preset_by_id(self, preset_id: str) -> dict[str, object] | None:
+        target = str(preset_id).strip()
+        if not target:
+            return None
+        for preset in self.project_presets:
+            if str(preset.get("id", "")) == target:
+                return preset
+        return None
+
+    @staticmethod
+    def _project_preset_as_raw_seo_source(preset: dict[str, object] | None) -> dict[str, object]:
+        if not isinstance(preset, dict):
+            return {
+                "description": "",
+                "keywords_raw": "",
+                "author": "",
+                "publisher": "",
+                "copyright": "",
+                "rating": -1,
+            }
+        try:
+            rating = int(preset.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        return {
+            "description": "",
+            "keywords_raw": str(preset.get("keywords_raw", "")).strip(),
+            "author": str(preset.get("author", "")).strip(),
+            "publisher": str(preset.get("publisher", "")).strip(),
+            "copyright": str(preset.get("copyright", "")).strip(),
+            "rating": max(0, min(5, rating)),
+        }
+
+    @staticmethod
+    def _child_has_full_override(settings: dict[str, object]) -> bool:
+        text_fields = ("description", "keywords_raw", "author", "publisher", "copyright")
+        if any(str(settings.get(field, "")).strip() for field in text_fields):
+            return True
+        try:
+            rating = int(settings.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        return rating != 5
+
+    def _build_automate_job_item(self, project: ProjectItem) -> AutomateJobItem:
+        preset = self._find_project_preset_by_id(str(project.assigned_project_id or "").strip())
+        preset_source = self._project_preset_as_raw_seo_source(preset)
+        child_existing = self.video_child_settings_by_path.get(project.path, {})
+        child_source = self._normalize_video_child_settings(child_existing)
+
+        if self._child_has_full_override(child_source):
+            source = child_source
+            source_label = "child override"
+        elif preset is not None:
+            source = preset_source
+            source_label = "project preset"
+        else:
+            source = {
+                "description": "",
+                "keywords_raw": "",
+                "author": "",
+                "publisher": "",
+                "copyright": "",
+                "rating": -1,
+            }
+            source_label = "empty defaults"
+
+        seo_draft = {
+            "title": "",
+            "description": str(source.get("description", "")).strip(),
+            "keywords_raw": str(source.get("keywords_raw", "")).strip(),
+            "author": str(source.get("author", "")).strip(),
+            "publisher": str(source.get("publisher", "")).strip(),
+            "copyright": str(source.get("copyright", "")).strip(),
+            "comment": "",
+            "language": "",
+            "website": "",
+            "date_created": "",
+            "city": "",
+            "country": "",
+            "custom_tags_raw": "",
+            "rating": source.get("rating", -1),
+        }
+
+        keywords = parse_keywords(str(seo_draft["keywords_raw"]))
+        extra_tags = self._collect_raw_seo_advanced_tags_from_draft(seo_draft)
+        # apply_raw_seo currently requires at least one core field:
+        # title, description, or keywords.
+        raw_seo_enabled = any(
+            (
+                str(seo_draft["title"]).strip(),
+                str(seo_draft["description"]).strip(),
+                keywords,
+            )
+        )
+        if not raw_seo_enabled:
+            extra_tags = {}
+
+        return AutomateJobItem(
+            project=project,
+            raw_seo_title=str(seo_draft["title"]).strip(),
+            raw_seo_description=str(seo_draft["description"]).strip(),
+            raw_seo_keywords=keywords,
+            raw_seo_extra_tags=extra_tags,
+            raw_seo_enabled=raw_seo_enabled,
+            raw_seo_source=source_label,
+        )
+
+    def _video_child_settings_for_path(self, path: str) -> dict[str, object]:
+        existing = self.video_child_settings_by_path.get(path)
+        if existing is None:
+            normalized = self._normalize_video_child_settings({})
+            self.video_child_settings_by_path[path] = normalized
+            return dict(normalized)
+        normalized = self._normalize_video_child_settings(existing)
+        self.video_child_settings_by_path[path] = normalized
+        return dict(normalized)
+
+    def _open_video_child_editor(self, project: ProjectItem) -> bool:
+        draft = self._video_child_settings_for_path(project.path)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Edit Child Project: {project.name}")
+        dialog.resize(760, 560)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        info = QLabel("Chỉnh sửa thông số cho project con.")
+        info.setObjectName("hintLabel")
+        layout.addWidget(info)
+
+        desc_label = QLabel("Description")
+        desc_label.setObjectName("sectionLabel")
+        layout.addWidget(desc_label)
+        desc_edit = QTextEdit()
+        desc_edit.setPlaceholderText("Description override...")
+        desc_edit.setPlainText(str(draft.get("description", "")))
+        desc_edit.setFixedHeight(92)
+        layout.addWidget(desc_edit)
+
+        keywords_label = QLabel("Keywords")
+        keywords_label.setObjectName("sectionLabel")
+        layout.addWidget(keywords_label)
+        keywords_edit = QTextEdit()
+        keywords_edit.setPlaceholderText("kw1, kw2...")
+        keywords_edit.setPlainText(str(draft.get("keywords_raw", "")))
+        keywords_edit.setFixedHeight(86)
+        layout.addWidget(keywords_edit)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        author_label = QLabel("Author")
+        author_label.setObjectName("sectionLabel")
+        grid.addWidget(author_label, 0, 0)
+        author_edit = QLineEdit()
+        author_edit.setText(str(draft.get("author", "")))
+        grid.addWidget(author_edit, 1, 0)
+
+        publisher_label = QLabel("Publisher")
+        publisher_label.setObjectName("sectionLabel")
+        grid.addWidget(publisher_label, 0, 1)
+        publisher_edit = QLineEdit()
+        publisher_edit.setText(str(draft.get("publisher", "")))
+        grid.addWidget(publisher_edit, 1, 1)
+
+        copyright_label = QLabel("Copyright")
+        copyright_label.setObjectName("sectionLabel")
+        grid.addWidget(copyright_label, 2, 0)
+        copyright_edit = QLineEdit()
+        copyright_edit.setText(str(draft.get("copyright", "")))
+        grid.addWidget(copyright_edit, 3, 0, 1, 2)
+
+        rating_label = QLabel("Rating (0-5)")
+        rating_label.setObjectName("sectionLabel")
+        grid.addWidget(rating_label, 4, 0)
+        rating_spin = QSpinBox()
+        rating_spin.setRange(0, 5)
+        try:
+            rating_spin.setValue(int(draft.get("rating", 5)))
+        except (TypeError, ValueError):
+            rating_spin.setValue(5)
+        grid.addWidget(rating_spin, 5, 0)
+        layout.addLayout(grid)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("variant", "secondary")
+        save_btn = QPushButton("Save")
+        save_btn.setProperty("variant", "primary")
+        actions.addWidget(cancel_btn)
+        actions.addWidget(save_btn)
+        layout.addLayout(actions)
+
+        saved = False
+
+        def save_and_close() -> None:
+            nonlocal saved
+            payload = {
+                "description": desc_edit.toPlainText().strip(),
+                "keywords_raw": keywords_edit.toPlainText().strip(),
+                "author": author_edit.text().strip(),
+                "publisher": publisher_edit.text().strip(),
+                "copyright": copyright_edit.text().strip(),
+                "rating": rating_spin.value(),
+            }
+            self.video_child_settings_by_path[project.path] = self._normalize_video_child_settings(payload)
+            self._save_project_dashboard_settings()
+            saved = True
+            dialog.accept()
+
+        save_btn.clicked.connect(save_and_close)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+        return saved
+
+    def _open_project_children_dialog(self, preset_id: str) -> None:
+        preset = self._find_project_preset_by_id(preset_id)
+        if preset is None:
+            QMessageBox.information(self, "No project", "Project not found.")
+            return
+
+        children = [
+            project for project in self.projects
+            if str(project.assigned_project_id or "").strip() == preset_id
+        ]
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Child Projects - {str(preset.get('name', '')).strip()}")
+        dialog.resize(1120, 760)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        heading = QLabel(f"{str(preset.get('name', '')).strip()} · {len(children)} child project(s)")
+        heading.setObjectName("projectParentTitle")
+        layout.addWidget(heading)
+
+        table = QTableWidget()
+        table.setObjectName("projectChildrenTable")
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Video", "Source", "Status", "Edit"])
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(34)
+        header = table.horizontalHeader()
+        header.setHighlightSections(False)
+        header.setSectionsClickable(False)
+        header.setSectionResizeMode(0, header.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, header.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, header.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, header.ResizeMode.ResizeToContents)
+
+        table.setRowCount(len(children))
+        for row, project in enumerate(children):
+            name_item = QTableWidgetItem(project.name)
+            child_settings = self._video_child_settings_for_path(project.path)
+            name_item.setToolTip(
+                "Description: "
+                + (str(child_settings.get("description", "")).strip() or "(empty)")
+                + "\nKeywords: "
+                + (str(child_settings.get("keywords_raw", "")).strip() or "(empty)")
+            )
+            source_item = QTableWidgetItem(project.source.label())
+            status_item = QTableWidgetItem(project.status.label())
+            status_item.setForeground(QBrush(self._status_color(project.status)))
+            for item in (name_item, source_item, status_item):
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, source_item)
+            table.setItem(row, 2, status_item)
+
+            edit_btn = QPushButton("Edit")
+            edit_btn.setProperty("variant", "secondary")
+            edit_btn.clicked.connect(
+                lambda _checked=False, p=project: self._open_video_child_editor(p)
+            )
+            table.setCellWidget(row, 3, edit_btn)
+
+        layout.addWidget(table, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("variant", "primary")
+        close_btn.clicked.connect(dialog.accept)
+        actions.addWidget(close_btn)
+        layout.addLayout(actions)
+
+        dialog.setWindowState(dialog.windowState() | Qt.WindowState.WindowMaximized)
+        dialog.exec()
+
+    def _refresh_project_preset_tab(self, selected_preset_id: str = "") -> None:
+        if self.project_hierarchy_layout is None:
+            return
+
+        while self.project_hierarchy_layout.count():
+            item = self.project_hierarchy_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not self.project_presets:
+            empty = QLabel("Chưa có project cha. Nhấn 'Add Project' để tạo project đầu tiên.")
+            empty.setObjectName("hintLabel")
+            empty.setWordWrap(True)
+            self.project_hierarchy_layout.addWidget(empty)
+            self.project_hierarchy_layout.addStretch(1)
+            return
+
+        children_by_parent: dict[str, list[ProjectItem]] = {
+            str(preset.get("id", "")): [] for preset in self.project_presets
+        }
+        for project in self.projects:
+            parent_id = str(project.assigned_project_id or "").strip()
+            if parent_id in children_by_parent:
+                children_by_parent[parent_id].append(project)
+
+        for preset in self._sorted_project_presets():
+            parent_id = str(preset.get("id", ""))
+            children = children_by_parent.get(parent_id, [])
+
+            card = QFrame()
+            card.setObjectName("projectParentCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(12, 10, 12, 10)
+            card_layout.setSpacing(8)
+
+            header_row = QHBoxLayout()
+            title = QLabel(str(preset.get("name", "")).strip())
+            title.setObjectName("projectParentTitle")
+            header_row.addWidget(title)
+
+            count = QLabel(f"{len(children)} video(s)")
+            count.setObjectName("projectParentCount")
+            header_row.addWidget(count)
+            header_row.addStretch(1)
+
+            edit_btn = QPushButton("Edit")
+            edit_btn.setProperty("variant", "secondary")
+            edit_btn.clicked.connect(
+                lambda _checked=False, pid=parent_id: self._handle_project_preset_edit(pid)
+            )
+            header_row.addWidget(edit_btn)
+
+            delete_btn = QPushButton("Delete")
+            delete_btn.setProperty("variant", "danger")
+            delete_btn.clicked.connect(
+                lambda _checked=False, pid=parent_id: self._handle_project_preset_delete(pid)
+            )
+            header_row.addWidget(delete_btn)
+            card_layout.addLayout(header_row)
+
+            meta = QLabel(
+                "Keywords: "
+                + (str(preset.get("keywords_raw", "")).strip() or "(empty)")
+                + " | Author: "
+                + (str(preset.get("author", "")).strip() or "(empty)")
+                + " | Publisher: "
+                + (str(preset.get("publisher", "")).strip() or "(empty)")
+            )
+            meta.setObjectName("projectParentMeta")
+            meta.setWordWrap(True)
+            card_layout.addWidget(meta)
+
+            open_children_btn = QPushButton(
+                f"Open Child Projects ({len(children)})" if children else "Open Child Projects"
+            )
+            open_children_btn.setProperty("variant", "primary")
+            open_children_btn.clicked.connect(
+                lambda _checked=False, pid=parent_id: self._open_project_children_dialog(pid)
+            )
+            card_layout.addWidget(open_children_btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+            self.project_hierarchy_layout.addWidget(card)
+
+        self.project_hierarchy_layout.addStretch(1)
+
+    def _sync_project_preset_changes(self, preferred_id: str = "") -> None:
+        self._save_project_dashboard_settings()
+        self._refresh_project_preset_tab(preferred_id)
+        self._populate_table()
+
+    def _handle_project_preset_add(self) -> None:
+        payload = self._open_project_preset_editor()
+        if payload is None:
+            return
+        payload["id"] = uuid4().hex[:12]
+        self.project_presets.append(payload)
+        self._sync_project_preset_changes(str(payload["id"]))
+
+    def _handle_project_preset_edit(self, preset_id: str = "") -> None:
+        preset = self._find_project_preset_by_id(preset_id)
+        if preset is None:
+            QMessageBox.information(self, "No project", "Project not found.")
+            return
+        payload = self._open_project_preset_editor(initial=preset)
+        if payload is None:
+            return
+        payload["id"] = str(preset.get("id", ""))
+        for index, item in enumerate(self.project_presets):
+            if str(item.get("id", "")) == payload["id"]:
+                self.project_presets[index] = payload
+                break
+        self._sync_project_preset_changes(str(payload["id"]))
+
+    def _handle_project_preset_delete(self, preset_id: str = "") -> None:
+        preset = self._find_project_preset_by_id(preset_id)
+        if preset is None:
+            QMessageBox.information(self, "No project", "Project not found.")
+            return
+        name = str(preset.get("name", "")).strip() or "this preset"
+        reply = QMessageBox.question(
+            self,
+            "Delete preset",
+            f"Delete '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        preset_id = str(preset.get("id", ""))
+        self.project_presets = [
+            item for item in self.project_presets if str(item.get("id", "")) != preset_id
+        ]
+        self.project_assignment_by_path = {
+            path: assigned
+            for path, assigned in self.project_assignment_by_path.items()
+            if assigned != preset_id
+        }
+        for project in self.projects:
+            if project.assigned_project_id == preset_id:
+                project.assigned_project_id = ""
+        self._sync_project_preset_changes()
 
     # region project table helpers
     @staticmethod
@@ -1696,15 +3264,26 @@ class MainWindow(QMainWindow):
         previously_selected = self._selected_projects_in_order()
         selected_order_by_path = {p.path: idx + 1 for idx, p in enumerate(previously_selected)}
         self.projects = discover_projects()
+        valid_ids = self._project_preset_ids()
+        cleaned_assignment = False
         for project in self.projects:
             previous_order = selected_order_by_path.get(project.path)
             project.is_selected = previous_order is not None
             project.selection_order = previous_order
+            assigned_id = str(self.project_assignment_by_path.get(project.path, "")).strip()
+            if assigned_id and assigned_id not in valid_ids:
+                assigned_id = ""
+                self.project_assignment_by_path.pop(project.path, None)
+                cleaned_assignment = True
+            project.assigned_project_id = assigned_id
             self._refresh_project_metadata(project)
+        if cleaned_assignment:
+            self._save_project_dashboard_settings()
         self._normalize_selection_orders()
         if not self.projects:
             logger.warning("No CapCut projects found. Check your CapCut library path.")
         self._populate_table()
+        self._refresh_project_preset_tab()
         if self._status_message_override is None:
             self._update_status_label()
 
@@ -1723,6 +3302,7 @@ class MainWindow(QMainWindow):
             container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             container_layout.setSpacing(6)
             container_layout.addWidget(checkbox)
+
             order_label = QLabel("")
             order_label.setObjectName("rowSelectOrderLabel")
             order_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1733,19 +3313,45 @@ class MainWindow(QMainWindow):
             self.project_table.setCellWidget(row, self.columns.select, checkbox_container)
 
             name_item = QTableWidgetItem(project.name)
+            name_item.setToolTip(project.notes)
             source_item = QTableWidgetItem(project.source.label())
             status_item = QTableWidgetItem(project.status.label())
-            notes_item = QTableWidgetItem(project.notes)
             status_item.setForeground(QBrush(self._status_color(project.status)))
 
             for column, item in (
                 (self.columns.name, name_item),
                 (self.columns.source, source_item),
                 (self.columns.status, status_item),
-                (self.columns.notes, notes_item),
             ):
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 self.project_table.setItem(row, column, item)
+
+            project_combo = QComboBox()
+            project_combo.setObjectName("rowProjectPresetCombo")
+            project_combo.addItem("Select project", "")
+            for preset in self._sorted_project_presets():
+                project_combo.addItem(
+                    str(preset.get("name", "")).strip(),
+                    str(preset.get("id", "")).strip(),
+                )
+            selected_index = project_combo.findData(project.assigned_project_id)
+            if selected_index < 0:
+                selected_index = 0
+                project.assigned_project_id = ""
+            project_combo.setCurrentIndex(selected_index)
+            self._update_project_combo_visual_state(project_combo)
+
+            def _on_project_changed(_index: int, p=project, combo=project_combo) -> None:
+                self._update_project_combo_visual_state(combo)
+                self._handle_project_assignment_changed(p, combo.currentData())
+
+            project_combo.currentIndexChanged.connect(_on_project_changed)
+            project_container = QWidget()
+            project_container_layout = QHBoxLayout(project_container)
+            project_container_layout.setContentsMargins(8, 4, 8, 4)
+            project_container_layout.setSpacing(0)
+            project_container_layout.addWidget(project_combo)
+            self.project_table.setCellWidget(row, self.columns.project, project_container)
 
         if self._status_message_override is None:
             self._update_status_label()
@@ -1777,13 +3383,14 @@ class MainWindow(QMainWindow):
         if self.project_table is None:
             return
         for row, project in enumerate(self.projects):
+            name_item = self.project_table.item(row, self.columns.name)
             status_item = self.project_table.item(row, self.columns.status)
-            notes_item = self.project_table.item(row, self.columns.notes)
+            if name_item is not None:
+                name_item.setToolTip(project.notes)
             if status_item is not None:
                 status_item.setText(project.status.label())
                 status_item.setForeground(QBrush(self._status_color(project.status)))
-            if notes_item is not None:
-                notes_item.setText(project.notes)
+        self._refresh_project_preset_tab()
         if self._status_message_override is None:
             self._update_status_label()
         else:
@@ -1807,6 +3414,1135 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder to Rename", str(self.image_folder or Path.home()))
         if folder:
             self._set_image_folder(Path(folder))
+
+    # ── Raw SEO handlers ────────────────────────────────────────────────────
+
+    def _set_raw_seo_files(self, files: list[Path]) -> None:
+        unique_files: list[Path] = []
+        seen: set[str] = set()
+        for file_path in files:
+            key = str(file_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_files.append(file_path)
+
+        self.raw_seo_files = unique_files
+
+        if hasattr(self, "raw_seo_file_list"):
+            self.raw_seo_file_list.clear()
+            for file_path in unique_files:
+                item = QListWidgetItem(file_path.name)
+                item.setToolTip(str(file_path))
+                self.raw_seo_file_list.addItem(item)
+            if unique_files and self.raw_seo_file_list.count() > 0:
+                self.raw_seo_file_list.setCurrentRow(0)
+
+        if hasattr(self, "raw_seo_files_edit"):
+            if unique_files:
+                self.raw_seo_files_edit.setText(f"{len(unique_files)} file(s) selected")
+            else:
+                self.raw_seo_files_edit.clear()
+
+    @staticmethod
+    def _default_raw_seo_draft() -> dict[str, object]:
+        return {
+            "title": "",
+            "description": "",
+            "keywords_raw": "",
+            "author": "",
+            "publisher": "",
+            "copyright": "",
+            "comment": "",
+            "rating": -1,
+            "language": "",
+            "website": "",
+            "date_created": "",
+            "city": "",
+            "country": "",
+            "custom_tags_raw": "",
+        }
+
+    def _clear_raw_seo_metadata_draft(self) -> None:
+        self.raw_seo_draft = self._default_raw_seo_draft()
+        self._update_raw_seo_draft_summary()
+        if hasattr(self, "raw_seo_result_label"):
+            self.raw_seo_result_label.setText("Metadata fields reset.")
+
+    def _update_raw_seo_draft_summary(self) -> None:
+        if not hasattr(self, "raw_seo_draft_summary_label"):
+            return
+        title = str(self.raw_seo_draft.get("title", "")).strip()
+        desc = str(self.raw_seo_draft.get("description", "")).strip()
+        keywords = parse_keywords(str(self.raw_seo_draft.get("keywords_raw", "")))
+        custom_lines = [
+            ln.strip()
+            for ln in str(self.raw_seo_draft.get("custom_tags_raw", "")).splitlines()
+            if ln.strip()
+        ]
+        advanced_count = 0
+        for key in (
+            "author",
+            "publisher",
+            "copyright",
+            "comment",
+            "language",
+            "website",
+            "date_created",
+            "city",
+            "country",
+        ):
+            if str(self.raw_seo_draft.get(key, "")).strip():
+                advanced_count += 1
+        if int(self.raw_seo_draft.get("rating", -1)) >= 0:
+            advanced_count += 1
+        advanced_count += len(custom_lines)
+
+        parts = [
+            f"Title: {'set' if title else 'empty'}",
+            f"Description: {'set' if desc else 'empty'}",
+            f"Keywords: {len(keywords)}",
+            f"Advanced tags: {advanced_count}",
+        ]
+        self.raw_seo_draft_summary_label.setText(" | ".join(parts))
+
+    def _open_raw_seo_editor(self) -> None:
+        draft = dict(self.raw_seo_draft)
+        dialog = QDialog(self)
+        dialog.setObjectName("rawSeoEditorDialog")
+        dialog.setWindowTitle("Raw SEO Metadata Editor")
+        dialog.resize(980, 760)
+        dialog.setMinimumSize(860, 620)
+        dialog.setStyleSheet(
+            """
+            QDialog#rawSeoEditorDialog {
+                background: #F8FAFC;
+            }
+            QFrame#rawSeoCard {
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+            }
+            QLabel#rawSeoHeading {
+                font-size: 20px;
+                font-weight: 700;
+                color: #0F172A;
+                background: transparent;
+                border: none;
+            }
+            QLabel#rawSeoSubheading {
+                font-size: 13px;
+                color: #64748B;
+                background: transparent;
+                border: none;
+            }
+            QDialog#rawSeoEditorDialog QLabel#sectionLabel {
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+                color: #475569;
+            }
+            QDialog#rawSeoEditorDialog QLineEdit:focus,
+            QDialog#rawSeoEditorDialog QTextEdit:focus,
+            QDialog#rawSeoEditorDialog QSpinBox:focus {
+                border: 1px solid #CBD5E1;
+                background: #FFFFFF;
+                outline: none;
+            }
+            """
+        )
+
+        outer = QVBoxLayout(dialog)
+        outer.setContentsMargins(18, 18, 18, 16)
+        outer.setSpacing(12)
+
+        heading = QLabel("Raw SEO Metadata Editor")
+        heading.setObjectName("rawSeoHeading")
+        outer.addWidget(heading)
+
+        subheading = QLabel("Edit metadata fields, then click Save to apply to Raw SEO.")
+        subheading.setObjectName("rawSeoSubheading")
+        subheading.setWordWrap(True)
+        outer.addWidget(subheading)
+
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        form_root = QWidget()
+        form = QVBoxLayout(form_root)
+        form.setContentsMargins(4, 0, 4, 0)
+        form.setSpacing(12)
+
+        basic_frame = QFrame()
+        basic_frame.setObjectName("rawSeoCard")
+        basic_layout = QGridLayout(basic_frame)
+        basic_layout.setContentsMargins(14, 12, 14, 12)
+        basic_layout.setHorizontalSpacing(10)
+        basic_layout.setVerticalSpacing(8)
+
+        basic_title = QLabel("Basic SEO Fields")
+        basic_title.setObjectName("sectionLabel")
+        basic_layout.addWidget(basic_title, 0, 0, 1, 2)
+
+        title_label = QLabel("Title")
+        title_label.setObjectName("sectionLabel")
+        basic_layout.addWidget(title_label, 1, 0, 1, 2)
+        title_edit = QLineEdit()
+        title_edit.setPlaceholderText("Keyword chính + hook tiêu đề…")
+        title_edit.setText(str(draft.get("title", "")))
+        basic_layout.addWidget(title_edit, 2, 0, 1, 2)
+
+        desc_label = QLabel("Description")
+        desc_label.setObjectName("sectionLabel")
+        basic_layout.addWidget(desc_label, 3, 0)
+        desc_edit = QTextEdit()
+        desc_edit.setPlaceholderText("Mô tả SEO cho video/ảnh…")
+        desc_edit.setPlainText(str(draft.get("description", "")))
+        desc_edit.setFixedHeight(118)
+        basic_layout.addWidget(desc_edit, 4, 0)
+
+        keywords_label = QLabel("Keywords")
+        keywords_label.setObjectName("sectionLabel")
+        basic_layout.addWidget(keywords_label, 3, 1)
+        keywords_edit = QTextEdit()
+        keywords_edit.setPlaceholderText("kw1, kw2, kw3 (comma/new line separated)")
+        keywords_edit.setPlainText(str(draft.get("keywords_raw", "")))
+        keywords_edit.setFixedHeight(118)
+        basic_layout.addWidget(keywords_edit, 4, 1)
+        form.addWidget(basic_frame)
+
+        advanced_frame = QFrame()
+        advanced_frame.setObjectName("rawSeoCard")
+        advanced_grid = QGridLayout(advanced_frame)
+        advanced_grid.setContentsMargins(14, 12, 14, 12)
+        advanced_grid.setHorizontalSpacing(10)
+        advanced_grid.setVerticalSpacing(8)
+
+        advanced_title = QLabel("Advanced Metadata")
+        advanced_title.setObjectName("sectionLabel")
+        advanced_grid.addWidget(advanced_title, 0, 0, 1, 2)
+
+        author_label = QLabel("Author")
+        author_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(author_label, 1, 0)
+        author_edit = QLineEdit()
+        author_edit.setPlaceholderText("Creator / Artist")
+        author_edit.setText(str(draft.get("author", "")))
+        advanced_grid.addWidget(author_edit, 2, 0)
+
+        publisher_label = QLabel("Publisher")
+        publisher_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(publisher_label, 1, 1)
+        publisher_edit = QLineEdit()
+        publisher_edit.setPlaceholderText("Channel / Publisher name")
+        publisher_edit.setText(str(draft.get("publisher", "")))
+        advanced_grid.addWidget(publisher_edit, 2, 1)
+
+        copyright_label = QLabel("Copyright")
+        copyright_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(copyright_label, 3, 0)
+        copyright_edit = QLineEdit()
+        copyright_edit.setPlaceholderText("Copyright notice")
+        copyright_edit.setText(str(draft.get("copyright", "")))
+        advanced_grid.addWidget(copyright_edit, 4, 0)
+
+        comment_label = QLabel("Comment")
+        comment_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(comment_label, 3, 1)
+        comment_edit = QLineEdit()
+        comment_edit.setPlaceholderText("Optional comment metadata")
+        comment_edit.setText(str(draft.get("comment", "")))
+        advanced_grid.addWidget(comment_edit, 4, 1)
+
+        rating_label = QLabel("Rating (0-5)")
+        rating_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(rating_label, 5, 0)
+        rating_spin = QSpinBox()
+        rating_spin.setRange(-1, 5)
+        rating_spin.setSpecialValueText("Skip")
+        rating_spin.setValue(int(draft.get("rating", -1)))
+        advanced_grid.addWidget(rating_spin, 6, 0)
+
+        language_label = QLabel("Language")
+        language_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(language_label, 5, 1)
+        language_edit = QLineEdit()
+        language_edit.setPlaceholderText("e.g. en, ko, vi")
+        language_edit.setText(str(draft.get("language", "")))
+        advanced_grid.addWidget(language_edit, 6, 1)
+
+        website_label = QLabel("Website")
+        website_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(website_label, 7, 0)
+        website_edit = QLineEdit()
+        website_edit.setPlaceholderText("https://example.com")
+        website_edit.setText(str(draft.get("website", "")))
+        advanced_grid.addWidget(website_edit, 8, 0)
+
+        date_created_label = QLabel("Date Created")
+        date_created_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(date_created_label, 7, 1)
+        raw_date_created = str(draft.get("date_created", "")).strip()
+        date_created_edit = QDateTimeEdit()
+        date_created_edit.setDisplayFormat("yyyy:MM:dd HH:mm:ss")
+        date_created_edit.setCalendarPopup(True)
+        parsed_date = QDateTime.fromString(raw_date_created, "yyyy:MM:dd HH:mm:ss")
+        if not parsed_date.isValid():
+            parsed_date = QDateTime.fromString(raw_date_created, "yyyy-MM-dd HH:mm:ss")
+        if not parsed_date.isValid():
+            parsed_date = QDateTime.currentDateTime()
+        date_created_edit.setDateTime(parsed_date)
+        advanced_grid.addWidget(date_created_edit, 8, 1)
+
+        city_label = QLabel("City")
+        city_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(city_label, 9, 0)
+        city_edit = QLineEdit()
+        city_edit.setPlaceholderText("City")
+        city_edit.setText(str(draft.get("city", "")))
+        advanced_grid.addWidget(city_edit, 10, 0)
+
+        country_label = QLabel("Country")
+        country_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(country_label, 9, 1)
+        country_edit = QLineEdit()
+        country_edit.setPlaceholderText("Country")
+        country_edit.setText(str(draft.get("country", "")))
+        advanced_grid.addWidget(country_edit, 10, 1)
+
+        custom_tags_label = QLabel("Custom Tags (Tag=Value, one per line)")
+        custom_tags_label.setObjectName("sectionLabel")
+        advanced_grid.addWidget(custom_tags_label, 11, 0, 1, 2)
+        custom_tags_edit = QTextEdit()
+        custom_tags_edit.setPlaceholderText("Examples:\nXMP-dc:Publisher=My Channel\nSoftware=AutoCapCut")
+        custom_tags_edit.setPlainText(str(draft.get("custom_tags_raw", "")))
+        custom_tags_edit.setFixedHeight(96)
+        advanced_grid.addWidget(custom_tags_edit, 12, 0, 1, 2)
+        form.addWidget(advanced_frame)
+
+        scroll.setWidget(form_root)
+        outer.addWidget(scroll, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        save_btn = QPushButton("Save")
+        save_btn.setProperty("variant", "primary")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("variant", "secondary")
+        cancel_btn.setMinimumWidth(96)
+        save_btn.setMinimumWidth(96)
+        actions.addWidget(cancel_btn)
+        actions.addWidget(save_btn)
+        outer.addLayout(actions)
+
+        def save_and_close() -> None:
+            self.raw_seo_draft = {
+                "title": title_edit.text().strip(),
+                "description": desc_edit.toPlainText().strip(),
+                "keywords_raw": keywords_edit.toPlainText(),
+                "author": author_edit.text().strip(),
+                "publisher": publisher_edit.text().strip(),
+                "copyright": copyright_edit.text().strip(),
+                "comment": comment_edit.text().strip(),
+                "rating": rating_spin.value(),
+                "language": language_edit.text().strip(),
+                "website": website_edit.text().strip(),
+                "date_created": date_created_edit.dateTime().toString("yyyy:MM:dd HH:mm:ss"),
+                "city": city_edit.text().strip(),
+                "country": country_edit.text().strip(),
+                "custom_tags_raw": custom_tags_edit.toPlainText(),
+            }
+            self._update_raw_seo_draft_summary()
+            if hasattr(self, "raw_seo_result_label"):
+                self.raw_seo_result_label.setText("Metadata fields saved.")
+            dialog.accept()
+
+        save_btn.clicked.connect(save_and_close)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    @staticmethod
+    def _collect_raw_seo_advanced_tags_from_draft(draft: dict[str, object]) -> dict[str, str]:
+        tags: dict[str, str] = {}
+        author = str(draft.get("author", "")).strip()
+        if author:
+            tags["XMP-dc:Creator"] = author
+            tags["Artist"] = author
+
+        publisher = str(draft.get("publisher", "")).strip()
+        if publisher:
+            tags["XMP-dc:Publisher"] = publisher
+
+        copyright_text = str(draft.get("copyright", "")).strip()
+        if copyright_text:
+            tags["XMP-dc:Rights"] = copyright_text
+            tags["Copyright"] = copyright_text
+
+        comment = str(draft.get("comment", "")).strip()
+        if comment:
+            tags["Comment"] = comment
+
+        rating_value = int(draft.get("rating", -1))
+        if rating_value >= 0:
+            tags["XMP-xmp:Rating"] = str(rating_value)
+
+        language = str(draft.get("language", "")).strip()
+        if language:
+            tags["XMP-dc:Language"] = language
+
+        website = str(draft.get("website", "")).strip()
+        if website:
+            tags["URL"] = website
+            tags["XMP-xmpRights:WebStatement"] = website
+
+        date_created = str(draft.get("date_created", "")).strip()
+        if date_created:
+            tags["XMP-photoshop:DateCreated"] = date_created
+
+        city = str(draft.get("city", "")).strip()
+        if city:
+            tags["XMP-photoshop:City"] = city
+
+        country = str(draft.get("country", "")).strip()
+        if country:
+            tags["XMP-photoshop:Country"] = country
+
+        raw_custom = str(draft.get("custom_tags_raw", ""))
+        if raw_custom.strip():
+            for line_number, raw_line in enumerate(raw_custom.splitlines(), 1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if "=" not in line:
+                    raise RawSEOError(f"Invalid custom tag at line {line_number}: expected Tag=Value")
+                tag, value = line.split("=", 1)
+                tag = tag.strip()
+                value = value.strip()
+                if not tag or not value:
+                    raise RawSEOError(f"Invalid custom tag at line {line_number}: expected Tag=Value")
+                tags[tag] = value
+        return tags
+
+    def _collect_raw_seo_input(self) -> tuple[str, str, list[str], dict[str, str]]:
+        title = str(self.raw_seo_draft.get("title", "")).strip()
+        description = str(self.raw_seo_draft.get("description", "")).strip()
+        keywords_raw = str(self.raw_seo_draft.get("keywords_raw", ""))
+        keywords = parse_keywords(keywords_raw)
+        advanced_tags = self._collect_raw_seo_advanced_tags_from_draft(self.raw_seo_draft)
+        if not any((title, description, keywords, advanced_tags)):
+            raise RawSEOError(
+                "Please click 'Edit Metadata Fields' and fill at least one value before applying."
+            )
+        return title, description, keywords, advanced_tags
+
+    def _handle_select_raw_seo_files(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select files for Raw SEO",
+            str(Path.home()),
+            (
+                "Media files (*.mp4 *.mov *.m4v *.mkv *.avi *.webm *.mp3 *.m4a *.wav *.flac "
+                "*.jpg *.jpeg *.png *.webp *.heic *.tif *.tiff);;All files (*)"
+            ),
+        )
+        if files:
+            self._set_raw_seo_files([Path(path) for path in files])
+
+    def _handle_clear_raw_seo_files(self) -> None:
+        self._set_raw_seo_files([])
+        if hasattr(self, "raw_seo_result_label"):
+            self.raw_seo_result_label.setText("")
+
+    def _selected_raw_seo_file(self) -> Path | None:
+        if hasattr(self, "raw_seo_file_list"):
+            selected_items = self.raw_seo_file_list.selectedItems()
+            if selected_items:
+                tooltip = selected_items[0].toolTip()
+                if tooltip:
+                    return Path(tooltip)
+            current_item = self.raw_seo_file_list.currentItem()
+            if current_item and current_item.toolTip():
+                return Path(current_item.toolTip())
+        if self.raw_seo_files:
+            return self.raw_seo_files[0]
+        return None
+
+    def _current_raw_seo_additional_tags(self) -> list[str]:
+        try:
+            return list(self._collect_raw_seo_advanced_tags_from_draft(self.raw_seo_draft).keys())
+        except RawSEOError:
+            return []
+
+    @staticmethod
+    def _format_raw_seo_metadata(metadata: dict[str, object]) -> str:
+        preferred_order = [
+            "Title",
+            "Title-en-US",
+            "QuickTime:Title",
+            "ItemList:Title",
+            "Keys:Title",
+            "Description",
+            "Description-en-US",
+            "QuickTime:Description",
+            "ItemList:Description",
+            "Keys:Description",
+            "Keywords",
+            "Subject",
+            "XMP-dc:Title",
+            "XMP-dc:Description",
+            "XMP-dc:Subject",
+            "XMP-dc:Creator",
+            "Creator",
+            "Artist",
+            "XMP-dc:Publisher",
+            "XMP-dc:Rights",
+            "Rights",
+            "Copyright",
+            "Comment",
+            "XMP-xmp:Rating",
+            "Rating",
+            "XMP-dc:Language",
+            "Language",
+            "URL",
+            "XMP-xmpRights:WebStatement",
+            "XMP-photoshop:DateCreated",
+            "XMP-photoshop:City",
+            "XMP-photoshop:Country",
+        ]
+        lines: list[str] = []
+        for key in preferred_order:
+            if key not in metadata:
+                continue
+            value = metadata[key]
+            if isinstance(value, list):
+                rendered = ", ".join(str(item) for item in value)
+            else:
+                rendered = str(value)
+            lines.append(f"{key}: {rendered}")
+
+        extras = [key for key in metadata.keys() if key not in preferred_order and key != "SourceFile"]
+        for key in sorted(extras):
+            value = metadata[key]
+            if isinstance(value, list):
+                rendered = ", ".join(str(item) for item in value)
+            else:
+                rendered = str(value)
+            lines.append(f"{key}: {rendered}")
+        return "\n".join(lines) if lines else "No SEO metadata fields found."
+
+    def _show_raw_seo_metadata_dialog(self, file_path: Path, metadata_text: str) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Raw SEO Metadata")
+        dialog.resize(720, 460)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        file_label = QLabel(str(file_path))
+        file_label.setObjectName("hintLabel")
+        file_label.setWordWrap(True)
+        layout.addWidget(file_label)
+
+        text_box = QTextEdit()
+        text_box.setReadOnly(True)
+        text_box.setPlainText(metadata_text)
+        layout.addWidget(text_box, 1)
+
+        actions = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        copy_btn.setProperty("variant", "secondary")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(metadata_text))
+        actions.addWidget(copy_btn)
+
+        open_folder_btn = QPushButton("Open Folder")
+        open_folder_btn.setProperty("variant", "secondary")
+        open_folder_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(file_path.parent)))
+        )
+        actions.addWidget(open_folder_btn)
+        actions.addStretch(1)
+
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("variant", "primary")
+        close_btn.clicked.connect(dialog.accept)
+        actions.addWidget(close_btn)
+        layout.addLayout(actions)
+
+        dialog.exec()
+
+    def _handle_raw_seo_view_metadata(self) -> None:
+        target = self._selected_raw_seo_file()
+        if target is None:
+            QMessageBox.information(self, "No file", "Select a file in Raw SEO list first.")
+            return
+
+        self._set_job_controls_state(True)
+        try:
+            metadata = read_raw_seo_metadata(
+                target,
+                additional_tags=self._current_raw_seo_additional_tags(),
+            )
+        except RawSEOError as exc:
+            QMessageBox.warning(self, "View metadata failed", str(exc))
+            return
+        finally:
+            self._set_job_controls_state(False)
+
+        rendered = self._format_raw_seo_metadata(metadata)
+        self._show_raw_seo_metadata_dialog(target, rendered)
+
+    def _show_raw_seo_result_dialog(
+        self,
+        *,
+        title: str,
+        message: str,
+        metadata_file: Path | None,
+        folder_to_open: Path | None,
+        additional_tags: list[str] | None,
+        warning: bool,
+    ) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning if warning else QMessageBox.Icon.Information)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        if metadata_file is not None:
+            view_metadata_btn = dialog.addButton("View Metadata", QMessageBox.ButtonRole.ActionRole)
+        else:
+            view_metadata_btn = None
+        if folder_to_open is not None:
+            dialog.setInformativeText(str(folder_to_open))
+            open_folder_btn = dialog.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
+        else:
+            open_folder_btn = None
+        close_btn = dialog.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+        dialog.setDefaultButton(close_btn)
+        dialog.exec()
+
+        clicked = dialog.clickedButton()
+        if open_folder_btn is not None and clicked == open_folder_btn:
+            opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_to_open)))
+            if not opened:
+                QMessageBox.warning(self, "Open folder failed", f"Could not open folder:\n{folder_to_open}")
+            return
+
+        if view_metadata_btn is not None and clicked == view_metadata_btn and metadata_file is not None:
+            try:
+                metadata = read_raw_seo_metadata(metadata_file, additional_tags=additional_tags)
+            except RawSEOError as exc:
+                QMessageBox.warning(self, "View metadata failed", str(exc))
+                return
+            rendered = self._format_raw_seo_metadata(metadata)
+            self._show_raw_seo_metadata_dialog(metadata_file, rendered)
+            return
+
+    def _handle_raw_seo_apply(self) -> None:
+        if not self.raw_seo_files:
+            QMessageBox.information(self, "No files", "Select at least one file before applying Raw SEO.")
+            return
+
+        try:
+            title, description, keywords, advanced_tags = self._collect_raw_seo_input()
+        except RawSEOError as exc:
+            QMessageBox.information(self, "Missing metadata", str(exc))
+            return
+        strict_mode = (
+            self.raw_seo_strict_check.isChecked()
+            if hasattr(self, "raw_seo_strict_check")
+            else False
+        )
+
+        progress = QProgressDialog("Preparing Raw SEO...", None, 0, len(self.raw_seo_files), self)
+        progress.setWindowTitle("Raw SEO")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
+        def update_progress(done: int, total: int, current: Path | None) -> None:
+            if total and progress.maximum() != total:
+                progress.setMaximum(total)
+            progress.setValue(done)
+            if current is not None:
+                progress.setLabelText(f"Updating {current.name} ({done}/{total})")
+            QApplication.processEvents()
+
+        self._set_job_controls_state(True)
+        try:
+            summary = apply_raw_seo(
+                self.raw_seo_files,
+                title=title,
+                description=description,
+                keywords=keywords,
+                extra_tags=advanced_tags,
+                rename_to_title=True,
+                strict_verify=strict_mode,
+                progress_callback=update_progress,
+            )
+        except RawSEOError as exc:
+            QMessageBox.warning(self, "Raw SEO failed", str(exc))
+            return
+        finally:
+            self._set_job_controls_state(False)
+            progress.close()
+            progress.deleteLater()
+
+        message_lines = [
+            f"Processed: {summary.processed}",
+            f"Success: {summary.succeeded}",
+            f"Failed: {summary.failed}",
+            f"Strict mode: {'ON' if strict_mode else 'OFF'}",
+            f"Advanced tags: {len(advanced_tags)}",
+        ]
+
+        failed_items = [item for item in summary.results if not item.success]
+        if failed_items:
+            message_lines.append("Failed files:")
+            for item in failed_items[:5]:
+                message_lines.append(f"- {item.file.name}: {item.message}")
+            if len(failed_items) > 5:
+                message_lines.append(f"...and {len(failed_items) - 5} more")
+
+        message = "\n".join(message_lines)
+        if hasattr(self, "raw_seo_result_label"):
+            self.raw_seo_result_label.setText(message)
+
+        # Refresh selected file list because successful files may have been renamed to Title.
+        self._set_raw_seo_files([item.file for item in summary.results])
+
+        success_items = [item for item in summary.results if item.success]
+        metadata_file: Path | None = None
+        folder_to_open: Path | None = None
+        if success_items:
+            metadata_file = success_items[0].file
+            folder_to_open = success_items[0].file.parent
+        elif self.raw_seo_files:
+            metadata_file = self.raw_seo_files[0]
+            folder_to_open = self.raw_seo_files[0].parent
+
+        self._show_raw_seo_result_dialog(
+            title="Raw SEO complete with issues" if summary.failed else "Raw SEO complete",
+            message=message,
+            metadata_file=metadata_file,
+            folder_to_open=folder_to_open,
+            additional_tags=list(advanced_tags.keys()),
+            warning=bool(summary.failed),
+        )
+
+    def _handle_raw_seo_export_payload(self) -> None:
+        try:
+            title, description, keywords, advanced_tags = self._collect_raw_seo_input()
+        except RawSEOError as exc:
+            QMessageBox.information(self, "Missing metadata", str(exc))
+            return
+
+        initial_dir = self.raw_seo_files[0].parent if self.raw_seo_files else Path.home()
+        suggested = initial_dir / "raw_seo_payload.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Raw SEO payload",
+            str(suggested),
+            "JSON files (*.json)",
+        )
+        if not path:
+            return
+
+        output_path = Path(path)
+        if output_path.suffix.lower() != ".json":
+            output_path = output_path.with_suffix(".json")
+
+        try:
+            saved_path = write_raw_seo_payload(
+                output_path,
+                files=self.raw_seo_files,
+                title=title,
+                description=description,
+                keywords=keywords,
+                extra_tags=advanced_tags,
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+
+        if hasattr(self, "raw_seo_result_label"):
+            self.raw_seo_result_label.setText(f"Payload saved: {saved_path}")
+        QMessageBox.information(self, "Payload exported", f"Saved JSON payload:\n{saved_path}")
+
+    # ── Roxy Upload handlers ───────────────────────────────────────────────
+
+    def _show_roxy_notification_dialog(self, *, title: str, message: str, warning: bool = False) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.resize(780, 420)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        header = QLabel("Upload details" if not warning else "Upload error details")
+        header.setObjectName("sectionLabel")
+        layout.addWidget(header)
+
+        content = QTextEdit()
+        content.setReadOnly(True)
+        content.setPlainText(message)
+        content.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        layout.addWidget(content, 1)
+
+        actions = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        copy_btn.setProperty("variant", "secondary")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(message))
+        actions.addWidget(copy_btn)
+        actions.addStretch(1)
+
+        close_btn = QPushButton("Close")
+        close_btn.setProperty("variant", "primary")
+        close_btn.clicked.connect(dialog.accept)
+        actions.addWidget(close_btn)
+        layout.addLayout(actions)
+
+        dialog.exec()
+
+    def _start_roxy_rate_timer(self) -> None:
+        if self._roxy_rate_timer is None:
+            timer = QTimer(self)
+            timer.setInterval(1000)
+            timer.timeout.connect(self._refresh_roxy_rate_limit_label)
+            self._roxy_rate_timer = timer
+        if not self._roxy_rate_timer.isActive():
+            self._roxy_rate_timer.start()
+
+    def _refresh_roxy_rate_limit_label(self) -> None:
+        if not hasattr(self, "roxy_rate_limit_label"):
+            return
+        snapshot = get_roxy_rate_limit_snapshot(default_limit=50)
+        source = "server" if snapshot.source == "server-header" else "local"
+        text = (
+            f"API quota (60s): {snapshot.used_last_minute}/{snapshot.limit_per_minute} used "
+            f"· {snapshot.remaining} remaining ({source})"
+        )
+        if snapshot.reset_in_seconds is not None:
+            text += f" · reset in ~{snapshot.reset_in_seconds}s"
+        self.roxy_rate_limit_label.setText(text)
+
+    def _set_roxy_video_path(self, path: Path | None) -> None:
+        self.roxy_video_path = path
+        if hasattr(self, "roxy_video_path_edit"):
+            if path is None:
+                self.roxy_video_path_edit.clear()
+            else:
+                self.roxy_video_path_edit.setText(str(path))
+
+    def _combo_roxy_profile_id(self) -> str:
+        if not hasattr(self, "roxy_profile_combo"):
+            return ""
+        combo_text = self.roxy_profile_combo.currentText().strip().lower()
+        combo_value = self.roxy_profile_combo.currentData()
+        if combo_value is None:
+            return ""
+        value = str(combo_value).strip()
+        if not value:
+            return ""
+        if "no profiles found" in combo_text:
+            return ""
+        return value
+
+    def _handle_roxy_profile_changed(self, _index: int) -> None:
+        selected_id = self._combo_roxy_profile_id()
+        if hasattr(self, "roxy_profile_id_edit"):
+            if selected_id:
+                # Keep manual id in sync with the selected profile by default.
+                self.roxy_profile_id_edit.setText(selected_id)
+            elif not self.roxy_profile_id_edit.hasFocus():
+                self.roxy_profile_id_edit.clear()
+
+    def _selected_roxy_profile_id(self) -> str:
+        combo_selected = self._combo_roxy_profile_id()
+        if combo_selected:
+            return combo_selected
+        manual = self.roxy_profile_id_edit.text().strip() if hasattr(self, "roxy_profile_id_edit") else ""
+        if manual:
+            return manual
+        return ""
+
+    def _remember_roxy_settings(self) -> None:
+        if hasattr(self, "roxy_api_host_edit"):
+            self._settings.setValue("roxy/api_host", self.roxy_api_host_edit.text().strip())
+        if hasattr(self, "roxy_api_key_edit"):
+            self._settings.setValue("roxy/api_key", self.roxy_api_key_edit.text().strip())
+        if hasattr(self, "roxy_workspace_spin"):
+            self._settings.setValue("roxy/workspace_id", int(self.roxy_workspace_spin.value()))
+        selected_profile = self._selected_roxy_profile_id()
+        if selected_profile:
+            self._settings.setValue("roxy/profile_id", selected_profile)
+        if self.roxy_video_path is not None:
+            self._settings.setValue("roxy/video_path", str(self.roxy_video_path))
+        self._settings.sync()
+
+    def _handle_roxy_select_video(self, _checked: bool = False) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select video to upload",
+            str(self.roxy_video_path.parent if self.roxy_video_path else Path.home()),
+            "Video files (*.mp4 *.mov *.m4v *.mkv *.avi *.webm);;All files (*)",
+        )
+        if path:
+            self._set_roxy_video_path(Path(path))
+            self._remember_roxy_settings()
+
+    def _handle_roxy_load_profiles(self, silent: bool = False) -> None:
+        if not hasattr(self, "roxy_profile_combo"):
+            return
+
+        api_host = self.roxy_api_host_edit.text().strip() if hasattr(self, "roxy_api_host_edit") else ""
+        api_key = self.roxy_api_key_edit.text().strip() if hasattr(self, "roxy_api_key_edit") else ""
+        workspace_id = self.roxy_workspace_spin.value() if hasattr(self, "roxy_workspace_spin") else 1
+
+        if not api_host:
+            if not silent:
+                QMessageBox.information(self, "Missing API host", "Please fill in Roxy API host first.")
+            return
+        if not api_key:
+            if not silent:
+                QMessageBox.information(self, "Missing API key", "Please fill in Roxy API key first.")
+            return
+
+        previous_profile = self._selected_roxy_profile_id()
+        self._set_job_controls_state(True)
+        try:
+            client = RoxyApiClient(api_host, api_key)
+            workspace_note = ""
+            workspaces = client.list_workspaces()
+            if workspaces:
+                available_ids = {item.workspace_id for item in workspaces}
+                if workspace_id not in available_ids:
+                    workspace_id = workspaces[0].workspace_id
+                    if hasattr(self, "roxy_workspace_spin"):
+                        self.roxy_workspace_spin.setValue(workspace_id)
+                    label = workspaces[0].workspace_name or str(workspace_id)
+                    workspace_note = f"Auto-selected workspace: {label} ({workspace_id}). "
+            profiles = client.list_profiles(workspace_id)
+        except RoxyUploadError as exc:
+            if hasattr(self, "roxy_result_label"):
+                self.roxy_result_label.setText(f"Load profiles failed: {exc}")
+            if not silent:
+                QMessageBox.warning(self, "Roxy API error", str(exc))
+            return
+        finally:
+            self._set_job_controls_state(False)
+
+        self.roxy_profile_combo.blockSignals(True)
+        self.roxy_profile_combo.clear()
+        if profiles:
+            for profile in profiles:
+                self.roxy_profile_combo.addItem(
+                    f"{profile.display_name} · {profile.dir_id[:10]}...",
+                    profile.dir_id,
+                )
+            target_profile = previous_profile or self._settings.value("roxy/profile_id", "", type=str)
+            if target_profile:
+                index = self.roxy_profile_combo.findData(target_profile)
+                if index >= 0:
+                    self.roxy_profile_combo.setCurrentIndex(index)
+            message = f"{workspace_note}Loaded {len(profiles)} profile(s) from workspace {workspace_id}."
+        else:
+            self.roxy_profile_combo.addItem("No profiles found", "")
+            message = f"{workspace_note}No profiles found in workspace {workspace_id}."
+        self.roxy_profile_combo.blockSignals(False)
+        self._handle_roxy_profile_changed(self.roxy_profile_combo.currentIndex())
+
+        if hasattr(self, "roxy_result_label"):
+            self.roxy_result_label.setText(message)
+        self._remember_roxy_settings()
+
+    def _run_roxy_preflight(
+        self,
+        *,
+        api_host: str,
+        api_key: str,
+        workspace_id: int,
+        profile_id: str,
+        video_path: Path,
+    ) -> RoxyPreflightResult | None:
+        progress = QProgressDialog("Running upload preflight...", None, 0, 0, self)
+        progress.setWindowTitle("Roxy Preflight")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            result = run_roxy_upload_preflight(
+                api_host=api_host,
+                api_token=api_key,
+                workspace_id=workspace_id,
+                profile_id=profile_id,
+                video_path=video_path,
+            )
+        except RoxyUploadError as exc:
+            if hasattr(self, "roxy_result_label"):
+                self.roxy_result_label.setText(f"Preflight failed: {exc}")
+            QMessageBox.warning(self, "Preflight failed", str(exc))
+            return None
+        finally:
+            progress.close()
+            progress.deleteLater()
+
+        if hasattr(self, "roxy_result_label"):
+            self.roxy_result_label.setText(
+                f"Preflight OK · workspace {result.workspace_id} · profile {result.profile_display_name}"
+            )
+        return result
+
+    def _show_roxy_upload_progress_dialog(self) -> None:
+        dialog = QProgressDialog("Preparing Roxy upload...", None, 0, 0, self)
+        dialog.setWindowTitle("Upload via Roxy")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setCancelButton(None)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.show()
+        self._roxy_upload_progress = dialog
+        QApplication.processEvents()
+
+    def _handle_roxy_upload_progress(self, message: str) -> None:
+        if self._roxy_upload_progress is not None:
+            self._roxy_upload_progress.setLabelText(message)
+            QApplication.processEvents()
+        if hasattr(self, "roxy_result_label"):
+            self.roxy_result_label.setText(message)
+        self._refresh_roxy_rate_limit_label()
+
+    def _finish_roxy_upload_ui_state(self) -> None:
+        self._set_job_controls_state(False)
+        if self._roxy_upload_progress is not None:
+            self._roxy_upload_progress.close()
+            self._roxy_upload_progress.deleteLater()
+            self._roxy_upload_progress = None
+
+        if self._roxy_upload_worker is not None:
+            try:
+                self._roxy_upload_worker.wait(1000)
+            except Exception:
+                pass
+            self._roxy_upload_worker.deleteLater()
+            self._roxy_upload_worker = None
+        self._refresh_roxy_rate_limit_label()
+
+    def _handle_roxy_upload_finished(self, success: bool, error_message: str, summary_obj: object) -> None:
+        self._finish_roxy_upload_ui_state()
+        if not success:
+            if hasattr(self, "roxy_result_label"):
+                self.roxy_result_label.setText(f"Upload failed: {error_message}")
+            self._show_roxy_notification_dialog(
+                title="Upload failed",
+                message=error_message,
+                warning=True,
+            )
+            return
+
+        summary = summary_obj
+        result_lines = [
+            f"Profile: {summary.profile_id}",
+            f"Video: {summary.video_path}",
+            f"Debugger: {summary.debugger_address}",
+            summary.message,
+        ]
+        result_text = "\n".join(result_lines)
+        if hasattr(self, "roxy_result_label"):
+            self.roxy_result_label.setText(result_text)
+        self._show_roxy_notification_dialog(
+            title="Upload started",
+            message=result_text,
+            warning=False,
+        )
+
+    def _handle_roxy_upload(self, _checked: bool = False) -> None:
+        if self._roxy_upload_worker and self._roxy_upload_worker.isRunning():
+            QMessageBox.warning(self, "Upload in progress", "Roxy upload is already running.")
+            return
+        if self._worker and self._worker.isRunning():
+            QMessageBox.warning(self, "Sync in progress", "Please wait for current sync job to finish.")
+            return
+        if self._render_worker and self._render_worker.isRunning():
+            QMessageBox.warning(self, "Render in progress", "Please wait for current render job to finish.")
+            return
+
+        api_host = self.roxy_api_host_edit.text().strip() if hasattr(self, "roxy_api_host_edit") else ""
+        api_key = self.roxy_api_key_edit.text().strip() if hasattr(self, "roxy_api_key_edit") else ""
+        workspace_id = self.roxy_workspace_spin.value() if hasattr(self, "roxy_workspace_spin") else 1
+        profile_id = self._selected_roxy_profile_id()
+        close_after_start = (
+            self.roxy_close_profile_check.isChecked()
+            if hasattr(self, "roxy_close_profile_check")
+            else False
+        )
+
+        if not self.roxy_video_path:
+            QMessageBox.information(self, "Missing video", "Please select a video file first.")
+            return
+        if not self.roxy_video_path.exists() or not self.roxy_video_path.is_file():
+            QMessageBox.warning(self, "Invalid video path", f"Video file not found:\n{self.roxy_video_path}")
+            return
+        if not api_host:
+            QMessageBox.information(self, "Missing API host", "Please fill in Roxy API host.")
+            return
+        if not api_key:
+            QMessageBox.information(self, "Missing API key", "Please fill in Roxy API key.")
+            return
+        if not profile_id:
+            QMessageBox.information(
+                self,
+                "Missing profile",
+                "Please load profiles and select one, or paste profile dirId manually.",
+            )
+            return
+
+        preflight = self._run_roxy_preflight(
+            api_host=api_host,
+            api_key=api_key,
+            workspace_id=workspace_id,
+            profile_id=profile_id,
+            video_path=self.roxy_video_path,
+        )
+        if preflight is None:
+            return
+
+        workspace_id = preflight.workspace_id
+        profile_id = preflight.profile_id
+        if hasattr(self, "roxy_workspace_spin"):
+            self.roxy_workspace_spin.setValue(workspace_id)
+        if hasattr(self, "roxy_profile_id_edit"):
+            self.roxy_profile_id_edit.setText(profile_id)
+        self._remember_roxy_settings()
+
+        self._set_job_controls_state(True)
+        self._show_roxy_upload_progress_dialog()
+        debug_root = Path.cwd() / "logs" / "roxy_debug"
+        self._roxy_upload_worker = RoxyUploadWorker(
+            api_host=api_host,
+            api_key=api_key,
+            workspace_id=workspace_id,
+            profile_id=profile_id,
+            video_path=preflight.video_path,
+            close_profile_after_start=close_after_start,
+            debug_root=debug_root,
+        )
+        self._roxy_upload_worker.progress_message.connect(self._handle_roxy_upload_progress)
+        self._roxy_upload_worker.upload_finished.connect(self._handle_roxy_upload_finished)
+        if hasattr(self, "roxy_result_label"):
+            self.roxy_result_label.setText("Starting upload worker...")
+        self._roxy_upload_worker.start()
 
     # ── SRT Generator handlers ──────────────────────────────────────────────
 
@@ -2132,8 +4868,6 @@ class MainWindow(QMainWindow):
             
             return
 
-        # projects = self.project_table.get_projects() # This line assumes self.project_table is a ProjectTable instance, but it's QTableWidget
-        # For now, we'll use the existing self.projects list and filter selected ones.
         projects = [p for p in self.projects if p.is_selected]
         if not projects:
             QMessageBox.information(self, "No Project Selected", "Select at least one project to render.")
@@ -2478,6 +5212,14 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if self._automate_worker and self._automate_worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Automation in progress",
+                "Please wait for the current automate workflow to complete.",
+            )
+            return
+
         if self._worker and self._worker.isRunning():
             QMessageBox.warning(
                 self,
@@ -2514,7 +5256,7 @@ class MainWindow(QMainWindow):
         self._render_worker.progress_updated.connect(self._update_render_progress)
         self._set_job_controls_state(True)
         self._update_status_label(f"Auto Rendering… ({len(selected)} project(s))")
-        self._show_render_log_dialog(len(selected))
+        self._show_render_log_dialog(len(selected), title="Auto Render Progress")
         self._render_worker.start()
 
     def _on_render_finished(self, completed: int, total: int) -> None:
@@ -2546,12 +5288,184 @@ class MainWindow(QMainWindow):
                 self,
                 "Auto Render Complete",
                 f"Rendered {completed}/{total} project(s).\n\n"
-                f"⚠️ {failed} project(s) failed. Check the Notes column for details.",
+                f"⚠️ {failed} project(s) failed. Check render logs for details.",
             )
         if self._render_log_text is not None:
             self._append_render_log(f"Render summary: completed {completed}/{total}.")
 
+    def _handle_automate_clicked(self) -> None:
+        selected = self._selected_projects_in_order()
+        if not selected:
+            QMessageBox.information(
+                self,
+                "No Video Selected",
+                "Please tick at least one video before running Automate.",
+            )
+            return
+
+        if self._automate_worker and self._automate_worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Automation in progress",
+                "Another automate job is already running.",
+            )
+            return
+
+        if self._render_worker and self._render_worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Render in progress",
+                "Please wait for the current auto render job to complete.",
+            )
+            return
+
+        if self._worker and self._worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Sync in progress",
+                "Please wait for the current sync operation to complete.",
+            )
+            return
+
+        if self._roxy_upload_worker and self._roxy_upload_worker.isRunning():
+            QMessageBox.warning(
+                self,
+                "Upload in progress",
+                "Please wait for the current Roxy upload to finish first.",
+            )
+            return
+
+        api_host = self.roxy_api_host_edit.text().strip() if hasattr(self, "roxy_api_host_edit") else ""
+        api_key = self.roxy_api_key_edit.text().strip() if hasattr(self, "roxy_api_key_edit") else ""
+        workspace_id = self.roxy_workspace_spin.value() if hasattr(self, "roxy_workspace_spin") else 1
+        close_profile_after_start = (
+            self.roxy_close_profile_check.isChecked()
+            if hasattr(self, "roxy_close_profile_check")
+            else False
+        )
+        if not api_host:
+            QMessageBox.information(self, "Missing API host", "Please fill in Roxy API host.")
+            return
+        if not api_key:
+            QMessageBox.information(self, "Missing API key", "Please fill in Roxy API key/token.")
+            return
+
+        profile_id = DEFAULT_AUTOMATE_ROXY_PROFILE_ID
+        if hasattr(self, "roxy_profile_id_edit"):
+            self.roxy_profile_id_edit.setText(profile_id)
+
+        unassigned = sum(1 for project in selected if not str(project.assigned_project_id or "").strip())
+        if unassigned:
+            warning_reply = QMessageBox.question(
+                self,
+                "Videos Without Project",
+                f"{unassigned} selected video(s) have no project assigned.\n"
+                "Raw SEO for those videos will run with empty defaults.\n\n"
+                "Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if warning_reply != QMessageBox.StandardButton.Yes:
+                return
+
+        jobs = [self._build_automate_job_item(project) for project in selected]
+        raw_enabled = sum(1 for item in jobs if item.raw_seo_enabled)
+        raw_skipped = len(jobs) - raw_enabled
+
+        reply = QMessageBox.question(
+            self,
+            "Start Automate",
+            f"This will process {len(selected)} video(s) in sequence:\n"
+            "1) Auto Render\n"
+            "2) Raw SEO\n"
+            "3) Upload Roxy\n\n"
+            f"Roxy profile: {profile_id}\n"
+            f"Raw SEO enabled: {raw_enabled} video(s)\n"
+            f"Raw SEO empty defaults: {raw_skipped} video(s)\n\n"
+            "Workflow will stop immediately on first failure.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        for project in selected:
+            project.status = ProjectStatus.pending
+            project.notes = ""
+        self._refresh_status_cells()
+
+        self._remember_roxy_settings()
+        self._last_job_projects = list(selected)
+
+        debug_root = Path.cwd() / "logs" / "roxy_debug"
+        self._automate_worker = AutomateWorker(
+            jobs,
+            api_host=api_host,
+            api_key=api_key,
+            workspace_id=workspace_id,
+            profile_id=profile_id,
+            close_profile_after_start=close_profile_after_start,
+            strict_raw_seo=False,
+            debug_root=debug_root,
+        )
+        self._automate_worker.status_updated.connect(self._refresh_status_cells)
+        self._automate_worker.job_finished.connect(self._on_automate_finished)
+        self._automate_worker.log_message.connect(self._append_render_log)
+        self._automate_worker.progress_updated.connect(self._update_render_progress)
+
+        self._set_job_controls_state(True)
+        self._update_status_label(f"Automating… ({len(selected)} video(s))")
+        self._show_render_log_dialog(len(selected), title="Automate Workflow Progress")
+        self._append_render_log(
+            f"Automate settings: workspace={workspace_id}, profile={profile_id}, selected={len(selected)}"
+        )
+        self._automate_worker.start()
+
+    def _on_automate_finished(self, completed: int, failed: int, total: int, stopped_early: bool) -> None:
+        self._status_message_override = None
+        self._refresh_status_cells()
+        self._set_job_controls_state(False)
+
+        if self._automate_worker is not None:
+            try:
+                self._automate_worker.wait(2000)
+            except Exception:
+                pass
+            self._automate_worker = None
+
+        self._update_status_label()
+        processed = completed + failed
+        remaining = max(total - processed, 0)
+
+        if completed == total and failed == 0 and not stopped_early:
+            QMessageBox.information(
+                self,
+                "Automate Complete",
+                f"✅ Successfully automated all {completed} video(s)!",
+            )
+        else:
+            lines = [
+                f"Completed: {completed}/{total}",
+                f"Failed: {failed}",
+            ]
+            if remaining:
+                lines.append(f"Not processed: {remaining}")
+            if stopped_early:
+                lines.append("Workflow stopped early after failure/cancel.")
+            QMessageBox.warning(self, "Automate Complete", "\n".join(lines))
+
+        if self._render_log_text is not None:
+            self._append_render_log(
+                f"Automate summary: completed={completed}, failed={failed}, total={total}, "
+                f"stopped_early={stopped_early}"
+            )
+
     def _handle_stop_clicked(self) -> None:
+        if self._automate_worker and self._automate_worker.isRunning():
+            self._automate_worker.cancel()
+            self._update_status_label("Stopping automate workflow…")
+            return
         if self._render_worker and self._render_worker.isRunning():
             self._render_worker.cancel()
             self._update_status_label("Stopping render…")
@@ -2639,6 +5553,73 @@ class MainWindow(QMainWindow):
             result_lines.append("Failed projects: " + ", ".join(failures))
         QMessageBox.information(self, "Transitions complete", "\n".join(result_lines))
 
+    def _update_render_status_widgets(self) -> None:
+        remaining = max(self._render_total_jobs - self._render_done_jobs - self._render_failed_jobs, 0)
+        if self._render_total_chip is not None:
+            self._render_total_chip.setText(f"Total: {self._render_total_jobs}")
+        if self._render_done_chip is not None:
+            self._render_done_chip.setText(f"Done: {self._render_done_jobs}")
+        if self._render_failed_chip is not None:
+            self._render_failed_chip.setText(f"Failed: {self._render_failed_jobs}")
+        if self._render_remaining_chip is not None:
+            self._render_remaining_chip.setText(f"Remaining: {remaining}")
+        if self._render_current_video_label is not None:
+            self._render_current_video_label.setText(f"Current Video: {self._render_current_video}")
+        if self._render_current_stage_label is not None:
+            self._render_current_stage_label.setText(f"Current Stage: {self._render_current_stage}")
+
+    def _reset_render_log_state(self, *, total: int, title: str) -> None:
+        self._render_total_jobs = max(total, 0)
+        self._render_done_jobs = 0
+        self._render_failed_jobs = 0
+        self._render_current_video = "-"
+        self._render_current_stage = "Preparing..."
+        if "automate" in title.casefold():
+            self._render_current_stage = "Starting automate workflow..."
+        elif "render" in title.casefold():
+            self._render_current_stage = "Starting auto render..."
+        self._update_render_status_widgets()
+
+    @staticmethod
+    def _render_log_level(message: str) -> tuple[str, str, str]:
+        text = message.strip()
+        if "[ERROR]" in text:
+            return "ERROR", "#7F1D1D", "#FEE2E2"
+        if "[SUCCESS]" in text:
+            return "SUCCESS", "#065F46", "#D1FAE5"
+        if "[STOP]" in text:
+            return "STOP", "#7C2D12", "#FFEDD5"
+        if "[STEP" in text:
+            return "STEP", "#1E3A8A", "#DBEAFE"
+        if "[CLEANUP]" in text:
+            return "CLEANUP", "#334155", "#E2E8F0"
+        if "[Roxy]" in text:
+            return "ROXY", "#4C1D95", "#EDE9FE"
+        return "INFO", "#334155", "#E2E8F0"
+
+    def _track_render_log_state(self, message: str) -> None:
+        text = message.strip()
+        if not text:
+            return
+
+        project_match = re.search(r"------\s+(?:PROJECT|VIDEO)\s+\d+/\d+:\s+(.+?)\s+------", text)
+        if project_match:
+            self._render_current_video = project_match.group(1).strip()
+
+        step_match = re.search(r"\[(STEP \d+/\d+|CLEANUP|STOP)\]\s*(.*)", text)
+        if step_match:
+            kind = step_match.group(1).strip()
+            detail = step_match.group(2).strip()
+            self._render_current_stage = f"{kind} {detail}".strip()
+        elif text.startswith("[SUCCESS]"):
+            self._render_current_stage = text
+            self._render_done_jobs += 1
+        elif text.startswith("[ERROR]"):
+            self._render_current_stage = text
+            self._render_failed_jobs += 1
+
+        self._update_render_status_widgets()
+
     def _ensure_render_log_dialog(self) -> None:
         if self._render_log_dialog is not None:
             return
@@ -2646,11 +5627,47 @@ class MainWindow(QMainWindow):
         dialog.setObjectName("renderLogDialog")
         dialog.setWindowTitle("Auto Render Progress")
         dialog.setModal(False)
-        dialog.resize(640, 420)
+        dialog.resize(880, 560)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
+
+        status_card = QFrame()
+        status_card.setObjectName("renderStatusCard")
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(12, 10, 12, 10)
+        status_layout.setSpacing(8)
+
+        self._render_current_video_label = QLabel("Current Video: -")
+        self._render_current_video_label.setObjectName("renderCurrentVideoLabel")
+        status_layout.addWidget(self._render_current_video_label)
+
+        self._render_current_stage_label = QLabel("Current Stage: Waiting...")
+        self._render_current_stage_label.setObjectName("renderCurrentStageLabel")
+        self._render_current_stage_label.setWordWrap(True)
+        status_layout.addWidget(self._render_current_stage_label)
+
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(8)
+        self._render_total_chip = QLabel("Total: 0")
+        self._render_total_chip.setObjectName("renderStatChip")
+        chips_row.addWidget(self._render_total_chip)
+
+        self._render_done_chip = QLabel("Done: 0")
+        self._render_done_chip.setObjectName("renderStatChip")
+        chips_row.addWidget(self._render_done_chip)
+
+        self._render_failed_chip = QLabel("Failed: 0")
+        self._render_failed_chip.setObjectName("renderStatChipDanger")
+        chips_row.addWidget(self._render_failed_chip)
+
+        self._render_remaining_chip = QLabel("Remaining: 0")
+        self._render_remaining_chip.setObjectName("renderStatChip")
+        chips_row.addWidget(self._render_remaining_chip)
+        chips_row.addStretch(1)
+        status_layout.addLayout(chips_row)
+        layout.addWidget(status_card)
 
         self._render_progress_label = QLabel("Progress: 0/0")
         self._render_progress_label.setObjectName("renderProgressLabel")
@@ -2675,10 +5692,12 @@ class MainWindow(QMainWindow):
 
         self._render_log_dialog = dialog
 
-    def _show_render_log_dialog(self, total: int) -> None:
+    def _show_render_log_dialog(self, total: int = 0, *, title: str = "Auto Render Progress") -> None:
         self._ensure_render_log_dialog()
         if self._render_log_dialog is None:
             return
+        self._render_log_dialog.setWindowTitle(title)
+        self._reset_render_log_state(total=total, title=title)
         if self._render_log_text is not None:
             self._render_log_text.clear()
         if self._render_progress_bar is not None:
@@ -2695,16 +5714,36 @@ class MainWindow(QMainWindow):
             self._ensure_render_log_dialog()
         if self._render_log_text is None:
             return
-        self._render_log_text.append(message)
+
+        self._track_render_log_state(message)
+        level, fg, bg = self._render_log_level(message)
+        stamp = QDateTime.currentDateTime().toString("HH:mm:ss")
+        safe_message = escape(message.strip() or "(empty)")
+        html_line = (
+            "<div style='margin: 2px 0;'>"
+            f"<span style='color:#64748B;'>[{stamp}]</span> "
+            f"<span style='display:inline-block; background:{bg}; color:{fg}; "
+            "border-radius:6px; padding:1px 7px; font-size:11px; font-weight:700;'>"
+            f"{escape(level)}</span> "
+            f"<span style='color:#0F172A;'>{safe_message}</span>"
+            "</div>"
+        )
+        self._render_log_text.moveCursor(QTextCursor.MoveOperation.End)
+        self._render_log_text.insertHtml(html_line)
+        self._render_log_text.insertPlainText("\n")
+        self._render_log_text.moveCursor(QTextCursor.MoveOperation.End)
 
     def _update_render_progress(self, completed: int, total: int) -> None:
         if self._render_progress_bar is None or self._render_progress_label is None:
             self._ensure_render_log_dialog()
         if self._render_progress_bar is None or self._render_progress_label is None:
             return
-        self._render_progress_bar.setRange(0, max(total, 1))
+        normalized_total = max(total, 1)
+        self._render_progress_bar.setRange(0, normalized_total)
         self._render_progress_bar.setValue(min(completed, total))
         self._render_progress_label.setText(f"Progress: {completed}/{total}")
+        self._render_total_jobs = max(total, 0)
+        self._update_render_status_widgets()
 
     def _handle_transition_clear(self) -> None:
         selected = [p for p in self.projects if p.is_selected]
@@ -2741,7 +5780,7 @@ class MainWindow(QMainWindow):
         parts = [f"Processed {total} project(s).", f"Success: {success}"]
         if failed:
             parts.append(f"Failed: {failed}")
-            parts.append("Check notes for details.")
+            parts.append("Hover video name to view failure details.")
         else:
             parts.append("All projects synced successfully.")
         return "\n".join(parts)

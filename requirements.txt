@@ -13,3 +13,4 @@ onnxruntime>=1.16
 webrtcvad-wheels>=2.0.14
 pyqtdarktheme>=0.1.7
 watchdog>=4.0
+selenium>=4.24

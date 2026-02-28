@@ -38,6 +38,7 @@ class MacCapCutAutomation(AutomationBackend):
     bundle_id: str = "com.lemon.lvoverseas"
     last_export_folder: Path | None = None
     last_export_name: str | None = None
+    last_export_file: Path | None = None
     _shortcut_profile: ShortcutProfile | None = field(default=None, init=False, repr=False)
     _shortcut_cache: dict[str, tuple[str, ...]] = field(default_factory=dict, init=False, repr=False)
 
@@ -283,23 +284,57 @@ class MacCapCutAutomation(AutomationBackend):
             logger.exception("sync_images failed: %s", exc)
             return False
 
-    def dismiss_dialogs(self) -> bool:
+    def dismiss_dialogs(self, assume_focused: bool = False) -> bool:
         """Dismiss any dialogs that might be open (e.g., Link media dialog).
         
         Presses Escape multiple times to ensure dialogs are closed.
         """
         try:
-            self.focus_capcut()
-            logger.info("Dismissing any open dialogs (pressing Escape)")
-            # Press Escape multiple times to dismiss any dialogs
-            for _ in range(3):
+            if not assume_focused:
+                self.focus_capcut()
+            logger.info("Dismissing open dialogs (fn+Esc + Esc)")
+
+            # Prioritize Link media popup handling.
+            link_visible = self._is_link_media_dialog_visible()
+            if link_visible:
+                self._dismiss_link_media_dialog()
+
+            if not link_visible:
+                return True
+
+            # Generic fallback for miscellaneous modal dialogs.
+            rounds = 1
+            for _ in range(rounds):
+                pyautogui.hotkey("fn", "escape")
+                time.sleep(0.08)
                 pyautogui.press("escape")
-                time.sleep(0.3)
-            time.sleep(0.5)
-            return True
+                time.sleep(0.08)
+            return not self._is_link_media_dialog_visible()
         except Exception as exc:  # pragma: no cover
             logger.exception("dismiss_dialogs failed: %s", exc)
             return False
+
+    def _open_export_dialog_resilient(self, export_shortcut: tuple[str, ...], timeout: float = 8.0) -> bool:
+        """Open export dialog while aggressively dismissing Link media popups."""
+        deadline = time.time() + timeout
+        self._send_shortcut(export_shortcut)
+        time.sleep(0.1)
+
+        while time.time() < deadline:
+            if self._is_link_media_dialog_visible():
+                logger.warning("Link media popup appeared while opening export; dismissing immediately.")
+                self._dismiss_link_media_dialog()
+                time.sleep(0.12)
+                self._send_shortcut(export_shortcut)
+                time.sleep(0.1)
+                continue
+
+            if self._export_dialog_visible():
+                return True
+
+            time.sleep(0.12)
+
+        return False
 
     def start_render(self, project_name: str | None = None) -> bool:
         """Start the export/render process.
@@ -314,19 +349,30 @@ class MacCapCutAutomation(AutomationBackend):
             self.focus_capcut()
             self.last_export_folder = None
             self.last_export_name = project_name
+            self.last_export_file = None
             
             # First dismiss any dialogs that might be open
-            self.dismiss_dialogs()
-            time.sleep(0.5)
+            self.dismiss_dialogs(assume_focused=True)
+            # Single quick re-check for delayed popup; deeper handling happens
+            # in _open_export_dialog_resilient while opening export.
+            time.sleep(0.1)
+            if self._is_link_media_dialog_visible():
+                logger.warning("Link media dialog still visible; forcing fn+Esc dismiss before export.")
+                self._dismiss_link_media_dialog()
+                time.sleep(0.1)
             
             # Trigger export with keyboard shortcut
             export_shortcut = self._action_shortcut("exportVideo", APP_CONFIG.export_shortcut)
             logger.info("Triggering export via shortcut: %s", "+".join(export_shortcut))
-            self._send_shortcut(export_shortcut)
-            dialog_ready = self._wait_for_export_dialog_visible(True, timeout=10.0)
+            dialog_ready = self._open_export_dialog_resilient(export_shortcut, timeout=4.0)
             if not dialog_ready:
+                if self._is_link_media_dialog_visible():
+                    logger.warning("Link media dialog interrupted export; dismissing and retrying export.")
+                    self._dismiss_link_media_dialog()
+                    time.sleep(0.1)
+                    dialog_ready = self._open_export_dialog_resilient(export_shortcut, timeout=2.0)
                 logger.warning("Export dialog not detected; attempting to read export target anyway.")
-                time.sleep(1.5)
+                time.sleep(0.2)
 
             folder, name = self.read_export_destination(project_name)
             if folder is None and not name:
@@ -377,6 +423,7 @@ class MacCapCutAutomation(AutomationBackend):
         if export_name is None:
             export_name = self.last_export_name
 
+        self.last_export_file = None
         start_time = time.time()
         last_activity_time = time.time()
 
@@ -459,13 +506,13 @@ class MacCapCutAutomation(AutomationBackend):
                 observer = None
 
         # Tuning constants
-        POLL_INTERVAL   = 0.2   # Main loop: how often to check dialog (seconds)
-        LSOF_INTERVAL   = 0.5   # lsof fallback poll interval
-        STABLE_RELEASED = 2.0   # Watchdog: secs stable after lsof confirms "not open"
-        STABLE_UNKNOWN  = 10.0  # Watchdog: secs stable when open-state unknown
+        POLL_INTERVAL   = 0.15  # Main loop: check dialog aggressively
+        LSOF_INTERVAL   = 0.35  # lsof fallback poll interval
+        STABLE_RELEASED = 1.2   # Watchdog: secs stable after release
+        STABLE_UNKNOWN  = 3.0   # Watchdog: secs stable when open-state unknown
         GRACE_SEC       = 20    # Grace before giving up on expected_path
-        LSOF_STABLE_REL = 6     # lsof fallback stable ticks when released
-        LSOF_STABLE_UNK = 20    # lsof fallback stable ticks when unknown
+        LSOF_STABLE_REL = 3     # lsof fallback stable ticks when released
+        LSOF_STABLE_UNK = 8     # lsof fallback stable ticks when unknown
 
         # lsof-fallback state
         lsof_tracked: Path | None = None
@@ -489,14 +536,97 @@ class MacCapCutAutomation(AutomationBackend):
                 except Exception:
                     pass
 
+        def _is_video_export_file(path: Path) -> bool:
+            return path.suffix.lower() in (".mp4", ".mov", ".m4v", ".mkv", ".webm")
+
+        def _candidate_from_open_files() -> Path | None:
+            open_paths = self._get_capcut_open_files()
+            if not open_paths:
+                return None
+
+            candidates: list[Path] = []
+            for raw in open_paths:
+                try:
+                    path = Path(raw)
+                    if not path.exists() or not path.is_file():
+                        continue
+                except (OSError, PermissionError):
+                    continue
+                if not _is_video_export_file(path):
+                    continue
+                candidates.append(path)
+
+            if not candidates:
+                return None
+
+            if target_name_key:
+                matched = [
+                    item for item in candidates
+                    if (
+                        self._normalize_name_key(item.stem) == target_name_key
+                        or self._normalize_name_key(item.stem).startswith(target_name_key)
+                    )
+                ]
+                if matched:
+                    return max(matched, key=lambda item: item.stat().st_mtime)
+
+            return max(candidates, key=lambda item: item.stat().st_mtime)
+
+        def _remember_export_file(candidate: Path | None) -> Path | None:
+            chosen: Path | None = None
+            if candidate is not None:
+                try:
+                    if candidate.exists() and candidate.is_file() and _is_video_export_file(candidate):
+                        chosen = candidate.resolve()
+                except OSError:
+                    chosen = None
+
+            if chosen is None and expected_path is not None:
+                try:
+                    if expected_path.exists() and expected_path.is_file() and _is_video_export_file(expected_path):
+                        chosen = expected_path.resolve()
+                except OSError:
+                    chosen = None
+
+            if chosen is None:
+                fallback = self._find_export_candidate(export_folder, export_name)
+                if fallback is not None:
+                    chosen = fallback.resolve()
+
+            if chosen is None:
+                open_file_candidate = _candidate_from_open_files()
+                if open_file_candidate is not None:
+                    chosen = open_file_candidate.resolve()
+
+            if chosen is None:
+                return None
+
+            self.last_export_file = chosen
+            self.last_export_folder = chosen.parent
+            if chosen.stem:
+                self.last_export_name = chosen.stem
+            logger.info("Remembered exported file: {}", chosen)
+            return chosen
+
         try:
             while time.time() - last_activity_time < timeout_sec:
                 elapsed = int(time.time() - start_time)
+
+                if self._is_link_media_dialog_visible():
+                    logger.warning("  ⚠️ Link media popup detected during render monitoring; dismissing.")
+                    self._dismiss_link_media_dialog()
+                    time.sleep(POLL_INTERVAL)
+                    continue
 
                 # ── Priority: Export Complete dialog ──────────────────────
                 if self._is_export_success_dialog_visible():
                     logger.info("  ✅ Detected Export Complete dialog. Render finished.")
                     if self._finish_render():
+                        remembered = _remember_export_file(
+                            _detected_file[0] if _detected_file[0] is not None else lsof_tracked
+                        )
+                        if remembered is None:
+                            logger.warning("Export complete but no output file could be remembered.")
                         return True
                     logger.warning("  ⚠️ Dialog found but could not dismiss yet.")
 
@@ -526,6 +656,7 @@ class MacCapCutAutomation(AutomationBackend):
                                     dfile.name, size_mb,
                                 )
                                 if self._finish_render():
+                                    _remember_export_file(dfile)
                                     return True
                             elif is_open is None and stable_sec >= STABLE_UNKNOWN:
                                 logger.info(
@@ -533,6 +664,7 @@ class MacCapCutAutomation(AutomationBackend):
                                     stable_sec, dfile.name, size_mb,
                                 )
                                 if self._finish_render():
+                                    _remember_export_file(dfile)
                                     return True
 
                         if elapsed % 5 == 0:
@@ -564,6 +696,8 @@ class MacCapCutAutomation(AutomationBackend):
                             if not p.exists() or not p.is_file():
                                 continue
                         except (OSError, PermissionError):
+                            continue
+                        if p.suffix.lower() not in ('.mp4', '.mov', '.m4v', '.mkv', '.webm', '.tmp'):
                             continue
                         if target_name_key:
                             stem_key = self._normalize_name_key(p.stem)
@@ -629,6 +763,7 @@ class MacCapCutAutomation(AutomationBackend):
                             "  ✅ File released: %s (%.2f MB)", lsof_tracked.name, size_mb
                         )
                         if self._finish_render():
+                            _remember_export_file(lsof_tracked)
                             return True
 
                     if cur_size > lsof_last_size:
@@ -648,6 +783,7 @@ class MacCapCutAutomation(AutomationBackend):
                                 lsof_tracked.name, size_mb,
                             )
                             if self._finish_render():
+                                _remember_export_file(lsof_tracked)
                                 return True
                         is_video = lsof_tracked.suffix.lower() in (
                             '.mp4', '.mov', '.m4v', '.mkv', '.webm'
@@ -739,21 +875,37 @@ class MacCapCutAutomation(AutomationBackend):
                             queue.append(child)
             except Exception as exc:
                 logger.debug("_wait_for_dashboard poll error: %s", exc)
-            time.sleep(1.0)
+            time.sleep(0.2)
         logger.warning("  ⚠️ Dashboard not detected within %.0fs.", timeout)
         return False
 
     def _finish_render(self) -> bool:
         """Dismiss the export-complete / Share dialog and return to the editor."""
         self.focus_capcut()
-        if not self._is_export_success_dialog_visible():
+        # If text-based detection misses, still attempt close when known sheet
+        # buttons are present.
+        marker_keywords = ("automationclosebtn", "automationopenfolderbtn", "publish_pc_btn")
+        marker_present = any(self._find_button(window, marker_keywords) for window in self._iter_ui_roots())
+        if not self._is_export_success_dialog_visible() and not marker_present:
             return True
 
+        # Let the export-complete dialog settle briefly before dismissing.
+        time.sleep(0.45)
         logger.info("Dismissing completion dialog")
         # "Cancel" closes the Share / export-done dialog without uploading.
-        cancel_keywords = ("Cancel", "Hủy", "Huỷ", "Đóng", "Close", "Done", "OK")
+        cancel_keywords = (
+            "automationclosebtn",
+            "Cancel",
+            "Hủy",
+            "Huỷ",
+            "Đóng",
+            "Close",
+            "Done",
+            "OK",
+        )
+        close_dialog_shortcut = self._action_shortcut("closeDialog", ("escape",))
 
-        for attempt in range(6):
+        for attempt in range(2):
             # ── Strategy 1: AX Press on Cancel button (most reliable) ──────
             cancelled = False
             for window in self._iter_ui_roots():
@@ -783,19 +935,25 @@ class MacCapCutAutomation(AutomationBackend):
                 break  # tried this window; move on
 
             if cancelled:
-                time.sleep(0.6)
+                time.sleep(0.2)
                 if not self._is_export_success_dialog_visible():
                     return True
 
-            # ── Strategy 2: fn+Esc (confirmed shortcut for this dialog) ───
-            pyautogui.hotkey("fn", "escape")
-            time.sleep(0.5)
+            # ── Strategy 2: active closeDialog shortcut from CapCut keymap ─
+            self._send_shortcut(close_dialog_shortcut)
+            time.sleep(0.2)
             if not self._is_export_success_dialog_visible():
                 return True
 
-            # ── Strategy 3: plain Escape ───────────────────────────────────
+            # ── Strategy 3: fn+Esc fallback ────────────────────────────────
+            pyautogui.hotkey("fn", "escape")
+            time.sleep(0.2)
+            if not self._is_export_success_dialog_visible():
+                return True
+
+            # ── Strategy 4: plain Escape ───────────────────────────────────
             pyautogui.press("escape")
-            time.sleep(0.5)
+            time.sleep(0.2)
             if not self._is_export_success_dialog_visible():
                 return True
 
@@ -830,14 +988,14 @@ class MacCapCutAutomation(AutomationBackend):
         try:
             self.focus_capcut()
 
-            for attempt in range(1, 4):
+            for attempt in range(1, 3):
                 if self._is_export_success_dialog_visible():
                     logger.info("Share dialog visible (attempt %d) — dismissing first", attempt)
                     if not self._finish_render():
                         logger.warning("Share dialog still visible after dismiss attempt %d.", attempt)
-                        time.sleep(0.8)
+                        time.sleep(0.2)
                         continue
-                    time.sleep(0.6)
+                    time.sleep(0.15)
 
                 close_window_shortcut = self._action_shortcut("closeWindow", ("command", "w"))
                 logger.info(
@@ -846,13 +1004,13 @@ class MacCapCutAutomation(AutomationBackend):
                     attempt,
                 )
                 self._send_shortcut(close_window_shortcut)
-                time.sleep(1.2)
+                time.sleep(0.45)
 
                 # Dismiss "save changes?" if it appears
                 pyautogui.press("escape")
-                time.sleep(0.4)
+                time.sleep(0.12)
 
-                if self._wait_for_dashboard(timeout=12.0):
+                if self._wait_for_dashboard(timeout=4.0):
                     logger.info("Project closed, returned to dashboard")
                     return True
 
@@ -886,6 +1044,11 @@ class MacCapCutAutomation(AutomationBackend):
             if button is None:
                 continue
             try:
+                button.Press()
+                return True
+            except Exception:
+                pass
+            try:
                 frame = button.AXFrame
                 center_x = frame.x + frame.width / 2
                 center_y = frame.y + frame.height / 2
@@ -898,6 +1061,13 @@ class MacCapCutAutomation(AutomationBackend):
 
     def _find_button(self, root, keywords: tuple[str, ...]):
         return self._find_element_with_keywords(root, keywords, roles=("AXButton",))
+
+    @staticmethod
+    def _safe_ax_attr(node, attr: str):
+        try:
+            return getattr(node, attr)
+        except Exception:
+            return None
 
     def _find_element_with_keywords(self, root, keywords: tuple[str, ...], roles: tuple[str, ...] | None = None):
         try:
@@ -920,8 +1090,10 @@ class MacCapCutAutomation(AutomationBackend):
                 role = None
             if roles is None or role in roles:
                 texts: list[str] = []
-                for attr in ("AXTitle", "AXValue", "AXIdentifier", "AXDescription", "AXLabel"):
-                    value = getattr(node, attr, None)
+                # Skip unstable attributes and guard each lookup to avoid AX
+                # errors slowing down traversal in large UI trees.
+                for attr in ("AXTitle", "AXValue", "AXIdentifier", "AXLabel"):
+                    value = self._safe_ax_attr(node, attr)
                     if isinstance(value, str) and value:
                         texts.append(value.lower())
                 joined = " ".join(texts)
@@ -959,11 +1131,30 @@ class MacCapCutAutomation(AutomationBackend):
             except Exception:
                 pass
 
+        # 1.5. Strong AX button identifiers found in CapCut export-complete sheet.
+        # These are the most stable markers in real-world runs:
+        # - automationcloseBtn (Cancel)
+        # - automationopenFolderBtn (Open folder)
+        # - publish_pc_btn (Share)
+        marker_keywords = (
+            "automationclosebtn",
+            "automationopenfolderbtn",
+            "publish_pc_btn",
+            "openfolder",
+        )
+        for window in self._iter_ui_roots():
+            if self._find_button(window, marker_keywords):
+                return True
+
         # 2. Buttons/text that are unique to the export-done dialog.
         #    "Open folder" / "Mở thư mục" only appear in this dialog.
         #    "Video is saved" is the body text of the Share dialog.
         specific_keywords = (
             "Open folder",      # English export-done dialog
+            "openfolder",       # identifier variant without space
+            "automationopenfolderbtn",
+            "automationclosebtn",
+            "publish_pc_btn",
             "Mở thư mục",       # Vietnamese "Open folder"
             "Video is saved",   # Share dialog body text
             "đã được lưu",      # Vietnamese "has been saved"
@@ -978,6 +1169,61 @@ class MacCapCutAutomation(AutomationBackend):
 
         return False
 
+    def _is_link_media_dialog_visible(self) -> bool:
+        """Detect CapCut's 'Link media' missing-file popup."""
+        title_keywords = ("link media", "liên kết media", "media lost")
+        body_keywords = (
+            "couldn",
+            "couldn't find some of the imported media files",
+            "imported media files",
+            "link the media files then edit",
+            "link media when selecting a folder",
+            "media files then edit",
+        )
+        cancel_keywords = ("automationcancel", "cancel", "hủy", "huỷ", "đóng")
+        link_btn_keywords = ("link media", "linkmedia", "automationlink", "link")
+
+        for window in self._iter_ui_roots():
+            try:
+                title = (getattr(window, "AXTitle", None) or "").casefold()
+                if any(k in title for k in title_keywords):
+                    return True
+            except Exception:
+                pass
+
+            if self._find_button(window, cancel_keywords) and self._find_button(window, link_btn_keywords):
+                return True
+            if self._find_element_with_keywords(window, body_keywords, roles=("AXStaticText", "AXSheet")):
+                return True
+        return False
+
+    def _dismiss_link_media_dialog(self) -> bool:
+        """Close Link media popup immediately (prefers fn+Esc)."""
+        if not self._is_link_media_dialog_visible():
+            return True
+
+        logger.info("Dismissing Link media popup (fn+Esc priority)")
+        cancel_keywords = ("automationcancel", "cancel", "hủy", "huỷ", "đóng", "close")
+
+        for _ in range(4):
+            pyautogui.hotkey("fn", "escape")
+            time.sleep(0.2)
+            if not self._is_link_media_dialog_visible():
+                return True
+
+            if self._click_button_by_keywords(cancel_keywords):
+                time.sleep(0.25)
+                if not self._is_link_media_dialog_visible():
+                    return True
+
+            pyautogui.press("escape")
+            time.sleep(0.2)
+            if not self._is_link_media_dialog_visible():
+                return True
+
+        logger.warning("Link media popup is still visible after dismiss attempts.")
+        return not self._is_link_media_dialog_visible()
+
     def _wait_for_export_dialog_visible(self, expected: bool, timeout: float = 5.0) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -991,6 +1237,8 @@ class MacCapCutAutomation(AutomationBackend):
 
     def _export_dialog_visible(self) -> bool:
         """Best-effort detection of CapCut's export window."""
+        if self._is_link_media_dialog_visible():
+            return False
 
         export_keywords = (
             "ExportOkBtn",
@@ -1004,19 +1252,18 @@ class MacCapCutAutomation(AutomationBackend):
             "Chia sẻ",
             "Mở thư mục",
         )
-        cancel_keywords = ("automationcancel", "Cancel", "Huỷ", "Hủy", "Đóng")
         label_keywords = ("ExportDialog", "Export", "Xuất", "Share")
 
         for window in self._iter_ui_roots():
             if self._find_button(window, export_keywords):
-                return True
-            if self._find_button(window, cancel_keywords):
                 return True
             if self._find_element_with_keywords(window, label_keywords, roles=("AXStaticText", "AXSheet")):
                 return True
         return False
 
     def _get_export_dialog_root(self):
+        if self._is_link_media_dialog_visible():
+            return None
         export_keywords = (
             "ExportOkBtn",
             "Export video",
@@ -1031,13 +1278,10 @@ class MacCapCutAutomation(AutomationBackend):
             "Chia sẻ",
             "Mở thư mục",
         )
-        cancel_keywords = ("automationcancel", "Cancel", "Huỷ", "Hủy", "Đóng")
         label_keywords = ("ExportDialog", "Export", "Xuất", "Share")
 
         for window in self._iter_ui_roots():
             if self._find_button(window, export_keywords):
-                return window
-            if self._find_button(window, cancel_keywords):
                 return window
             if self._find_element_with_keywords(window, label_keywords, roles=("AXStaticText", "AXSheet")):
                 return window

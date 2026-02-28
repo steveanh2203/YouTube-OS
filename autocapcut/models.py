@@ -37,6 +37,7 @@ class ProjectItem:
     source: ProjectSource
     status: ProjectStatus = ProjectStatus.pending
     notes: str = ""
+    assigned_project_id: str = ""
     is_selected: bool = False
     selection_order: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
