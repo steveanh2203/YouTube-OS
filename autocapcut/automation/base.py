@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Iterable
 
 from autocapcut.models import ProjectItem
@@ -17,6 +18,14 @@ class AutomationBackend(ABC):
     @abstractmethod
     def open_project(self, project: ProjectItem) -> bool:
         """Open a specific project inside CapCut."""
+
+    @abstractmethod
+    def wait_for_dashboard_ready(self, timeout_sec: int) -> bool:
+        """Wait until the CapCut dashboard/home screen is ready."""
+
+    @abstractmethod
+    def wait_for_project_editor_ready(self, project: ProjectItem, timeout_sec: int) -> bool:
+        """Wait until a clicked project has finished loading into the editor."""
 
     @abstractmethod
     def apply_animations(self, animation_names: Iterable[str], duration_sec: float) -> bool:
@@ -43,10 +52,19 @@ class AutomationBackend(ABC):
         """Kick off the export for the active project."""
 
     @abstractmethod
+    def wait_for_export_started(
+        self,
+        timeout_sec: int,
+        export_folder: str | Path | None = None,
+        export_name: str | None = None,
+    ) -> bool:
+        """Wait until the export process has demonstrably started."""
+
+    @abstractmethod
     def wait_for_render_complete(
         self,
         timeout_sec: int,
-        export_folder: str | None = None,
+        export_folder: str | Path | None = None,
         export_name: str | None = None,
     ) -> bool:
         """Wait for export to finish (poll UI)."""

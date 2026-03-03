@@ -15,6 +15,12 @@ class CapCutConfig:
     export_shortcut: tuple[str, ...] = ("command", "m")
     focus_delay_sec: float = 0.6
     menu_delay_sec: float = 0.4
+    capcut_launch_timeout_sec: int = 60
+    dashboard_ready_timeout_sec: int = 30
+    project_open_timeout_sec: int = 180
+    project_open_retry_count: int = 1
+    export_dialog_timeout_sec: int = 30
+    export_start_timeout_sec: int = 20
     render_timeout_sec: int = 900
     mock_mode: bool = False
     log_directory: Path = field(default_factory=lambda: Path.cwd() / "logs")

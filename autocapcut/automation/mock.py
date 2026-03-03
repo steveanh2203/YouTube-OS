@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from loguru import logger
@@ -21,6 +22,16 @@ class MockAutomation(AutomationBackend):
 
     def open_project(self, project: ProjectItem) -> bool:
         logger.info("[MOCK] open project %s", project.name)
+        time.sleep(self.delay_sec)
+        return True
+
+    def wait_for_dashboard_ready(self, timeout_sec: int) -> bool:
+        logger.info("[MOCK] wait for dashboard ready (timeout=%s)", timeout_sec)
+        time.sleep(self.delay_sec)
+        return True
+
+    def wait_for_project_editor_ready(self, project: ProjectItem, timeout_sec: int) -> bool:
+        logger.info("[MOCK] wait for project editor ready %s (timeout=%s)", project.name, timeout_sec)
         time.sleep(self.delay_sec)
         return True
 
@@ -54,10 +65,20 @@ class MockAutomation(AutomationBackend):
         time.sleep(self.delay_sec)
         return True
 
+    def wait_for_export_started(
+        self,
+        timeout_sec: int,
+        export_folder: str | Path | None = None,
+        export_name: str | None = None,
+    ) -> bool:
+        logger.info("[MOCK] wait for export started (timeout=%s)", timeout_sec)
+        time.sleep(self.delay_sec)
+        return True
+
     def wait_for_render_complete(
         self,
         timeout_sec: int,
-        export_folder: str | None = None,
+        export_folder: str | Path | None = None,
         export_name: str | None = None,
     ) -> bool:
         logger.info("[MOCK] wait for render complete (timeout=%s)", timeout_sec)

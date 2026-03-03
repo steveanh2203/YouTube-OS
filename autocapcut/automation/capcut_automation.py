@@ -129,53 +129,182 @@ class MacCapCutAutomation(AutomationBackend):
         pyautogui.hotkey(*keys)
 
     def open_project(self, project: ProjectItem) -> bool:
-        """Focus CapCut and open the requested project from the home screen list.
+        """Focus CapCut, confirm dashboard readiness, then click the project."""
+        try:
+            self.focus_capcut()
+            if not self.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
+                logger.warning("CapCut dashboard is not ready; cannot click project '%s'.", project.name)
+                return False
 
-        Retries up to 3 times (with a 2-second pause between attempts) to
-        handle the case where the dashboard is still loading when this is called.
-        """
-        max_attempts = 3
-        retry_delay = 2.0
+            element = self._locate_project_element(project.name)
+            if element is None:
+                logger.warning("Could not locate project '%s' in CapCut home.", project.name)
+                return False
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                self.focus_capcut()
-                element = self._locate_project_element(project.name)
-                if element is None:
-                    logger.warning(
-                        "Could not locate project '%s' in CapCut home (attempt %d/%d)",
-                        project.name,
-                        attempt,
-                        max_attempts,
-                    )
-                    if attempt < max_attempts:
-                        time.sleep(retry_delay)
+            frame = element.AXFrame
+            center_x = frame.x + frame.width / 2
+            center_y = frame.y + frame.height / 2
+            logger.debug(
+                "Clicking project '%s' at screen position (%.1f, %.1f)",
+                project.name,
+                center_x,
+                center_y,
+            )
+            pyautogui.moveTo(center_x, center_y, duration=0.15)
+            pyautogui.doubleClick()
+            time.sleep(0.25)
+            return True
+        except Exception as exc:  # pragma: no cover - GUI automation
+            logger.exception("Failed to click project %s: %s", project.name, exc)
+            return False
+
+    def _dashboard_visible(self) -> bool:
+        """Return True when the CapCut home/dashboard screen is visible."""
+        try:
+            for window in self._iter_ui_roots():
+                queue = deque([window])
+                visited: set[int] = set()
+                while queue:
+                    node = queue.popleft()
+                    ref = getattr(node, "ref", None)
+                    identifier = id(ref) if ref is not None else id(node)
+                    if identifier in visited:
                         continue
-                    return False
+                    visited.add(identifier)
+                    try:
+                        value = node.AXValue
+                    except Exception:
+                        value = None
+                    if isinstance(value, str) and "HomePageDraftTitle:" in value:
+                        return True
+                    try:
+                        children = node.AXChildren
+                    except Exception:
+                        children = []
+                    for child in children:
+                        queue.append(child)
+        except Exception as exc:
+            logger.debug("_dashboard_visible poll error: %s", exc)
+        return False
 
-                frame = element.AXFrame
-                center_x = frame.x + frame.width / 2
-                center_y = frame.y + frame.height / 2
-                logger.debug(
-                    "Clicking project '%s' at screen position (%.1f, %.1f)",
-                    project.name,
-                    center_x,
-                    center_y,
-                )
-                pyautogui.moveTo(center_x, center_y, duration=0.15)
-                pyautogui.doubleClick()
-                time.sleep(2.0)
+    def wait_for_dashboard_ready(self, timeout_sec: int) -> bool:
+        """Poll until the CapCut dashboard/home screen is visible."""
+        logger.info("Waiting for CapCut dashboard to be ready (timeout=%ds)…", timeout_sec)
+        deadline = time.time() + max(timeout_sec, 1)
+        while time.time() < deadline:
+            if self._dashboard_visible():
+                logger.info("Dashboard detected — home screen is ready.")
                 return True
-            except Exception as exc:  # pragma: no cover - GUI automation
-                logger.exception(
-                    "Failed to open project %s (attempt %d/%d): %s",
+            time.sleep(0.2)
+        logger.warning("Dashboard not detected within %ds.", timeout_sec)
+        return False
+
+    def _close_export_dialog(self) -> bool:
+        """Dismiss the export dialog without starting export."""
+        if not self._export_dialog_visible():
+            return True
+
+        close_dialog_shortcut = self._action_shortcut("closeDialog", ("escape",))
+        for _ in range(4):
+            self._send_shortcut(close_dialog_shortcut)
+            time.sleep(0.15)
+            if not self._export_dialog_visible():
+                return True
+            pyautogui.press("escape")
+            time.sleep(0.15)
+            if not self._export_dialog_visible():
+                return True
+        return not self._export_dialog_visible()
+
+    def _probe_export_dialog_available(self, timeout: float = 2.5) -> bool:
+        """Use the export dialog as a safe readiness probe for the editor."""
+        export_shortcut = self._action_shortcut("exportVideo", APP_CONFIG.export_shortcut)
+        if not self._open_export_dialog_resilient(export_shortcut, timeout=max(timeout, 0.5)):
+            return False
+        logger.debug("Editor readiness probe opened the export dialog.")
+        return self._close_export_dialog()
+
+    def _project_editor_ready(self) -> bool:
+        """Best-effort editor detection before attempting export."""
+        if self._dashboard_visible():
+            return False
+        if self._is_link_media_dialog_visible():
+            return False
+        if self._export_dialog_visible():
+            return True
+        return False
+
+    def _recover_project_open(self, project: ProjectItem) -> bool:
+        """Recover from a stuck project-open attempt by returning to dashboard and retrying."""
+        logger.warning("Attempting project-open recovery for '%s'.", project.name)
+        try:
+            self.focus_capcut()
+            self.dismiss_dialogs(assume_focused=True)
+            if self._export_dialog_visible():
+                self._close_export_dialog()
+            if not self._dashboard_visible():
+                self.close_project()
+            if not self.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
+                logger.warning("Recovery could not restore the dashboard before reopening '%s'.", project.name)
+                return False
+            return self.open_project(project)
+        except Exception as exc:
+            logger.exception("Project-open recovery failed for %s: %s", project.name, exc)
+            return False
+
+    def wait_for_project_editor_ready(self, project: ProjectItem, timeout_sec: int) -> bool:
+        """Wait for the clicked project to finish loading into the editor."""
+        total_attempts = max(APP_CONFIG.project_open_retry_count, 0) + 1
+
+        for attempt in range(1, total_attempts + 1):
+            logger.info(
+                "Waiting for project editor to load for '%s' (attempt %d/%d, timeout=%ds).",
+                project.name,
+                attempt,
+                total_attempts,
+                timeout_sec,
+            )
+            deadline = time.time() + max(timeout_sec, 1)
+            next_probe_at = time.time()
+            while time.time() < deadline:
+                if self._is_link_media_dialog_visible():
+                    logger.warning("Link media popup detected while waiting for editor; dismissing.")
+                    self._dismiss_link_media_dialog()
+                    time.sleep(0.2)
+                    continue
+
+                if self._project_editor_ready():
+                    logger.info("Project editor detected for '%s'.", project.name)
+                    return True
+
+                now = time.time()
+                if not self._dashboard_visible() and now >= next_probe_at:
+                    probe_timeout = min(2.5, max(0.5, deadline - time.time()))
+                    if self._probe_export_dialog_available(timeout=probe_timeout):
+                        logger.info("Project editor is ready for '%s'.", project.name)
+                        return True
+                    next_probe_at = time.time() + 1.2
+
+                time.sleep(0.35)
+
+            if attempt >= total_attempts:
+                logger.warning(
+                    "Project editor not ready within %ds for '%s' after %d attempt(s).",
+                    timeout_sec,
                     project.name,
                     attempt,
-                    max_attempts,
-                    exc,
                 )
-                if attempt < max_attempts:
-                    time.sleep(retry_delay)
+                return False
+
+            logger.warning(
+                "Project editor timed out for '%s' on attempt %d/%d; retrying project open.",
+                project.name,
+                attempt,
+                total_attempts,
+            )
+            if not self._recover_project_open(project):
+                logger.warning("Project-open recovery failed for '%s'.", project.name)
+                return False
 
         return False
 
@@ -364,21 +493,20 @@ class MacCapCutAutomation(AutomationBackend):
             # Trigger export with keyboard shortcut
             export_shortcut = self._action_shortcut("exportVideo", APP_CONFIG.export_shortcut)
             logger.info("Triggering export via shortcut: %s", "+".join(export_shortcut))
-            dialog_ready = self._open_export_dialog_resilient(export_shortcut, timeout=4.0)
+            dialog_ready = self._open_export_dialog_resilient(
+                export_shortcut,
+                timeout=float(APP_CONFIG.export_dialog_timeout_sec),
+            )
             if not dialog_ready:
-                if self._is_link_media_dialog_visible():
-                    logger.warning("Link media dialog interrupted export; dismissing and retrying export.")
-                    self._dismiss_link_media_dialog()
-                    time.sleep(0.1)
-                    dialog_ready = self._open_export_dialog_resilient(export_shortcut, timeout=2.0)
-                logger.warning("Export dialog not detected; attempting to read export target anyway.")
-                time.sleep(0.2)
+                logger.error("Export dialog not detected within %ds.", APP_CONFIG.export_dialog_timeout_sec)
+                return False
+
+            logger.info("Export dialog ready.")
 
             folder, name = self.read_export_destination(project_name)
             if folder is None and not name:
                 logger.error("Export destination not detected; aborting render start.")
-                pyautogui.press("escape")
-                time.sleep(0.5)
+                self._close_export_dialog()
                 return False
 
             self.last_export_folder = folder
@@ -394,13 +522,121 @@ class MacCapCutAutomation(AutomationBackend):
             # Press Enter to confirm export
             logger.info("Confirming export (pressing Enter)")
             pyautogui.press("enter")
-            time.sleep(1.0)
-            
-            logger.info("Export started successfully")
+            time.sleep(0.3)
             return True
         except Exception as exc:  # pragma: no cover
             logger.exception("start_render failed: %s", exc)
             return False
+
+    def _export_start_signal(
+        self,
+        export_folder: str | Path | None,
+        export_name: str | None,
+    ) -> tuple[bool, str | None]:
+        expected_path = self._resolve_expected_export_path(export_folder, export_name)
+        target_name_key = self._normalize_name_key(Path(export_name).stem) if export_name else None
+
+        if self._is_export_success_dialog_visible():
+            return True, "Export completion dialog appeared."
+
+        if expected_path is not None and expected_path.exists():
+            try:
+                if expected_path.is_file():
+                    return True, f"Expected export file appeared: {expected_path.name}"
+            except OSError:
+                pass
+
+        candidate = self._find_export_candidate(export_folder, export_name)
+        if candidate is not None:
+            return True, f"Matched export file candidate: {candidate.name}"
+
+        open_files = self._get_capcut_open_files()
+        if open_files:
+            if expected_path is not None and str(expected_path) in open_files:
+                return True, f"CapCut opened expected export file: {expected_path.name}"
+
+            for raw_path in open_files:
+                try:
+                    path = Path(raw_path)
+                except Exception:
+                    continue
+                if path.suffix.lower() not in (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".tmp"):
+                    continue
+                stem_key = self._normalize_name_key(path.stem)
+                if target_name_key and (
+                    stem_key == target_name_key
+                    or stem_key.startswith(target_name_key)
+                    or target_name_key.startswith(stem_key)
+                ):
+                    return True, f"CapCut opened matching export output: {path.name}"
+                if export_folder and str(path).startswith(str(Path(export_folder).expanduser())):
+                    return True, f"CapCut opened export-folder file: {path.name}"
+
+        if not self._export_dialog_visible() and not self._dashboard_visible():
+            return True, "Export dialog closed and editor remained active."
+
+        return False, None
+
+    def wait_for_export_started(
+        self,
+        timeout_sec: int,
+        export_folder: str | Path | None = None,
+        export_name: str | None = None,
+    ) -> bool:
+        """Wait until CapCut has visibly started exporting output."""
+        if export_folder is None:
+            export_folder = self.last_export_folder
+        if export_name is None:
+            export_name = self.last_export_name
+
+        total_attempts = 2
+        for attempt in range(1, total_attempts + 1):
+            logger.info(
+                "Waiting for export to start (attempt %d/%d, timeout=%ds).",
+                attempt,
+                total_attempts,
+                timeout_sec,
+            )
+            attempt_started_at = time.time()
+            deadline = time.time() + max(timeout_sec, 1)
+            while time.time() < deadline:
+                if self._is_link_media_dialog_visible():
+                    logger.warning("Link media popup detected while waiting for export start; dismissing.")
+                    self._dismiss_link_media_dialog()
+                    time.sleep(0.2)
+                    continue
+
+                started, reason = self._export_start_signal(export_folder, export_name)
+                if (
+                    started
+                    and reason == "Export dialog closed and editor remained active."
+                    and (time.time() - attempt_started_at) < 1.0
+                ):
+                    time.sleep(0.2)
+                    continue
+                if started:
+                    logger.info("Export start detected: %s", reason or "unknown signal")
+                    return True
+                time.sleep(0.25)
+
+            if attempt >= total_attempts:
+                logger.warning("Export did not start within %ds.", timeout_sec)
+                return False
+
+            logger.warning("No export-start signal detected; retrying export confirmation once.")
+            if self._export_dialog_visible():
+                pyautogui.press("enter")
+                time.sleep(0.3)
+                continue
+
+            export_shortcut = self._action_shortcut("exportVideo", APP_CONFIG.export_shortcut)
+            if not self._open_export_dialog_resilient(export_shortcut, timeout=min(5.0, float(timeout_sec))):
+                logger.warning("Could not reopen export dialog for retry.")
+                return False
+            pyautogui.press("enter")
+            time.sleep(0.3)
+
+        return False
 
     def wait_for_render_complete(
         self,
@@ -841,43 +1077,8 @@ class MacCapCutAutomation(AutomationBackend):
             return []
 
     def _wait_for_dashboard(self, timeout: float = 30.0) -> bool:
-        """Poll the AX tree until the CapCut home/dashboard screen is visible.
-
-        Returns True as soon as any ``HomePageDraftTitle`` element is found,
-        False if the timeout is reached without detecting the home screen.
-        """
-        logger.info("Waiting for CapCut dashboard to be ready (timeout=%.0fs)…", timeout)
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                for window in self._iter_ui_roots():
-                    queue = deque([window])
-                    visited: set[int] = set()
-                    while queue:
-                        node = queue.popleft()
-                        ref = getattr(node, "ref", None)
-                        identifier = id(ref) if ref is not None else id(node)
-                        if identifier in visited:
-                            continue
-                        visited.add(identifier)
-                        try:
-                            value = node.AXValue
-                        except Exception:
-                            value = None
-                        if isinstance(value, str) and "HomePageDraftTitle:" in value:
-                            logger.info("  ✅ Dashboard detected — home screen is ready.")
-                            return True
-                        try:
-                            children = node.AXChildren
-                        except Exception:
-                            children = []
-                        for child in children:
-                            queue.append(child)
-            except Exception as exc:
-                logger.debug("_wait_for_dashboard poll error: %s", exc)
-            time.sleep(0.2)
-        logger.warning("  ⚠️ Dashboard not detected within %.0fs.", timeout)
-        return False
+        """Backward-compatible wrapper around wait_for_dashboard_ready."""
+        return self.wait_for_dashboard_ready(int(max(timeout, 1)))
 
     def _finish_render(self) -> bool:
         """Dismiss the export-complete / Share dialog and return to the editor."""
@@ -1010,11 +1211,11 @@ class MacCapCutAutomation(AutomationBackend):
                 pyautogui.press("escape")
                 time.sleep(0.12)
 
-                if self._wait_for_dashboard(timeout=4.0):
+                if self.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
                     logger.info("Project closed, returned to dashboard")
                     return True
 
-            logger.warning("Failed to confirm dashboard after close attempts.")
+            logger.warning("Could not confirm dashboard after closing project.")
             return False
         except Exception as exc:  # pragma: no cover
             logger.exception("close_project failed: %s", exc)

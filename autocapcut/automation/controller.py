@@ -41,8 +41,20 @@ class AutomationController:
             if self._abort_if_cancelled(project, progress_callback):
                 break
 
+            self.backend.focus_capcut()
+            if not self.backend.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
+                self._fail(project, "Dashboard not ready", progress_callback)
+                continue
+
             if not self.backend.open_project(project):
                 self._fail(project, "Could not open project", progress_callback)
+                continue
+
+            if self._abort_if_cancelled(project, progress_callback):
+                break
+
+            if not self.backend.wait_for_project_editor_ready(project, APP_CONFIG.project_open_timeout_sec):
+                self._fail(project, "Project editor not ready", progress_callback)
                 continue
 
             if self._abort_if_cancelled(project, progress_callback):
@@ -55,8 +67,21 @@ class AutomationController:
             if self._abort_if_cancelled(project, progress_callback):
                 break
 
+            if not self.backend.wait_for_export_started(
+                APP_CONFIG.export_start_timeout_sec,
+                getattr(self.backend, "last_export_folder", None),
+                getattr(self.backend, "last_export_name", None),
+            ):
+                self._fail(project, "Export did not start", progress_callback)
+                continue
+
+            if self._abort_if_cancelled(project, progress_callback):
+                break
+
             if not self.backend.wait_for_render_complete(
-                APP_CONFIG.render_timeout_sec
+                APP_CONFIG.render_timeout_sec,
+                getattr(self.backend, "last_export_folder", None),
+                getattr(self.backend, "last_export_name", None),
             ):
                 self._fail(project, "Render timeout", progress_callback)
                 continue

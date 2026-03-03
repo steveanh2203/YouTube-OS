@@ -192,26 +192,59 @@ class RenderWorker(QThread):
             self.status_updated.emit()
 
             try:
-                # Step 1: Open project
-                self._emit_log("[STEP 1/4] Opening project in CapCut...")
-                if not automation.open_project(project):
-                    raise RuntimeError("Could not open project")
-                self._emit_log("[STEP 1/4] ✓ Project opened")
+                self._emit_log("[STEP 1/5] Preparing CapCut dashboard...")
+                automation.focus_capcut()
+                if not automation.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
+                    raise RuntimeError(
+                        f"Dashboard not ready within {APP_CONFIG.dashboard_ready_timeout_sec}s"
+                    )
+                self._emit_log("[STEP 1/5] ✓ Dashboard ready")
 
-                project.notes = "Exporting..."
+                project.notes = "Opening project..."
                 self.status_updated.emit()
 
-                # Step 2: Start render (dismiss dialogs + Cmd+M + Enter)
-                self._emit_log("[STEP 2/4] Starting export (Cmd+M + Enter)...")
+                self._emit_log("[STEP 1/5] Locating and opening project in CapCut...")
+                if not automation.open_project(project):
+                    raise RuntimeError("Could not open project")
+                self._emit_log("[STEP 1/5] ✓ Project clicked")
+
+                project.notes = "Waiting for editor..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 2/5] Waiting for project editor to load...")
+                if not automation.wait_for_project_editor_ready(
+                    project,
+                    APP_CONFIG.project_open_timeout_sec,
+                ):
+                    retries = APP_CONFIG.project_open_retry_count
+                    raise RuntimeError(
+                        "Project editor not ready within "
+                        f"{APP_CONFIG.project_open_timeout_sec}s (retry {retries}/{retries} exhausted)"
+                    )
+                self._emit_log("[STEP 2/5] ✓ Project editor ready")
+
+                project.notes = "Starting export..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 3/5] Opening export dialog and confirming export...")
                 if not automation.start_render(project.name):
                     raise RuntimeError("Could not start render")
-                self._emit_log("[STEP 2/4] ✓ Export started")
+                self._emit_log("[STEP 3/5] ✓ Export dialog ready")
+
+                if not automation.wait_for_export_started(
+                    APP_CONFIG.export_start_timeout_sec,
+                    getattr(automation, "last_export_folder", None),
+                    getattr(automation, "last_export_name", None),
+                ):
+                    raise RuntimeError(
+                        f"Export did not start after confirmation within {APP_CONFIG.export_start_timeout_sec}s"
+                    )
+                self._emit_log("[STEP 3/5] ✓ Export started")
 
                 project.notes = "Rendering..."
                 self.status_updated.emit()
 
-                # Step 3: Wait for render to complete
-                self._emit_log("[STEP 3/4] Waiting for export to complete...")
+                self._emit_log("[STEP 4/5] Waiting for export to complete...")
                 export_folder = getattr(automation, "last_export_folder", None)
                 export_name = getattr(automation, "last_export_name", None)
                 if export_folder or export_name:
@@ -224,13 +257,15 @@ class RenderWorker(QThread):
                     export_name,
                 ):
                     raise RuntimeError("Render timeout")
-                self._emit_log("[STEP 3/4] ✓ Export completed")
+                self._emit_log("[STEP 4/5] ✓ Export completed")
 
-                # Step 4: Close project
-                self._emit_log("[STEP 4/4] Closing project...")
+                project.notes = "Closing project..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 5/5] Closing project and returning to dashboard...")
                 if not automation.close_project():
                     raise RuntimeError("Could not close project and return to dashboard")
-                self._emit_log("[STEP 4/4] ✓ Project closed, back to dashboard")
+                self._emit_log("[STEP 5/5] ✓ Returned to dashboard")
 
                 project.status = ProjectStatus.done
                 project.notes = "Exported successfully"
@@ -386,23 +421,56 @@ class AutomateWorker(QThread):
             self.status_updated.emit()
 
             try:
-                self._emit_log("[STEP 1/6] Opening project in CapCut...")
+                self._emit_log("[STEP 1/7] Preparing CapCut dashboard...")
+                automation.focus_capcut()
+                if not automation.wait_for_dashboard_ready(APP_CONFIG.dashboard_ready_timeout_sec):
+                    raise RuntimeError(
+                        f"Dashboard not ready within {APP_CONFIG.dashboard_ready_timeout_sec}s"
+                    )
+                self._emit_log("[STEP 1/7] ✓ Dashboard ready")
+
+                self._emit_log("[STEP 1/7] Locating and opening project in CapCut...")
                 if not automation.open_project(project):
                     raise RuntimeError("Could not open project")
-                self._emit_log("[STEP 1/6] ✓ Project opened")
+                self._emit_log("[STEP 1/7] ✓ Project clicked")
 
-                project.notes = "Exporting..."
+                project.notes = "Waiting for editor..."
                 self.status_updated.emit()
 
-                self._emit_log("[STEP 2/6] Starting export (Cmd+M + Enter)...")
+                self._emit_log("[STEP 2/7] Waiting for project editor to load...")
+                if not automation.wait_for_project_editor_ready(
+                    project,
+                    APP_CONFIG.project_open_timeout_sec,
+                ):
+                    retries = APP_CONFIG.project_open_retry_count
+                    raise RuntimeError(
+                        "Project editor not ready within "
+                        f"{APP_CONFIG.project_open_timeout_sec}s (retry {retries}/{retries} exhausted)"
+                    )
+                self._emit_log("[STEP 2/7] ✓ Project editor ready")
+
+                project.notes = "Starting export..."
+                self.status_updated.emit()
+
+                self._emit_log("[STEP 3/7] Opening export dialog and confirming export...")
                 if not automation.start_render(project.name):
                     raise RuntimeError("Could not start render")
-                self._emit_log("[STEP 2/6] ✓ Export started")
+                self._emit_log("[STEP 3/7] ✓ Export dialog ready")
+
+                if not automation.wait_for_export_started(
+                    APP_CONFIG.export_start_timeout_sec,
+                    getattr(automation, "last_export_folder", None),
+                    getattr(automation, "last_export_name", None),
+                ):
+                    raise RuntimeError(
+                        f"Export did not start after confirmation within {APP_CONFIG.export_start_timeout_sec}s"
+                    )
+                self._emit_log("[STEP 3/7] ✓ Export started")
 
                 project.notes = "Rendering..."
                 self.status_updated.emit()
 
-                self._emit_log("[STEP 3/6] Waiting for export to complete...")
+                self._emit_log("[STEP 4/7] Waiting for export to complete...")
                 export_folder = getattr(automation, "last_export_folder", None)
                 export_name = getattr(automation, "last_export_name", None)
                 if not automation.wait_for_render_complete(
@@ -411,11 +479,11 @@ class AutomateWorker(QThread):
                     export_name,
                 ):
                     raise RuntimeError("Render timeout")
-                self._emit_log("[STEP 3/6] ✓ Export completed")
+                self._emit_log("[STEP 4/7] ✓ Export completed")
 
                 export_file = getattr(automation, "last_export_file", None)
                 if export_file:
-                    self._emit_log(f"[STEP 3/6] Export file detected: {export_file}")
+                    self._emit_log(f"[STEP 4/7] Export file detected: {export_file}")
 
                 rendered_file = self._resolve_rendered_file(
                     automation,
@@ -423,12 +491,12 @@ class AutomateWorker(QThread):
                     export_name=export_name,
                     project_name=project.name,
                 )
-                self._emit_log(f"[STEP 3/6] Resolved output: {rendered_file}")
+                self._emit_log(f"[STEP 4/7] Resolved output: {rendered_file}")
 
                 if job.raw_seo_enabled:
                     project.notes = "Applying Raw SEO..."
                     self.status_updated.emit()
-                    self._emit_log(f"[STEP 4/6] Applying Raw SEO ({job.raw_seo_source})...")
+                    self._emit_log(f"[STEP 5/7] Applying Raw SEO ({job.raw_seo_source})...")
                     raw_summary = apply_raw_seo(
                         [rendered_file],
                         title=job.raw_seo_title,
@@ -443,14 +511,14 @@ class AutomateWorker(QThread):
                         detail = first_result.message if first_result is not None else "Unknown Raw SEO failure"
                         raise RawSEOError(detail)
                     rendered_file = first_result.file
-                    self._emit_log("[STEP 4/6] ✓ Raw SEO applied")
+                    self._emit_log("[STEP 5/7] ✓ Raw SEO applied")
                 else:
-                    self._emit_log("[STEP 4/6] Raw SEO skipped (all fields are empty)")
+                    self._emit_log("[STEP 5/7] Raw SEO skipped (all fields are empty)")
 
                 project.notes = "Uploading via Roxy..."
                 self.status_updated.emit()
 
-                self._emit_log("[STEP 5/6] Running Roxy preflight...")
+                self._emit_log("[STEP 6/7] Running Roxy preflight...")
                 preflight = run_roxy_upload_preflight(
                     api_host=self.api_host,
                     api_token=self.api_key,
@@ -459,11 +527,11 @@ class AutomateWorker(QThread):
                     video_path=rendered_file,
                 )
                 self._emit_log(
-                    "[STEP 5/6] ✓ Preflight passed "
+                    "[STEP 6/7] ✓ Preflight passed "
                     f"(workspace={preflight.workspace_id}, profile={preflight.profile_display_name})"
                 )
 
-                self._emit_log("[STEP 6/6] Uploading video via Roxy...")
+                self._emit_log("[STEP 7/7] Uploading video via Roxy...")
                 upload_video_via_roxy(
                     api_host=self.api_host,
                     api_token=self.api_key,
@@ -474,7 +542,7 @@ class AutomateWorker(QThread):
                     progress_cb=lambda msg: self._emit_log(f"  [Roxy] {msg}"),
                     debug_root=self.debug_root,
                 )
-                self._emit_log("[STEP 6/6] ✓ Upload started")
+                self._emit_log("[STEP 7/7] ✓ Upload started")
                 self._emit_log("[DONE] Automate flow completed (project left open by design).")
 
                 project.status = ProjectStatus.done
