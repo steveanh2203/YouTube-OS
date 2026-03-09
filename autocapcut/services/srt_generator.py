@@ -8,7 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Literal
 
 from loguru import logger
 
@@ -73,7 +73,30 @@ class SRTGeneratorError(Exception):
     """Raised when SRT generation fails."""
 
 
+class SRTGenerationCancelled(SRTGeneratorError):
+    """Raised when interactive SRT generation is cancelled by the user."""
+
+
+@dataclass(frozen=True)
+class StrictMatchReview:
+    """Review payload for item-level strict matching failures."""
+
+    content_index: int
+    content_text: str
+    reason: str
+    detail: str
+    candidate_start_segment: int | None = None
+    candidate_end_segment: int | None = None
+    score: float | None = None
+    full_ratio: float | None = None
+    prefix_ratio: float | None = None
+    coverage: float | None = None
+    score_delta: float | None = None
+
+
 ProgressCallback = Callable[[int, str], None]
+StrictMatchDecision = Literal["skip", "cancel"]
+StrictMatchReviewCallback = Callable[[StrictMatchReview], StrictMatchDecision]
 
 
 def _emit_progress(progress_cb: ProgressCallback | None, percent: int, message: str) -> None:
@@ -239,6 +262,7 @@ def match_content_to_srt(
     progress_cb: ProgressCallback | None = None,
     progress_start: int = 45,
     progress_end: int = 88,
+    strict_review_cb: StrictMatchReviewCallback | None = None,
 ) -> List[OutputEntry]:
     """
     Strictly match each content item to CapCut SRT segments.
@@ -323,6 +347,20 @@ def match_content_to_srt(
     total = len(srt_segments)
     content_total = len(content_items)
 
+    def review_or_raise(review: StrictMatchReview) -> bool:
+        if strict_review_cb is None:
+            raise SRTGeneratorError(review.detail)
+
+        decision = strict_review_cb(review)
+        if decision == "skip":
+            logger.warning(
+                "Skipping content #{} after strict review: {}",
+                review.content_index,
+                review.reason,
+            )
+            return True
+        raise SRTGenerationCancelled(f"Đã huỷ tạo SRT ở content #{review.content_index}.")
+
     for content_idx, content in enumerate(content_items, 1):
         if content_total > 0:
             pct = progress_start + int(((content_idx - 1) / content_total) * max(progress_end - progress_start, 1))
@@ -336,7 +374,16 @@ def match_content_to_srt(
         content_norm = _normalize(content.text)
         content_words = content_norm.split()
         if not content_words:
-            raise SRTGeneratorError(f"Content #{content.index} trống sau chuẩn hoá.")
+            if review_or_raise(
+                StrictMatchReview(
+                    content_index=content.index,
+                    content_text=content.text,
+                    reason="empty-normalized-content",
+                    detail=f"Content #{content.index} trống sau chuẩn hoá.",
+                )
+            ):
+                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
+                continue
 
         chosen_start: int | None = None
         chosen_end: int | None = None
@@ -390,9 +437,16 @@ def match_content_to_srt(
                 second_best_score = score
 
         if chosen_start is None or chosen_end is None:
-            raise SRTGeneratorError(
-                f"Không thể ghép chắc chắn content #{content.index} với SRT gốc (Strict CapCut)."
-            )
+            if review_or_raise(
+                StrictMatchReview(
+                    content_index=content.index,
+                    content_text=content.text,
+                    reason="no-candidate",
+                    detail=f"Không thể ghép chắc chắn content #{content.index} với SRT gốc (Strict CapCut).",
+                )
+            ):
+                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
+                continue
         strong_confidence = (
             chosen_full_ratio >= _STRICT_MIN_FULL_RATIO
             and chosen_prefix_ratio >= _STRICT_MIN_PREFIX_RATIO
@@ -405,9 +459,23 @@ def match_content_to_srt(
             and (chosen_score - second_best_score) >= _STRICT_MARGIN_DELTA
         )
         if not (strong_confidence or margin_confidence):
-            raise SRTGeneratorError(
-                f"Độ tin cậy ghép thấp ở content #{content.index} (Strict CapCut)."
-            )
+            if review_or_raise(
+                StrictMatchReview(
+                    content_index=content.index,
+                    content_text=content.text,
+                    reason="low-confidence",
+                    detail=f"Độ tin cậy ghép thấp ở content #{content.index} (Strict CapCut).",
+                    candidate_start_segment=chosen_start + 1,
+                    candidate_end_segment=chosen_end + 1,
+                    score=chosen_score,
+                    full_ratio=chosen_full_ratio,
+                    prefix_ratio=chosen_prefix_ratio,
+                    coverage=chosen_coverage,
+                    score_delta=chosen_score - second_best_score,
+                )
+            ):
+                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
+                continue
 
         logger.debug(
             "Strict match content #{} -> SRT[{}..{}] score={:.2f} full={:.2f} prefix={:.2f} cov={:.2f} delta={:.2f}",
@@ -482,6 +550,7 @@ def generate_merged_srt(
     srt_path: Path,
     content_text: str,
     progress_cb: ProgressCallback | None = None,
+    strict_review_cb: StrictMatchReviewCallback | None = None,
 ) -> str:
     """
     Read *srt_path* (CapCut SRT) and *content_text* (raw content string),
@@ -521,7 +590,7 @@ def generate_merged_srt(
     entries: List[OutputEntry] | None = None
     engine_mode = _resolve_engine_mode()
 
-    if engine_mode in {"auto", "rust"}:
+    if strict_review_cb is None and engine_mode in {"auto", "rust"}:
         from autocapcut.services.rust_srt_engine import match_content_to_srt_rust
 
         rust_entries = match_content_to_srt_rust(
@@ -541,16 +610,31 @@ def generate_merged_srt(
             )
 
     if entries is None:
-        _emit_progress(progress_cb, 45, "Rust engine unavailable, using Python matcher...")
-        entries = match_content_to_srt(content_items, srt_segments, progress_cb, 45, 88)
+        if strict_review_cb is not None:
+            _emit_progress(progress_cb, 45, "Interactive strict review enabled, using Python matcher...")
+        else:
+            _emit_progress(progress_cb, 45, "Rust engine unavailable, using Python matcher...")
+        entries = match_content_to_srt(
+            content_items,
+            srt_segments,
+            progress_cb,
+            45,
+            88,
+            strict_review_cb=strict_review_cb,
+        )
         logger.info("SRT matching engine: Python")
 
     if not entries:
+        if strict_review_cb is not None:
+            raise SRTGeneratorError("Không còn content nào để xuất SRT sau khi bỏ qua các dòng lỗi.")
         raise SRTGeneratorError("Không thể ghép content với SRT segments.")
-    if len(entries) != len(content_items):
+    if strict_review_cb is None and len(entries) != len(content_items):
         raise SRTGeneratorError(
             "Ghép SRT chưa đầy đủ trong chế độ Strict CapCut; dừng để tránh sai timestamp."
         )
+    skipped_count = len(content_items) - len(entries)
+    if skipped_count > 0:
+        logger.warning("Generated SRT with {} skipped content line(s) after strict review.", skipped_count)
 
     _emit_progress(progress_cb, 92, "Rendering output SRT...")
     output = _to_srt_string(entries)

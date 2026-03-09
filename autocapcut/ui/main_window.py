@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -90,7 +91,13 @@ from autocapcut.services.roxy_upload import (
     run_roxy_upload_preflight,
     upload_video_via_roxy,
 )
-from autocapcut.services.srt_generator import SRTGeneratorError, generate_merged_srt
+from autocapcut.services.srt_generator import (
+    SRTGenerationCancelled,
+    SRTGeneratorError,
+    StrictMatchReview,
+    generate_merged_srt,
+    parse_content,
+)
 
 DEFAULT_AUTOMATE_ROXY_PROFILE_ID = "2c7168a71197394052ee67be8e0a7fc0"
 VIDEO_EXPORT_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm")
@@ -2301,6 +2308,68 @@ class MainWindow(QMainWindow):
 
             QMessageBox QLabel#qt_msgbox_label {{
                 min-width: 280px;
+            }}
+
+            QDialog#srtStrictReviewDialog {{
+                background: #F8FAFC;
+                border: 1px solid #D5DEE9;
+                border-radius: 18px;
+            }}
+
+            QDialog#srtStrictReviewDialog QFrame#strictReviewHero,
+            QDialog#srtStrictReviewDialog QFrame#strictReviewCard {{
+                background: #FFFFFF;
+                border: 1px solid #D6DEE9;
+                border-radius: 16px;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewIcon {{
+                background: #FEF3C7;
+                border: 1px solid #FCD34D;
+                border-radius: 28px;
+                padding: 10px;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewEyebrow {{
+                font-size: 11px;
+                font-weight: 700;
+                color: #B45309;
+                letter-spacing: 0.08em;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewTitle {{
+                font-size: 24px;
+                font-weight: 700;
+                color: #0F172A;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewBody {{
+                font-size: 13px;
+                color: #475569;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewCardTitle {{
+                font-size: 11px;
+                font-weight: 700;
+                color: #64748B;
+                letter-spacing: 0.06em;
+            }}
+
+            QDialog#srtStrictReviewDialog QTextEdit#strictReviewText {{
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+                color: #0F172A;
+                padding: 10px 12px;
+            }}
+
+            QDialog#srtStrictReviewDialog QLabel#strictReviewMetrics {{
+                font-size: 12px;
+                color: #334155;
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 12px;
+                padding: 10px 12px;
             }}
 
             QMessageBox QPushButton, QProgressDialog QPushButton {{
@@ -4650,11 +4719,15 @@ class MainWindow(QMainWindow):
         self._remember_srt_output_dir(final_path.parent)
         return final_path
 
-    def _show_srt_success_dialog(self, output_path: Path, entry_count: int) -> None:
+    def _show_srt_success_dialog(self, output_path: Path, entry_count: int, skipped_count: int = 0) -> None:
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Information)
         dialog.setWindowTitle("SRT created")
-        dialog.setText(f"Created successfully: {entry_count} entries.")
+        message = f"Created successfully: {entry_count} entries."
+        if skipped_count > 0:
+            noun = "line" if skipped_count == 1 else "lines"
+            message = f"{message}\nSkipped during strict review: {skipped_count} content {noun}."
+        dialog.setText(message)
         dialog.setInformativeText(str(output_path))
         open_folder_btn = dialog.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
         close_btn = dialog.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
@@ -4665,6 +4738,140 @@ class MainWindow(QMainWindow):
             opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path.parent)))
             if not opened:
                 QMessageBox.warning(self, "Open folder failed", f"Could not open folder:\n{output_path.parent}")
+
+    @staticmethod
+    def _format_srt_strict_review_metrics(review: StrictMatchReview) -> str:
+        lines = [f"Lỗi: {review.detail}"]
+        if review.candidate_start_segment is not None and review.candidate_end_segment is not None:
+            lines.append(
+                "Gợi ý segment: "
+                f"{review.candidate_start_segment} -> {review.candidate_end_segment}"
+            )
+        metric_items: list[str] = []
+        if review.score is not None:
+            metric_items.append(f"score {review.score:.2f}")
+        if review.full_ratio is not None:
+            metric_items.append(f"full {review.full_ratio:.2f}")
+        if review.prefix_ratio is not None:
+            metric_items.append(f"prefix {review.prefix_ratio:.2f}")
+        if review.coverage is not None:
+            metric_items.append(f"coverage {review.coverage:.2f}")
+        if review.score_delta is not None:
+            metric_items.append(f"delta {review.score_delta:.2f}")
+        if metric_items:
+            lines.append("Chỉ số: " + " | ".join(metric_items))
+        return "\n".join(lines)
+
+    def _show_srt_strict_review_dialog(self, review: StrictMatchReview) -> str:
+        title_map = {
+            "low-confidence": f"Độ tin cậy ghép thấp ở content #{review.content_index}",
+            "no-candidate": f"Không thể ghép chắc chắn content #{review.content_index}",
+            "empty-normalized-content": f"Content #{review.content_index} không hợp lệ sau chuẩn hóa",
+        }
+        dialog = QDialog(self)
+        dialog.setObjectName("srtStrictReviewDialog")
+        dialog.setWindowTitle("Strict Match Review")
+        dialog.setModal(True)
+        dialog.resize(760, 480)
+        dialog.setMinimumSize(700, 430)
+
+        outer = QVBoxLayout(dialog)
+        outer.setContentsMargins(18, 18, 18, 18)
+        outer.setSpacing(14)
+
+        hero = QFrame()
+        hero.setObjectName("strictReviewHero")
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(18, 18, 18, 18)
+        hero_layout.setSpacing(16)
+
+        icon_label = QLabel()
+        icon_label.setObjectName("strictReviewIcon")
+        icon_label.setPixmap(
+            dialog.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxWarning).pixmap(36, 36)
+        )
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setFixedSize(58, 58)
+        hero_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        hero_text = QVBoxLayout()
+        hero_text.setSpacing(6)
+
+        eyebrow = QLabel("STRICT MODE REVIEW")
+        eyebrow.setObjectName("strictReviewEyebrow")
+        hero_text.addWidget(eyebrow)
+
+        title = QLabel(title_map.get(review.reason, f"Cần xem lại content #{review.content_index}"))
+        title.setObjectName("strictReviewTitle")
+        title.setWordWrap(True)
+        hero_text.addWidget(title)
+
+        body = QLabel(
+            "Skip sẽ bỏ qua dòng content này và tiếp tục tạo SRT cho các dòng sau. "
+            "Cancel sẽ dừng toàn bộ quá trình tạo file."
+        )
+        body.setObjectName("strictReviewBody")
+        body.setWordWrap(True)
+        hero_text.addWidget(body)
+        hero_layout.addLayout(hero_text, 1)
+        outer.addWidget(hero)
+
+        content_card = QFrame()
+        content_card.setObjectName("strictReviewCard")
+        content_layout = QVBoxLayout(content_card)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setSpacing(8)
+
+        content_title = QLabel("CONTENT ĐANG GẶP VẤN ĐỀ")
+        content_title.setObjectName("strictReviewCardTitle")
+        content_layout.addWidget(content_title)
+
+        content_preview = QTextEdit()
+        content_preview.setObjectName("strictReviewText")
+        content_preview.setReadOnly(True)
+        content_preview.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        content_preview.setMaximumHeight(118)
+        content_preview.setPlainText(review.content_text.strip() or "(content rỗng)")
+        content_layout.addWidget(content_preview)
+        outer.addWidget(content_card)
+
+        metrics_card = QFrame()
+        metrics_card.setObjectName("strictReviewCard")
+        metrics_layout = QVBoxLayout(metrics_card)
+        metrics_layout.setContentsMargins(16, 16, 16, 16)
+        metrics_layout.setSpacing(8)
+
+        metrics_title = QLabel("CHẨN ĐOÁN MATCHER")
+        metrics_title.setObjectName("strictReviewCardTitle")
+        metrics_layout.addWidget(metrics_title)
+
+        metrics = QLabel(self._format_srt_strict_review_metrics(review))
+        metrics.setObjectName("strictReviewMetrics")
+        metrics.setWordWrap(True)
+        metrics.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        metrics_layout.addWidget(metrics)
+        outer.addWidget(metrics_card)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("variant", "danger")
+        cancel_btn.clicked.connect(dialog.reject)
+        actions.addWidget(cancel_btn)
+
+        skip_btn = QPushButton("Skip")
+        skip_btn.setProperty("variant", "primary")
+        skip_btn.clicked.connect(dialog.accept)
+        actions.addWidget(skip_btn)
+
+        outer.addLayout(actions)
+
+        skip_btn.setDefault(True)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return "skip"
+        return "cancel"
 
     def _toggle_srt_content_mode(self) -> None:
         paste_mode = getattr(self, "srt_content_paste_radio", None) and self.srt_content_paste_radio.isChecked()
@@ -4769,6 +4976,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "File read error", str(exc))
                 return
 
+        try:
+            total_content_items = len(parse_content(content_text))
+        except Exception:
+            total_content_items = 0
+
         output_path = self._prompt_srt_output_path()
         if output_path is None:
             return
@@ -4789,6 +5001,15 @@ class MainWindow(QMainWindow):
             progress.setLabelText(message)
             QApplication.processEvents()
 
+        def review_strict_failure(review: StrictMatchReview) -> str:
+            progress.hide()
+            QApplication.processEvents()
+            try:
+                return self._show_srt_strict_review_dialog(review)
+            finally:
+                progress.show()
+                QApplication.processEvents()
+
         # Generate
         try:
             update_progress(4, "Preparing generation inputs...")
@@ -4796,15 +5017,26 @@ class MainWindow(QMainWindow):
                 self.srt_input_path,
                 content_text,
                 progress_cb=update_progress,
+                strict_review_cb=review_strict_failure,
             )
             update_progress(96, "Saving output SRT file...")
             output_path.write_text(self._generated_srt, encoding="utf-8")
             entry_count = self._generated_srt.count("\n\n") + 1
+            skipped_count = max(total_content_items - entry_count, 0)
             if hasattr(self, "srt_result_label"):
-                self.srt_result_label.setText(f"Generated and saved: {output_path}")
+                summary = f"Generated and saved: {output_path}"
+                if skipped_count > 0:
+                    noun = "line" if skipped_count == 1 else "lines"
+                    summary = f"{summary} · skipped {skipped_count} content {noun}"
+                self.srt_result_label.setText(summary)
             update_progress(100, "SRT generated successfully.")
             progress.close()
-            self._show_srt_success_dialog(output_path, entry_count)
+            self._show_srt_success_dialog(output_path, entry_count, skipped_count)
+        except SRTGenerationCancelled as exc:
+            self._generated_srt = None
+            if hasattr(self, "srt_result_label"):
+                self.srt_result_label.setText(str(exc))
+            QMessageBox.information(self, "SRT generation cancelled", str(exc))
         except (SRTGeneratorError, OSError) as exc:
             self._generated_srt = None
             if hasattr(self, "srt_result_label"):
