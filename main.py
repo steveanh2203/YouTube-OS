@@ -1,14 +1,7 @@
-import sys
-from PySide6.QtWidgets import QApplication
-
-from autocapcut.ui.main_window import MainWindow
-
-
 def main() -> None:
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.showMaximized()
-    sys.exit(app.exec())
+    from autocapcut.ui.flet_app import launch
+
+    launch()
 
 
 if __name__ == "__main__":

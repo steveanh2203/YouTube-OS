@@ -6,12 +6,25 @@ from html import escape
 import json
 from pathlib import Path
 import re
-from typing import List
+import sys
+from typing import Callable, List
 from uuid import uuid4
 
 from loguru import logger
-from PySide6.QtCore import QDateTime, QSettings, QThread, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QBrush, QCloseEvent, QColor, QDesktopServices, QFont, QFontDatabase, QTextCursor
+from PySide6.QtCore import QDateTime, QSize, QSettings, QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QBrush,
+    QCloseEvent,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QShowEvent,
+    QTextCursor,
+)
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 from PySide6.QtWidgets import (
     QApplication,
@@ -47,6 +60,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+try:
+    from AppKit import NSScreen
+except ImportError:  # pragma: no cover - non-macOS fallback
+    NSScreen = None
 
 from autocapcut.models import ProjectItem, ProjectSource, ProjectStatus
 from autocapcut.services.project_loader import discover_projects
@@ -101,6 +118,21 @@ from autocapcut.services.srt_generator import (
 
 DEFAULT_AUTOMATE_ROXY_PROFILE_ID = "2c7168a71197394052ee67be8e0a7fc0"
 VIDEO_EXPORT_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm")
+GOOGLE_ICON_NAMES = {
+    "projects": "folder",
+    "videos": "movie",
+    "render": "play_circle_filled",
+    "analytics": "analytics",
+    "audio": "equalizer",
+    "captions": "subtitles",
+    "seo": "find_in_page",
+    "add": "add",
+    "edit": "edit",
+    "delete": "delete",
+    "children": "video_library",
+}
+
+SHOW_UI_ICONS = False
 
 
 class SyncWorker(QThread):
@@ -696,11 +728,19 @@ class MainWindow(QMainWindow):
     """Main application window focused on the Sync Audio feature."""
 
     columns = TableColumns()
+    _main_window_bottom_margin = 0
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AutoCapCut")
         self.resize(1280, 740)
+        self._fit_window_to_screen(
+            self,
+            min_width=1280,
+            min_height=740,
+            margin=0,
+            bottom_margin=self._main_window_bottom_margin,
+        )
 
         self.projects: list[ProjectItem] = []
         self.project_table: QTableWidget | None = None
@@ -726,6 +766,7 @@ class MainWindow(QMainWindow):
         self._render_failed_jobs: int = 0
         self._render_current_video: str = "-"
         self._render_current_stage: str = "Waiting..."
+        self._workspace_header: QWidget | None = None
         self.raw_seo_files: list[Path] = []
         self.raw_seo_draft: dict[str, object] = self._default_raw_seo_draft()
         self.roxy_video_path: Path | None = None
@@ -739,13 +780,28 @@ class MainWindow(QMainWindow):
         self._nav_group: QButtonGroup | None = None
         self._tool_stack: QStackedWidget | None = None
         self._tool_title_label: QLabel | None = None
+        self._workspace_stack: QStackedWidget | None = None
+        self._workspace_title_label: QLabel | None = None
+        self._workspace_description_label: QLabel | None = None
+        self.project_parent_list: QListWidget | None = None
+        self.project_parent_empty_label: QLabel | None = None
+        self.project_parent_detail_name: QLabel | None = None
+        self.project_parent_detail_meta: QLabel | None = None
+        self.project_parent_detail_stats: QLabel | None = None
+        self.project_parent_edit_btn: QPushButton | None = None
+        self.project_parent_delete_btn: QPushButton | None = None
+        self.project_parent_open_children_btn: QPushButton | None = None
+        self._selected_project_preset_id: str = ""
         self._font_family: str = "Space Grotesk"
+        self._icon_font_family: str = ""
+        self._icon_codepoints: dict[str, str] = {}
         self._updating_srt_paste_text: bool = False
         self._settings = QSettings("AutoCapCut", "AutoCapCut")
         self._last_srt_output_dir: Path = self._load_last_srt_output_dir()
         self.project_presets: list[dict[str, object]] = []
         self.project_assignment_by_path: dict[str, str] = {}
         self.video_child_settings_by_path: dict[str, dict[str, object]] = {}
+        self.manual_child_projects_by_parent: dict[str, list[dict[str, object]]] = {}
         self.project_hierarchy_scroll: QScrollArea | None = None
         self.project_hierarchy_root: QWidget | None = None
         self.project_hierarchy_layout: QVBoxLayout | None = None
@@ -754,7 +810,61 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.refresh_projects()
 
+    def _fit_window_to_screen(
+        self,
+        widget: QWidget,
+        *,
+        min_width: int = 420,
+        min_height: int = 240,
+        margin: int = 0,
+        bottom_margin: int | None = None,
+    ) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        effective_bottom_margin = margin if bottom_margin is None else bottom_margin
+        usable_rect = None
+        if sys.platform == "darwin" and NSScreen is not None:
+            cocoa_screen = NSScreen.mainScreen()
+            if cocoa_screen is not None:
+                frame = cocoa_screen.frame()
+                visible = cocoa_screen.visibleFrame()
+                top_inset = int(round((frame.origin.y + frame.size.height) - (visible.origin.y + visible.size.height)))
+                usable_rect = (
+                    int(round(visible.origin.x)),
+                    top_inset,
+                    int(round(visible.size.width)),
+                    int(round(visible.size.height)),
+                )
+
+        if usable_rect is not None:
+            usable_x, usable_y, usable_width, usable_height = usable_rect
+            target_width = max(min_width, usable_width - (margin * 2))
+            target_height = max(min_height, usable_height - margin - effective_bottom_margin)
+            widget.resize(target_width, target_height)
+            widget.move(usable_x + margin, usable_y + margin)
+            return
+
+        target_width = max(min_width, available.width() - (margin * 2))
+        target_height = max(min_height, available.height() - margin - effective_bottom_margin)
+        widget.resize(target_width, target_height)
+        widget.move(available.x() + margin, available.y() + margin)
+
+    def _fit_main_window(self) -> None:
+        self._fit_window_to_screen(
+            self,
+            min_width=1280,
+            min_height=740,
+            margin=0,
+            bottom_margin=self._main_window_bottom_margin,
+        )
+
     # region Qt overrides
+    def showEvent(self, event: QShowEvent) -> None:  # pragma: no cover - GUI callback
+        super().showEvent(event)
+        self._fit_main_window()
+
     def closeEvent(self, event: QCloseEvent) -> None:  # pragma: no cover - GUI callback
         if self._roxy_upload_worker and self._roxy_upload_worker.isRunning():
             QMessageBox.information(
@@ -813,17 +923,16 @@ class MainWindow(QMainWindow):
         container = QWidget(self)
         container.setObjectName("rootWidget")
         layout = QHBoxLayout(container)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(16)
 
         sidebar = self._build_sidebar()
-        tool_panel = self._build_tool_panel()
-        project_panel = self._build_project_panel()
+        workspace_panel = self._build_workspace_panel()
 
         # Subtle drop shadows for depth
         for widget, blur, opacity in (
-            (tool_panel, 24, 18),
-            (project_panel, 24, 18),
+            (sidebar, 18, 12),
+            (workspace_panel, 28, 16),
         ):
             fx = QGraphicsDropShadowEffect()
             fx.setBlurRadius(blur)
@@ -833,8 +942,7 @@ class MainWindow(QMainWindow):
             widget.setGraphicsEffect(fx)
 
         layout.addWidget(sidebar)
-        layout.addWidget(tool_panel, 5)
-        layout.addWidget(project_panel, 8)
+        layout.addWidget(workspace_panel, 1)
 
         container.setLayout(layout)
         self.setCentralWidget(container)
@@ -842,93 +950,184 @@ class MainWindow(QMainWindow):
         self._set_job_controls_state(False)
 
     def _load_fonts(self) -> str:
-        """Load Space Grotesk from resources/fonts/. Returns family name."""
-        here = Path(__file__).resolve().parent.parent.parent
-        font_path = here / "resources" / "fonts" / "SpaceGrotesk.ttf"
-        family = "Space Grotesk"
-        if font_path.exists():
-            fid = QFontDatabase.addApplicationFont(str(font_path))
+        """Prefer the macOS system SF font family exposed to Qt."""
+        here = Path(__file__).resolve().parent.parent.parent / "resources" / "fonts"
+        icon_font_path = (here / "MaterialIcons-Regular.ttf").resolve()
+        icon_codepoints_path = (here / "MaterialIcons-Regular.codepoints").resolve()
+
+        if icon_font_path.exists():
+            fid = QFontDatabase.addApplicationFont(str(icon_font_path))
             if fid != -1:
-                loaded = QFontDatabase.applicationFontFamilies(fid)
-                if loaded:
-                    family = loaded[0]
+                families = QFontDatabase.applicationFontFamilies(fid)
+                if families:
+                    self._icon_font_family = families[0]
+        if icon_codepoints_path.exists():
+            codepoints: dict[str, str] = {}
+            for raw_line in icon_codepoints_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) == 2:
+                    name, code = parts
+                    codepoints[name] = code
+            self._icon_codepoints = codepoints
+
+        family = ".AppleSystemUIFont"
         app = QApplication.instance()
         if app:
-            app.setFont(QFont(family, 14))
+            app.setFont(QFont(family, 13))
         return family
 
+    def _make_symbol_icon(self, kind: str, color: str, *, size: int = 18) -> QIcon:
+        if not SHOW_UI_ICONS:
+            return QIcon()
+        symbol_name = GOOGLE_ICON_NAMES.get(kind, "")
+        codepoint = self._icon_codepoints.get(symbol_name, "")
+        if self._icon_font_family and codepoint:
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QColor(color))
+            font = QFont(self._icon_font_family)
+            font.setPixelSize(int(size * 1.1))
+            painter.setFont(font)
+            painter.drawText(pixmap.rect(), int(Qt.AlignmentFlag.AlignCenter), chr(int(codepoint, 16)))
+            painter.end()
+            return QIcon(pixmap)
+
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(color))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if kind == "projects":
+            painter.drawRoundedRect(3, 6, size - 6, size - 9, 3, 3)
+            painter.drawLine(5, 6, size * 0.45, 6)
+            painter.drawLine(size * 0.45, 6, size * 0.58, 3.8)
+            painter.drawLine(size * 0.58, 3.8, size - 4.5, 3.8)
+        elif kind == "render":
+            painter.drawRoundedRect(3, 4, size - 6, size - 8, 4, 4)
+            painter.drawLine(6, size - 6, size - 6, size - 6)
+            painter.drawLine(7, size - 8, 7, size - 11)
+            painter.drawLine(size * 0.5, size - 8, size * 0.5, size - 13)
+            painter.drawLine(size - 7, size - 8, size - 7, size - 10)
+        elif kind == "analytics":
+            painter.drawLine(4, size - 4, size - 4, size - 4)
+            painter.drawLine(6, size - 4, 6, size - 9)
+            painter.drawLine(size * 0.5, size - 4, size * 0.5, size - 12)
+            painter.drawLine(size - 6, size - 4, size - 6, size - 7)
+        elif kind == "audio":
+            painter.drawLine(5.5, size - 5, 5.5, size * 0.38)
+            painter.drawLine(5.5, size * 0.52, size * 0.58, size * 0.34)
+            painter.drawArc(int(size * 0.46), int(size * 0.30), int(size * 0.34), int(size * 0.34), -20 * 16, 220 * 16)
+        elif kind == "captions":
+            painter.drawRoundedRect(3.5, 4.5, size - 7, size - 9, 3, 3)
+            painter.drawLine(6.5, 8, size - 6.5, 8)
+            painter.drawLine(6.5, 11.5, size * 0.6, 11.5)
+            painter.drawLine(6.5, 15, size - 8.5, 15)
+        elif kind == "seo":
+            painter.drawRoundedRect(4, 4, size - 8, size - 8, 4, 4)
+            painter.drawLine(6.5, 7.5, size - 6.5, 7.5)
+            painter.drawLine(6.5, 11, size * 0.62, 11)
+            painter.drawLine(6.5, 14.5, size - 8.5, 14.5)
+        elif kind == "add":
+            painter.drawLine(size / 2, 4, size / 2, size - 4)
+            painter.drawLine(4, size / 2, size - 4, size / 2)
+        elif kind == "edit":
+            painter.drawLine(5, size - 5, size - 5, 5)
+            painter.drawLine(size - 7, 4.5, size - 4, 7.5)
+            painter.drawLine(4, size - 4, 7.5, size - 4.8)
+        elif kind == "delete":
+            painter.drawLine(5, 5, size - 5, 5)
+            painter.drawLine(7, 5, 8.5, 3.5)
+            painter.drawLine(size - 7, 5, size - 8.5, 3.5)
+            painter.drawRoundedRect(6, 6.5, size - 12, size - 10, 2, 2)
+            painter.drawLine(size * 0.42, 8.5, size * 0.42, size - 5)
+            painter.drawLine(size * 0.58, 8.5, size * 0.58, size - 5)
+        elif kind == "children":
+            painter.drawRoundedRect(3, 5.5, size - 6, size - 9, 3, 3)
+            painter.drawLine(size * 0.42, size * 0.38, size * 0.68, size / 2)
+            painter.drawLine(size * 0.42, size * 0.62, size * 0.68, size / 2)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _refresh_sidebar_nav_icons(self) -> None:
+        for btn in self._nav_buttons.values():
+            kind = str(btn.property("iconKind") or "").strip()
+            if not kind:
+                continue
+            color = "#0B57D0" if btn.isChecked() else "#5F6368"
+            btn.setIcon(self._make_symbol_icon(kind, color))
+            btn.setIconSize(QSize(18, 18))
+
     def _build_sidebar(self) -> QFrame:
-        """Build the dark left navigation sidebar."""
+        """Build the primary workspace sidebar."""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(216)
+        sidebar.setFixedWidth(248)
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── App Header ──────────────────────────────────────────────────────
         header = QWidget()
         header.setObjectName("sidebarHeader")
         hdr_layout = QVBoxLayout(header)
-        hdr_layout.setContentsMargins(20, 24, 20, 18)
-        hdr_layout.setSpacing(3)
+        hdr_layout.setContentsMargins(22, 22, 22, 18)
+        hdr_layout.setSpacing(14)
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(0, 0, 0, 0)
+        brand_row.setSpacing(12)
+
+        monogram = QLabel("AC")
+        monogram.setObjectName("sidebarMonogram")
+
+        brand_copy = QVBoxLayout()
+        brand_copy.setContentsMargins(0, 0, 0, 0)
+        brand_copy.setSpacing(4)
+        product_chip = QLabel("DESKTOP CONTROL")
+        product_chip.setObjectName("sidebarChip")
         app_name = QLabel("AutoCapCut")
         app_name.setObjectName("appName")
-        app_tagline = QLabel("CapCut Automation")
+        app_tagline = QLabel("Operational workspace for project structure, render monitoring, and analytics.")
         app_tagline.setObjectName("appTagline")
-        hdr_layout.addWidget(app_name)
+        brand_copy.addWidget(product_chip)
+        brand_copy.addWidget(app_name)
+        brand_row.addWidget(monogram, 0, Qt.AlignmentFlag.AlignTop)
+        brand_row.addLayout(brand_copy, 1)
+
+        hdr_layout.addLayout(brand_row)
         hdr_layout.addWidget(app_tagline)
         layout.addWidget(header)
 
-        # ── Navigation ───────────────────────────────────────────────────────
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
 
         nav_area = QWidget()
         nav_area.setObjectName("navArea")
         nav_layout = QVBoxLayout(nav_area)
-        nav_layout.setContentsMargins(12, 4, 12, 4)
-        nav_layout.setSpacing(2)
+        nav_layout.setContentsMargins(14, 18, 14, 14)
+        nav_layout.setSpacing(10)
 
-        # Section: Project Tools
-        sec1 = QLabel("PROJECT TOOLS")
-        sec1.setObjectName("navSection")
-        nav_layout.addSpacing(14)
-        nav_layout.addWidget(sec1)
-        nav_layout.addSpacing(4)
+        section = QLabel("CORE WORKSPACES")
+        section.setObjectName("navSection")
+        nav_layout.addWidget(section)
 
         for key, label in (
-            ("animation", "Animation"),
-            ("effect", "Effects"),
-            ("transition", "Transitions"),
-            ("project", "Project"),
+            ("projects", "Projects"),
+            ("render_dashboard", "Render Dashboard"),
+            ("analytics", "Analytics"),
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setObjectName("navBtn")
-            btn.clicked.connect(lambda _checked, k=key: self._switch_tool(k))
-            self._nav_buttons[key] = btn
-            self._nav_group.addButton(btn)
-            nav_layout.addWidget(btn)
-
-        # Section: File Tools
-        sec2 = QLabel("FILE TOOLS")
-        sec2.setObjectName("navSection")
-        nav_layout.addSpacing(14)
-        nav_layout.addWidget(sec2)
-        nav_layout.addSpacing(4)
-
-        for key, label in (
-            ("remove_bg", "Background Removal"),
-            ("rename", "File Rename"),
-            ("raw_seo", "Raw SEO"),
-            ("srt", "SRT Generator"),
-            ("roxy_upload", "Upload Roxy"),
-        ):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setObjectName("navBtn")
-            btn.clicked.connect(lambda _checked, k=key: self._switch_tool(k))
+            btn.setProperty("iconKind", "render" if key == "render_dashboard" else key)
+            btn.clicked.connect(lambda _checked, k=key: self._switch_workspace(k))
             self._nav_buttons[key] = btn
             self._nav_group.addButton(btn)
             nav_layout.addWidget(btn)
@@ -936,11 +1135,858 @@ class MainWindow(QMainWindow):
         layout.addWidget(nav_area)
         layout.addStretch(1)
 
-        # Select first nav item by default
-        if "animation" in self._nav_buttons:
-            self._nav_buttons["animation"].setChecked(True)
+        if "projects" in self._nav_buttons:
+            self._nav_buttons["projects"].setChecked(True)
+        self._refresh_sidebar_nav_icons()
 
         return sidebar
+
+    def _build_workspace_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("workspacePanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("workspaceHeader")
+        self._workspace_header = header
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(28, 26, 28, 22)
+        header_layout.setSpacing(8)
+
+        eyebrow = QLabel("AUTO CAPCUT")
+        eyebrow.setObjectName("workspaceEyebrow")
+        self._workspace_title_label = QLabel("Projects")
+        self._workspace_title_label.setObjectName("workspaceTitle")
+        self._workspace_description_label = QLabel(
+            "Manage parent projects and child videos from one structured workspace."
+        )
+        self._workspace_description_label.setObjectName("workspaceDescription")
+        self._workspace_description_label.setWordWrap(True)
+        header_layout.addWidget(eyebrow)
+        header_layout.addWidget(self._workspace_title_label)
+        header_layout.addWidget(self._workspace_description_label)
+        layout.addWidget(header)
+
+        self._workspace_stack = QStackedWidget()
+        self._workspace_stack.setObjectName("workspaceStack")
+        self._workspace_stack.addWidget(self._build_projects_workspace())
+        self._workspace_stack.addWidget(self._build_render_dashboard_workspace())
+        self._workspace_stack.addWidget(
+            self._build_workspace_page(
+                title="Analytics",
+                description="Metrics, throughput, and trend review will land in this workspace.",
+                note="Next step: add the first analytics overview cards and charts.",
+            )
+        )
+        layout.addWidget(self._workspace_stack, 1)
+
+        return panel
+
+    def _build_projects_workspace(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(18)
+
+        toolbar = QWidget()
+        toolbar.setObjectName("projectsToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(20, 18, 20, 18)
+        toolbar_layout.setSpacing(12)
+
+        title_wrap = QVBoxLayout()
+        title_wrap.setContentsMargins(0, 0, 0, 0)
+        title_wrap.setSpacing(4)
+        section_title = QLabel("Parent projects")
+        section_title.setObjectName("workspaceSectionTitle")
+        section_body = QLabel("Manage your top-level project groups before assigning child videos into them.")
+        section_body.setObjectName("workspaceBody")
+        section_body.setWordWrap(True)
+        title_wrap.addWidget(section_title)
+        title_wrap.addWidget(section_body)
+        toolbar_layout.addLayout(title_wrap, 1)
+
+        self.project_preset_add_btn = QPushButton("Add")
+        self.project_preset_add_btn.setObjectName("projectActionBtn")
+        self.project_preset_add_btn.setProperty("variant", "primary")
+        self.project_preset_add_btn.setIcon(self._make_symbol_icon("add", "#F8FAFC"))
+        self.project_preset_add_btn.setIconSize(QSize(16, 16))
+        self.project_preset_add_btn.clicked.connect(self._handle_project_preset_add)
+
+        self.project_parent_edit_btn = QPushButton("Edit")
+        self.project_parent_edit_btn.setObjectName("projectActionBtn")
+        self.project_parent_edit_btn.setProperty("variant", "secondary")
+        self.project_parent_edit_btn.setIcon(self._make_symbol_icon("edit", "#1F1F1F"))
+        self.project_parent_edit_btn.setIconSize(QSize(16, 16))
+        self.project_parent_edit_btn.clicked.connect(
+            lambda: self._handle_project_preset_edit(self._selected_project_preset_id)
+        )
+
+        self.project_parent_delete_btn = QPushButton("Delete")
+        self.project_parent_delete_btn.setObjectName("projectActionBtn")
+        self.project_parent_delete_btn.setProperty("variant", "danger")
+        self.project_parent_delete_btn.setIcon(self._make_symbol_icon("delete", "#C5221F"))
+        self.project_parent_delete_btn.setIconSize(QSize(16, 16))
+        self.project_parent_delete_btn.clicked.connect(
+            lambda: self._handle_project_preset_delete(self._selected_project_preset_id)
+        )
+
+        toolbar_layout.addWidget(self.project_preset_add_btn)
+        toolbar_layout.addWidget(self.project_parent_edit_btn)
+        toolbar_layout.addWidget(self.project_parent_delete_btn)
+        layout.addWidget(toolbar)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(18)
+
+        list_card = QFrame()
+        list_card.setObjectName("projectsListCard")
+        list_card.setMinimumWidth(320)
+        list_layout = QVBoxLayout(list_card)
+        list_layout.setContentsMargins(16, 16, 16, 16)
+        list_layout.setSpacing(12)
+
+        list_heading = QLabel("Project parents")
+        list_heading.setObjectName("projectsPanelTitle")
+        list_layout.addWidget(list_heading)
+
+        self.project_parent_list = QListWidget()
+        self.project_parent_list.setObjectName("projectParentList")
+        self.project_parent_list.currentItemChanged.connect(self._handle_project_parent_selection_changed)
+        list_layout.addWidget(self.project_parent_list, 1)
+
+        self.project_parent_empty_label = QLabel("No parent projects yet. Use Add to create the first one.")
+        self.project_parent_empty_label.setObjectName("hintLabel")
+        self.project_parent_empty_label.setWordWrap(True)
+        list_layout.addWidget(self.project_parent_empty_label)
+
+        detail_card = QFrame()
+        detail_card.setObjectName("projectsDetailCard")
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.setContentsMargins(20, 20, 20, 20)
+        detail_layout.setSpacing(12)
+
+        detail_heading = QLabel("Details")
+        detail_heading.setObjectName("projectsPanelTitle")
+        detail_layout.addWidget(detail_heading)
+
+        self.project_parent_detail_name = QLabel("Select a parent project")
+        self.project_parent_detail_name.setObjectName("projectDetailTitle")
+        detail_layout.addWidget(self.project_parent_detail_name)
+
+        self.project_parent_detail_meta = QLabel()
+        self.project_parent_detail_meta.setVisible(False)
+
+        self.project_parent_detail_stats = QLabel("Child projects: 0")
+        self.project_parent_detail_stats.setObjectName("projectDetailStats")
+        detail_layout.addWidget(self.project_parent_detail_stats)
+
+        self.project_parent_open_children_btn = QPushButton("Open child projects")
+        self.project_parent_open_children_btn.setObjectName("projectActionBtn")
+        self.project_parent_open_children_btn.setProperty("variant", "secondary")
+        self.project_parent_open_children_btn.setIcon(self._make_symbol_icon("children", "#1F1F1F"))
+        self.project_parent_open_children_btn.setIconSize(QSize(16, 16))
+        self.project_parent_open_children_btn.clicked.connect(
+            lambda: self._open_project_children_dialog(self._selected_project_preset_id)
+        )
+        detail_layout.addWidget(self.project_parent_open_children_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        detail_layout.addStretch(1)
+
+        content_row.addWidget(list_card, 4)
+        content_row.addWidget(detail_card, 6)
+        layout.addLayout(content_row, 1)
+        layout.addStretch(1)
+        return page
+
+    def _build_child_videos_page(
+        self,
+        preset_id: str,
+        on_children_changed: Callable[[], None],
+    ) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        toolbar = QWidget()
+        toolbar.setObjectName("projectsToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(18, 16, 18, 16)
+        toolbar_layout.setSpacing(12)
+
+        title_wrap = QVBoxLayout()
+        title_wrap.setContentsMargins(0, 0, 0, 0)
+        title_wrap.setSpacing(4)
+        heading = QLabel("Child projects")
+        heading.setObjectName("projectsPanelTitle")
+        subheading = QLabel("Create and manage child projects under this parent.")
+        subheading.setObjectName("workspaceBody")
+        subheading.setWordWrap(True)
+        title_wrap.addWidget(heading)
+        title_wrap.addWidget(subheading)
+        toolbar_layout.addLayout(title_wrap, 1)
+
+        add_btn = QPushButton("Create project")
+        add_btn.setObjectName("projectActionBtn")
+        add_btn.setProperty("variant", "primary")
+        add_btn.setIcon(self._make_symbol_icon("add", "#FFFFFF"))
+        add_btn.setIconSize(QSize(16, 16))
+
+        select_done_btn = QPushButton("Done")
+        select_done_btn.setObjectName("projectActionBtn")
+        select_done_btn.setProperty("variant", "secondary")
+        select_done_btn.setVisible(False)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setObjectName("projectActionBtn")
+        delete_btn.setProperty("variant", "danger")
+        delete_btn.setIcon(self._make_symbol_icon("delete", "#C5221F"))
+        delete_btn.setIconSize(QSize(16, 16))
+        delete_btn.setEnabled(False)
+
+        toolbar_layout.addWidget(add_btn)
+        toolbar_layout.addWidget(select_done_btn)
+        toolbar_layout.addWidget(delete_btn)
+        layout.addWidget(toolbar)
+
+        list_card = QFrame()
+        list_card.setObjectName("projectsListCard")
+        list_card.setMinimumWidth(500)
+        list_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        list_layout = QVBoxLayout(list_card)
+        list_layout.setContentsMargins(18, 18, 18, 18)
+        list_layout.setSpacing(12)
+
+        list_heading = QLabel("Child project list")
+        list_heading.setObjectName("projectsPanelTitle")
+        list_layout.addWidget(list_heading)
+
+        table = QTableWidget()
+        table.setObjectName("projectChildrenTable")
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["No.", "Project", "Status"])
+        table.setAlternatingRowColors(False)
+        table.setShowGrid(False)
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(52)
+        header = table.horizontalHeader()
+        header.setHighlightSections(False)
+        header.setSectionsClickable(True)
+        header.setSectionResizeMode(0, header.ResizeMode.Fixed)
+        table.setColumnWidth(0, 72)
+        header.setSectionResizeMode(1, header.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, header.ResizeMode.Fixed)
+        table.setColumnWidth(2, 120)
+
+        list_layout.addWidget(table, 1)
+
+        detail_card = QFrame()
+        detail_card.setObjectName("projectsDetailCard")
+        detail_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        detail_layout = QVBoxLayout(detail_card)
+        detail_layout.setContentsMargins(24, 24, 24, 24)
+        detail_layout.setSpacing(0)
+
+        detail_heading = QLabel("Project details")
+        detail_heading.setObjectName("projectsPanelTitle")
+        detail_layout.addWidget(detail_heading)
+
+        detail_selected_label = QLabel()  # kept for internal state, hidden
+        detail_selected_label.setVisible(False)
+
+        detail_layout.addSpacing(16)
+
+        title_group = QVBoxLayout()
+        title_group.setSpacing(4)
+        title_label = QLabel("Title")
+        title_label.setObjectName("sectionLabel")
+        title_edit = QLineEdit()
+        title_edit.setPlaceholderText("Enter video title")
+        title_group.addWidget(title_label)
+        title_group.addWidget(title_edit)
+        detail_layout.addLayout(title_group)
+
+        detail_layout.addSpacing(12)
+
+        desc_group = QVBoxLayout()
+        desc_group.setSpacing(4)
+        description_label = QLabel("Description")
+        description_label.setObjectName("sectionLabel")
+        description_edit = QTextEdit()
+        description_edit.setPlaceholderText("Enter description for this child project...")
+        description_edit.setFixedHeight(120)
+        desc_group.addWidget(description_label)
+        desc_group.addWidget(description_edit)
+        detail_layout.addLayout(desc_group)
+
+        detail_layout.addSpacing(16)
+
+        # ── Folder section ──────────────────────────────────────────
+        RESOURCE_FOLDERS = ["image", "thumb", "heygen", "caption"]
+
+        folder_group = QVBoxLayout()
+        folder_group.setSpacing(8)
+        folder_label = QLabel("Project folder")
+        folder_label.setObjectName("sectionLabel")
+
+        # Row 1: path input + 2 buttons
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
+        folder_edit = QLineEdit()
+        folder_edit.setPlaceholderText("No folder selected…")
+        folder_edit.setReadOnly(True)
+        browse_btn = QPushButton("Browse")
+        browse_btn.setFixedWidth(100)
+        scan_btn = QPushButton("Scan & Create")
+        scan_btn.setProperty("variant", "primary")
+        scan_btn.setFixedWidth(140)
+        scan_btn.setEnabled(False)
+        folder_row.addWidget(folder_edit, 1)
+        folder_row.addWidget(browse_btn)
+        folder_row.addWidget(scan_btn)
+
+        # Row 2: badges hiển thị trạng thái từng sub-folder
+        folder_status_row = QHBoxLayout()
+        folder_status_row.setSpacing(6)
+        folder_status_labels: dict[str, QLabel] = {}
+        for fname in RESOURCE_FOLDERS:
+            badge = QLabel(f"📁 {fname}")
+            badge.setObjectName("folderBadgeNone")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setFixedHeight(24)
+            folder_status_labels[fname] = badge
+            folder_status_row.addWidget(badge)
+        folder_status_row.addStretch(1)
+
+        folder_group.addWidget(folder_label)
+        folder_group.addLayout(folder_row)
+        folder_group.addLayout(folder_status_row)
+        detail_layout.addLayout(folder_group)
+
+        detail_layout.addStretch(1)
+
+        detail_hint_label = QLabel()  # kept for internal state updates, hidden
+        detail_hint_label.setVisible(False)
+
+        detail_actions = QHBoxLayout()
+        detail_actions.addStretch(1)
+        save_detail_btn = QPushButton("Save details")
+        save_detail_btn.setProperty("variant", "primary")
+        save_detail_btn.setEnabled(False)
+        detail_actions.addWidget(save_detail_btn)
+        detail_layout.addLayout(detail_actions)
+
+        content_wrap = QWidget()
+        content_layout = QHBoxLayout(content_wrap)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(14)
+        content_layout.addWidget(list_card, 5)
+        content_layout.addWidget(detail_card, 7)
+
+        def current_child_project() -> dict[str, object] | None:
+            row = table.currentRow()
+            if row < 0:
+                return None
+            item = table.item(row, 1)
+            if item is None:
+                return None
+            child_id = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            if not child_id:
+                return None
+            for child in self._manual_child_projects_for_parent(preset_id):
+                if str(child.get("id", "")).strip() == child_id:
+                    return child
+            return None
+
+        detail_loading = False
+        detail_dirty = False
+        loaded_child_id = ""
+        bulk_select_mode = False
+        checked_child_ids: set[str] = set()
+
+        def _set_square_state(button: QPushButton, checked: bool) -> None:
+            button.setChecked(checked)
+            button.setText("✓" if checked else "")
+
+        def checked_child_ids_list() -> list[str]:
+            return list(checked_child_ids)
+
+        def _set_bulk_mode(enabled: bool) -> None:
+            nonlocal bulk_select_mode
+            bulk_select_mode = enabled
+            if not enabled:
+                checked_child_ids.clear()
+            table.setHorizontalHeaderLabels(["All" if enabled else "No.", "Project", "Status"])
+            select_done_btn.setVisible(enabled)
+            refresh_actions()
+
+        def _refresh_folder_badges(path: str) -> None:
+            """Update badge colours based on which sub-folders exist on disk."""
+            import os
+            for fname in RESOURCE_FOLDERS:
+                badge = folder_status_labels[fname]
+                if not path:
+                    badge.setText(f"📁 {fname}")
+                    badge.setObjectName("folderBadgeNone")
+                elif os.path.isdir(os.path.join(path, fname)):
+                    badge.setText(f"✓ {fname}")
+                    badge.setObjectName("folderBadgeOk")
+                else:
+                    badge.setText(f"✕ {fname}")
+                    badge.setObjectName("folderBadgeMissing")
+                badge.style().unpolish(badge)
+                badge.style().polish(badge)
+            scan_btn.setEnabled(bool(path))
+
+        def set_detail_enabled(enabled: bool) -> None:
+            for widget in (title_edit, description_edit):
+                widget.setEnabled(enabled)
+            save_detail_btn.setEnabled(enabled and detail_dirty)
+            browse_btn.setEnabled(enabled)
+
+        def load_child_detail(child: dict[str, object] | None) -> None:
+            nonlocal detail_loading, detail_dirty, loaded_child_id
+            detail_loading = True
+            if child is None:
+                loaded_child_id = ""
+                detail_selected_label.setText("Select a child project")
+                title_edit.clear()
+                description_edit.clear()
+                folder_edit.clear()
+                detail_hint_label.setText("Select a child project to edit.")
+                detail_dirty = False
+                set_detail_enabled(False)
+                _refresh_folder_badges("")
+                detail_loading = False
+                return
+            loaded_child_id = str(child.get("id", "")).strip()
+            detail_selected_label.setText(str(child.get("name", "")).strip())
+            title_edit.setText(str(child.get("title", "")).strip())
+            description_edit.setPlainText(str(child.get("description", "")).strip())
+            fp = str(child.get("folder_path", "")).strip()
+            folder_edit.setText(fp)
+            _refresh_folder_badges(fp)
+            detail_hint_label.setText("Data is saved per child project.")
+            detail_dirty = False
+            set_detail_enabled(True)
+            detail_loading = False
+
+        def persist_child_detail(*, refresh_table: bool = True) -> None:
+            nonlocal detail_dirty
+            if not loaded_child_id:
+                return
+            children = self._manual_child_projects_for_parent(preset_id)
+            for index, item in enumerate(children):
+                if str(item.get("id", "")).strip() != loaded_child_id:
+                    continue
+                updated = dict(item)
+                updated["title"] = title_edit.text().strip()
+                updated["description"] = description_edit.toPlainText().strip()
+                updated["folder_path"] = folder_edit.text().strip()
+                children[index] = self._normalize_manual_child_project(updated) or updated
+                break
+            self.manual_child_projects_by_parent[str(preset_id).strip()] = children
+            self._save_project_dashboard_settings()
+            detail_dirty = False
+            save_detail_btn.setEnabled(False)
+            detail_hint_label.setText("Changes saved.")
+            if refresh_table:
+                populate_children_table(preferred_child_id=loaded_child_id)
+
+        def refresh_actions() -> None:
+            if bulk_select_mode:
+                checked_count = len(checked_child_ids)
+                delete_btn.setEnabled(checked_count > 0)
+                delete_btn.setText(f"Delete ({checked_count})" if checked_count else "Delete")
+                return
+            delete_btn.setEnabled(current_child_project() is not None)
+            delete_btn.setText("Delete")
+
+        def _toggle_checked_child(child_id: str, checked: bool) -> None:
+            if checked:
+                checked_child_ids.add(child_id)
+            else:
+                checked_child_ids.discard(child_id)
+            refresh_actions()
+
+        def _handle_no_header_click() -> None:
+            preferred_child_id = loaded_child_id or (
+                str(current_child_project().get("id", "")).strip() if current_child_project() else ""
+            )
+            if not bulk_select_mode:
+                _set_bulk_mode(True)
+                populate_children_table(preferred_child_id=preferred_child_id)
+                return
+            all_child_ids = {
+                str(child.get("id", "")).strip()
+                for child in self._manual_child_projects_for_parent(preset_id)
+                if str(child.get("id", "")).strip()
+            }
+            if checked_child_ids and checked_child_ids == all_child_ids:
+                checked_child_ids.clear()
+            else:
+                checked_child_ids.clear()
+                checked_child_ids.update(all_child_ids)
+            populate_children_table(preferred_child_id=preferred_child_id)
+
+        def populate_children_table(preferred_child_id: str = "") -> None:
+            children = sorted(
+                self._manual_child_projects_for_parent(preset_id),
+                key=lambda item: str(item.get("name", "")).casefold(),
+            )
+            table.setRowCount(len(children))
+            table.clearSelection()
+            selected_row = -1
+            for row, child in enumerate(children):
+                child_id = str(child.get("id", "")).strip()
+                match = re.search(r"(\d+)$", str(child.get("name", "")).strip())
+                order_text = match.group(1) if match else str(row + 1)
+                if bulk_select_mode:
+                    order_item = QTableWidgetItem("")
+                    order_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    table.setItem(row, 0, order_item)
+
+                    select_btn = QPushButton()
+                    select_btn.setObjectName("rowSelectSquare")
+                    select_btn.setCheckable(True)
+                    select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    select_btn.setFixedSize(18, 18)
+                    _set_square_state(select_btn, child_id in checked_child_ids)
+                    select_btn.toggled.connect(
+                        lambda checked, cid=child_id, btn=select_btn: (
+                            _set_square_state(btn, checked),
+                            _toggle_checked_child(cid, checked),
+                        )
+                    )
+                    select_widget = QWidget()
+                    select_layout = QHBoxLayout(select_widget)
+                    select_layout.setContentsMargins(0, 0, 0, 0)
+                    select_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    select_layout.addWidget(select_btn)
+                    table.setCellWidget(row, 0, select_widget)
+                else:
+                    table.setCellWidget(row, 0, None)
+                    order_item = QTableWidgetItem(order_text)
+                    order_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    order_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                    table.setItem(row, 0, order_item)
+
+                name_item = QTableWidgetItem(str(child.get("name", "")).strip())
+                name_item.setData(Qt.ItemDataRole.UserRole, child_id)
+                name_item.setToolTip(
+                    "Title: "
+                    + (str(child.get("title", "")).strip() or "(empty)")
+                    + "\nDescription: "
+                    + (str(child.get("description", "")).strip() or "(empty)")
+                )
+                # ── col 2: status pill widget ─────────────────────────────
+                status_key = str(child.get("status", "draft"))
+                status_text = self._manual_child_status_label(status_key)
+                status_colors = {
+                    "draft":       ("#F1F5F9", "#64748B"),
+                    "in_progress": ("#FEF3C7", "#D97706"),
+                    "done":        ("#DCFCE7", "#16A34A"),
+                    "published":   ("#DBEAFE", "#2563EB"),
+                }
+                bg, fg = status_colors.get(status_key, ("#F1F5F9", "#64748B"))
+                pill = QLabel(status_text)
+                pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pill.setStyleSheet(
+                    f"QLabel {{ background: {bg}; color: {fg}; border-radius: 10px;"
+                    f" font-size: 11px; font-weight: 600; padding: 3px 10px; }}"
+                )
+                pill_widget = QWidget()
+                pill_lay = QHBoxLayout(pill_widget)
+                pill_lay.setContentsMargins(6, 0, 6, 0)
+                pill_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pill_lay.addWidget(pill)
+
+                name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                status_placeholder = QTableWidgetItem()
+                status_placeholder.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                table.setItem(row, 1, name_item)
+                table.setItem(row, 2, status_placeholder)
+                table.setCellWidget(row, 2, pill_widget)
+                if child_id == preferred_child_id:
+                    selected_row = row
+            if table.rowCount():
+                table.selectRow(selected_row if selected_row >= 0 else 0)
+            else:
+                load_child_detail(None)
+            refresh_actions()
+
+        def handle_add_child() -> None:
+            payload = self._open_manual_child_project_editor(preset_id)
+            if payload is None:
+                return
+            children = self._manual_child_projects_for_parent(preset_id)
+            children.append(payload)
+            self.manual_child_projects_by_parent[str(preset_id).strip()] = children
+            self._save_project_dashboard_settings()
+            self._refresh_projects_workspace(preset_id)
+            populate_children_table(str(payload.get("id", "")).strip())
+            on_children_changed()
+
+        def handle_edit_child() -> None:
+            nonlocal detail_dirty
+            child = current_child_project()
+            if child is None:
+                return
+            if detail_dirty:
+                persist_child_detail()
+            payload = self._open_manual_child_project_editor(preset_id, initial=child)
+            if payload is None:
+                return
+            children = self._manual_child_projects_for_parent(preset_id)
+            child_id = str(child.get("id", "")).strip()
+            for index, item in enumerate(children):
+                if str(item.get("id", "")).strip() == child_id:
+                    children[index] = payload
+                    break
+            self.manual_child_projects_by_parent[str(preset_id).strip()] = children
+            self._save_project_dashboard_settings()
+            populate_children_table(str(payload.get("id", "")).strip())
+            on_children_changed()
+
+        def handle_delete_child() -> None:
+            ids_to_delete = checked_child_ids_list() if bulk_select_mode else []
+            if not ids_to_delete:
+                child = current_child_project()
+                if child is None:
+                    return
+                ids_to_delete = [str(child.get("id", "")).strip()]
+
+            count = len(ids_to_delete)
+            all_children = self._manual_child_projects_for_parent(preset_id)
+            if count == 1:
+                single = next(
+                    (c for c in all_children if str(c.get("id", "")).strip() == ids_to_delete[0]),
+                    None,
+                )
+                msg = f"Delete '{str(single.get('name', '')).strip()}'?" if single else "Delete selected project?"
+            else:
+                msg = f"Delete {count} selected projects? This cannot be undone."
+            reply = QMessageBox.question(
+                self,
+                "Remove child project" if count == 1 else "Remove child projects",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            id_set = set(ids_to_delete)
+            self.manual_child_projects_by_parent[str(preset_id).strip()] = [
+                item
+                for item in self._manual_child_projects_for_parent(preset_id)
+                if str(item.get("id", "")).strip() not in id_set
+            ]
+            checked_child_ids.clear()
+            self._save_project_dashboard_settings()
+            self._refresh_projects_workspace(preset_id)
+            populate_children_table()
+            on_children_changed()
+
+        def mark_detail_dirty() -> None:
+            nonlocal detail_dirty
+            if detail_loading or current_child_project() is None:
+                return
+            detail_dirty = True
+            save_detail_btn.setEnabled(True)
+            detail_hint_label.setText("Unsaved changes.")
+
+        def handle_child_selection_changed() -> None:
+            if detail_dirty and loaded_child_id:
+                persist_child_detail(refresh_table=False)
+            child = current_child_project()
+            load_child_detail(child)
+            refresh_actions()
+
+        def handle_child_double_click() -> None:
+            child = current_child_project()
+            if child is None:
+                return
+            self._open_manual_child_project_workspace(
+                preset_id,
+                str(child.get("id", "")).strip(),
+                on_saved=lambda: (
+                    populate_children_table(preferred_child_id=str(child.get("id", "")).strip()),
+                    on_children_changed(),
+                ),
+            )
+
+        def handle_browse_folder() -> None:
+            from PySide6.QtWidgets import QFileDialog
+            current = folder_edit.text().strip()
+            start = current if current else str(Path.home())
+            chosen = QFileDialog.getExistingDirectory(
+                None, "Select folder for child project", start
+            )
+            if not chosen:
+                return
+            folder_edit.setText(chosen)
+            _refresh_folder_badges(chosen)
+            mark_detail_dirty()
+
+        def handle_scan_folders() -> None:
+            import os
+            path = folder_edit.text().strip()
+            if not path or not os.path.isdir(path):
+                QMessageBox.warning(None, "Invalid folder", f"Folder not found:\n{path}")
+                return
+            created, existed = [], []
+            for fname in RESOURCE_FOLDERS:
+                sub = os.path.join(path, fname)
+                if os.path.isdir(sub):
+                    existed.append(fname)
+                else:
+                    os.makedirs(sub)
+                    created.append(fname)
+            _refresh_folder_badges(path)
+            persist_child_detail(refresh_table=False)
+            parts = []
+            if created:
+                parts.append(f"✅ Created: {', '.join(created)}")
+            if existed:
+                parts.append(f"⬜ Already exists: {', '.join(existed)}")
+            QMessageBox.information(None, "Done", "\n".join(parts))
+
+        add_btn.clicked.connect(handle_add_child)
+        delete_btn.clicked.connect(handle_delete_child)
+        table.itemSelectionChanged.connect(handle_child_selection_changed)
+        table.itemDoubleClicked.connect(lambda _item: handle_child_double_click())
+        header.sectionClicked.connect(lambda section: _handle_no_header_click() if section == 0 else None)
+        select_done_btn.clicked.connect(
+            lambda: (
+                _set_bulk_mode(False),
+                populate_children_table(preferred_child_id=loaded_child_id),
+            )
+        )
+        title_edit.textChanged.connect(mark_detail_dirty)
+        description_edit.textChanged.connect(mark_detail_dirty)
+        save_detail_btn.clicked.connect(persist_child_detail)
+        browse_btn.clicked.connect(handle_browse_folder)
+        scan_btn.clicked.connect(handle_scan_folders)
+
+        _set_bulk_mode(False)
+        populate_children_table()
+
+        layout.addWidget(content_wrap, 1)
+        return page
+
+    def _build_child_tool_placeholder_page(self, title: str, description: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        card = QFrame()
+        card.setObjectName("workspaceEmptyCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(10)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("workspaceSectionTitle")
+        body_label = QLabel(description)
+        body_label.setObjectName("workspaceBody")
+        body_label.setWordWrap(True)
+        note_label = QLabel("Next step: wire this tool to the selected child videos.")
+        note_label.setObjectName("workspaceEmptyNote")
+        note_label.setWordWrap(True)
+
+        card_layout.addWidget(title_label)
+        card_layout.addWidget(body_label)
+        card_layout.addWidget(note_label)
+        card_layout.addStretch(1)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_workspace_page(
+        self,
+        *,
+        title: str,
+        description: str,
+        note: str,
+    ) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 28, 28, 28)
+        layout.setSpacing(0)
+
+        empty_card = QFrame()
+        empty_card.setObjectName("workspaceEmptyCard")
+        empty_layout = QVBoxLayout(empty_card)
+        empty_layout.setContentsMargins(28, 28, 28, 28)
+        empty_layout.setSpacing(10)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("workspaceSectionTitle")
+        body_label = QLabel(description)
+        body_label.setObjectName("workspaceBody")
+        body_label.setWordWrap(True)
+        note_label = QLabel(note)
+        note_label.setObjectName("workspaceEmptyNote")
+        note_label.setWordWrap(True)
+
+        empty_layout.addWidget(title_label)
+        empty_layout.addWidget(body_label)
+        empty_layout.addSpacing(10)
+        empty_layout.addWidget(note_label)
+        empty_layout.addStretch(1)
+
+        layout.addWidget(empty_card)
+        layout.addStretch(1)
+        return page
+
+    def _build_render_dashboard_workspace(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        render_panel = self._build_project_panel()
+        render_panel.setObjectName("projectPanel")
+        layout.addWidget(render_panel, 1)
+        return page
+
+    def _switch_workspace(self, key: str) -> None:
+        index_map = {
+            "projects": 0,
+            "render_dashboard": 1,
+            "analytics": 2,
+        }
+        titles = {
+            "projects": (
+                "Projects",
+                "Manage parent projects and child videos from one structured workspace.",
+            ),
+            "render_dashboard": (
+                "Render Dashboard",
+                "Track render queues, live progress, failures, and operator actions.",
+            ),
+            "analytics": (
+                "Analytics",
+                "Review output volume, success rate, and performance trends over time.",
+            ),
+        }
+        if self._workspace_stack is not None:
+            self._workspace_stack.setCurrentIndex(index_map.get(key, 0))
+        title, description = titles.get(key, titles["projects"])
+        if self._workspace_header is not None:
+            self._workspace_header.setVisible(key != "render_dashboard")
+        if self._workspace_title_label is not None:
+            self._workspace_title_label.setText(title)
+        if self._workspace_description_label is not None:
+            self._workspace_description_label.setText(description)
+        self._refresh_sidebar_nav_icons()
 
     def _build_tool_panel(self) -> QFrame:
         """Build the centre tool panel (replaces old QTabWidget)."""
@@ -1658,10 +2704,10 @@ class MainWindow(QMainWindow):
         panel.setObjectName("projectPanel")
         panel.setMinimumWidth(640)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(24, 24, 24, 20)
-        panel_layout.setSpacing(16)
+        panel_layout.setContentsMargins(12, 10, 12, 10)
+        panel_layout.setSpacing(8)
 
-        title = QLabel("Videos")
+        title = QLabel("CapCut projects")
         title.setObjectName("projectTitle")
         panel_layout.addWidget(title)
 
@@ -1675,6 +2721,8 @@ class MainWindow(QMainWindow):
         self.project_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.project_table.verticalHeader().setVisible(False)
         self.project_table.verticalHeader().setDefaultSectionSize(40)
+        self.project_table.setMinimumHeight(520)
+        self.project_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.project_table.setHorizontalHeaderLabels(
             ["Select", "Video", "Source", "Status", "Project"]
         )
@@ -1697,10 +2745,11 @@ class MainWindow(QMainWindow):
 
         action_panel = QFrame()
         action_panel.setObjectName("actionPanel")
+        action_panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         action_grid = QGridLayout(action_panel)
-        action_grid.setContentsMargins(14, 14, 14, 14)
-        action_grid.setHorizontalSpacing(12)
-        action_grid.setVerticalSpacing(12)
+        action_grid.setContentsMargins(12, 10, 12, 10)
+        action_grid.setHorizontalSpacing(10)
+        action_grid.setVerticalSpacing(8)
 
         self.reload_button = QPushButton("Reload Projects")
         self.reload_button.setProperty("variant", "reload")
@@ -1737,7 +2786,7 @@ class MainWindow(QMainWindow):
         for button in quick_actions:
             button.setProperty("actionRole", "quick")
             button.setMinimumWidth(170)
-            button.setMinimumHeight(44)
+            button.setMinimumHeight(40)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         action_grid.addWidget(self.reload_button, 0, 0)
@@ -1762,25 +2811,25 @@ class MainWindow(QMainWindow):
         custom = f"""
             * {{
                 font-family: "{ff}";
-                color: #0F172A;
+                color: #1F1F1F;
             }}
 
             #rootWidget {{
-                background: #F1F5F9;
+                background: #F7F9FC;
             }}
 
-            #sidebar, #toolPanel, #projectPanel {{
+            #sidebar, #toolPanel, #projectPanel, #workspacePanel {{
                 background: #FFFFFF;
-                border: 1px solid #E2E8F0;
-                border-radius: 14px;
+                border: 1px solid #DADCE0;
+                border-radius: 24px;
             }}
 
             #sidebarHeader {{
                 background: transparent;
                 border: none;
-                border-bottom: 1px solid #E2E8F0;
-                border-top-left-radius: 14px;
-                border-top-right-radius: 14px;
+                border-bottom: 1px solid #E3E7EE;
+                border-top-left-radius: 24px;
+                border-top-right-radius: 24px;
             }}
 
             #sidebarHeader QLabel, #navArea QLabel {{
@@ -1790,27 +2839,47 @@ class MainWindow(QMainWindow):
                 padding: 0px;
             }}
 
-            #appName {{
-                font-size: 17px;
+            #sidebarChip {{
+                font-size: 11px;
                 font-weight: 700;
-                color: #0F172A;
+                color: #0B57D0;
+                letter-spacing: 0.08em;
+            }}
+
+            #sidebarMonogram {{
+                min-width: 44px;
+                min-height: 44px;
+                max-width: 44px;
+                max-height: 44px;
+                border-radius: 14px;
+                background: #E8F0FE;
+                color: #0B57D0;
+                font-size: 16px;
+                font-weight: 700;
+                qproperty-alignment: AlignCenter;
+            }}
+
+            #appName {{
+                font-size: 22px;
+                font-weight: 600;
+                color: #1F1F1F;
                 letter-spacing: -0.02em;
             }}
 
             #appTagline {{
-                font-size: 11px;
-                color: #64748B;
+                font-size: 13px;
+                color: #5F6368;
             }}
 
             #navArea {{
-                background: transparent;
+                background: #FFFFFF;
                 border: none;
             }}
 
             QLabel#navSection {{
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 700;
-                color: #94A3B8;
+                color: #5F6368;
                 letter-spacing: 0.08em;
                 background: transparent;
                 border: none;
@@ -1818,44 +2887,60 @@ class MainWindow(QMainWindow):
 
             QPushButton#navBtn {{
                 background: transparent;
-                border: none;
-                border-radius: 9px;
-                padding: 9px 14px;
-                min-height: 38px;
+                border: 1px solid transparent;
+                border-radius: 18px;
+                padding: 0px 16px;
+                min-height: 52px;
                 text-align: left;
-                font-size: 13px;
-                font-weight: 600;
-                color: #475569;
+                font-size: 15px;
+                font-weight: 500;
+                color: #444746;
             }}
 
             QPushButton#navBtn:hover:!checked {{
-                background: #F8FAFC;
-                color: #0F172A;
+                background: #EEF3FD;
+                color: #0B57D0;
             }}
 
             QPushButton#navBtn:checked {{
-                background: #EFF6FF;
-                color: #1D4ED8;
-                border-left: 3px solid #2563EB;
-                padding-left: 11px;
+                background: #D3E3FD;
+                color: #041E49;
+                border: 1px solid #D3E3FD;
             }}
 
-            #toolHeader {{
-                background: #F8FAFC;
+            #toolHeader, #workspaceHeader {{
+                background: #FFFFFF;
                 border: none;
-                border-bottom: 1px solid #E2E8F0;
-                border-top-left-radius: 14px;
-                border-top-right-radius: 14px;
+                border-bottom: 1px solid #E3E7EE;
+                border-top-left-radius: 24px;
+                border-top-right-radius: 24px;
             }}
 
-            #toolTitle, #projectTitle {{
-                font-size: 18px;
+            #toolTitle, #workspaceTitle {{
+                font-size: 32px;
+                font-weight: 600;
+                color: #1F1F1F;
+                letter-spacing: -0.03em;
+            }}
+
+            #workspaceEyebrow {{
+                font-size: 11px;
                 font-weight: 700;
-                color: #0F172A;
-                letter-spacing: -0.02em;
+                color: #0B57D0;
+                letter-spacing: 0.08em;
+            }}
+
+            #workspaceDescription {{
+                font-size: 15px;
+                color: #5F6368;
+                max-width: 640px;
             }}
 
             #projectTitle {{
+                font-size: 18px;
+                font-weight: 600;
+                color: #1F1F1F;
+                letter-spacing: -0.02em;
                 background: transparent;
                 border: none;
                 border-radius: 0px;
@@ -1863,17 +2948,138 @@ class MainWindow(QMainWindow):
                 margin: 0px;
             }}
 
+            #workspaceStack {{
+                background: transparent;
+                border: none;
+            }}
+
+            #projectsToolbar, #projectsListCard, #projectsDetailCard {{
+                background: #FFFFFF;
+                border: 1px solid #E3E7EE;
+                border-radius: 20px;
+            }}
+
+            #projectsPanelTitle {{
+                font-size: 16px;
+                font-weight: 600;
+                color: #1F1F1F;
+                background: transparent;
+            }}
+
+            QListWidget#projectParentList {{
+                border: none;
+                background: transparent;
+                outline: none;
+                padding: 0px;
+            }}
+
+            QListWidget#projectParentList::item {{
+                border: 1px solid #E3E7EE;
+                border-radius: 18px;
+                padding: 14px 16px;
+                margin-bottom: 10px;
+                background: #FFFFFF;
+                color: #1F1F1F;
+            }}
+
+            QListWidget#projectParentList::item:selected {{
+                background: #D3E3FD;
+                border: 1px solid #D3E3FD;
+                color: #041E49;
+            }}
+
+            QLabel#projectDetailTitle {{
+                font-size: 18px;
+                font-weight: 600;
+                color: #1F1F1F;
+            }}
+
+            QLabel#projectDetailStats {{
+                font-size: 14px;
+                font-weight: 600;
+                color: #0B57D0;
+            }}
+
+            #workspaceHeader QLabel,
+            #workspaceEmptyCard QLabel,
+            #projectsToolbar QLabel,
+            #projectsListCard QLabel,
+            #projectsDetailCard QLabel {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+            }}
+
+            QLabel#folderBadgeNone {{
+                background: #F1F3F4;
+                color: #80868B;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 500;
+                padding: 0px 10px;
+                border: none;
+            }}
+            QLabel#folderBadgeOk {{
+                background: #E6F4EA;
+                color: #137333;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 500;
+                padding: 0px 10px;
+                border: none;
+            }}
+            QLabel#folderBadgeMissing {{
+                background: #FCE8E6;
+                color: #C5221F;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 500;
+                padding: 0px 10px;
+                border: none;
+            }}
+
+            #workspaceSectionTitle {{
+                font-size: 18px;
+                font-weight: 600;
+                color: #1F1F1F;
+                letter-spacing: -0.02em;
+            }}
+
+            #workspaceEmptyCard {{
+                background: #FFFFFF;
+                border: 1px solid #E3E7EE;
+                border-radius: 20px;
+            }}
+
+            #workspaceBody {{
+                font-size: 15px;
+                font-weight: 400;
+                color: #5F6368;
+                line-height: 1.5em;
+            }}
+
+            #workspaceEmptyNote {{
+                padding: 10px 14px;
+                border-radius: 14px;
+                background: #E8F0FE;
+                color: #0B57D0;
+                border: 1px solid #D3E3FD;
+                font-size: 14px;
+                font-weight: 600;
+            }}
+
             #actionPanel {{
-                background: #F8FAFC;
-                border: 1px solid #E2E8F0;
-                border-radius: 12px;
+                background: #FFFFFF;
+                border: 1px solid #E3E7EE;
+                border-radius: 16px;
             }}
 
             QPushButton[actionRole="quick"] {{
                 min-height: 44px;
                 padding: 0px 16px;
                 font-size: 14px;
-                font-weight: 700;
+                font-weight: 600;
                 text-align: center;
             }}
 
@@ -1883,108 +3089,113 @@ class MainWindow(QMainWindow):
             }}
 
             QPushButton {{
-                min-height: 36px;
-                padding: 5px 16px;
-                border-radius: 10px;
-                font-size: 13px;
+                min-height: 40px;
+                padding: 5px 18px;
+                border-radius: 20px;
+                font-size: 14px;
                 font-weight: 600;
             }}
 
+            QPushButton#projectActionBtn {{
+                min-height: 40px;
+                padding: 0px 18px;
+            }}
+
             QPushButton:disabled {{
-                background: #E2E8F0;
-                color: #94A3B8;
-                border: 1px solid #CBD5E1;
+                background: #EEF1F4;
+                color: #9AA0A6;
+                border: 1px solid #DADCE0;
             }}
 
             QPushButton[variant="primary"] {{
-                background: #2563EB;
+                background: #0B57D0;
                 color: #FFFFFF;
-                border: 1px solid #2563EB;
+                border: 1px solid #0B57D0;
             }}
 
             QPushButton[variant="primary"]:hover:!disabled {{
-                background: #1D4ED8;
-                border-color: #1D4ED8;
+                background: #0842A0;
+                border-color: #0842A0;
             }}
 
             QPushButton[variant="primary"]:pressed:!disabled {{
-                background: #1E40AF;
-                border-color: #1E40AF;
+                background: #062E6F;
+                border-color: #062E6F;
             }}
 
             QPushButton[variant="secondary"] {{
                 background: #FFFFFF;
-                color: #0F172A;
-                border: 1px solid #CBD5E1;
+                color: #1F1F1F;
+                border: 1px solid #DADCE0;
             }}
 
             QPushButton[variant="secondary"]:hover:!disabled {{
-                background: #F8FAFC;
-                border-color: #94A3B8;
+                background: #F8FAFD;
+                border-color: #BDC1C6;
             }}
 
             QPushButton[variant="reload"] {{
                 background: #FFFFFF;
-                color: #334155;
-                border: 1px solid #CBD5E1;
+                color: #444746;
+                border: 1px solid #DADCE0;
             }}
 
             QPushButton[variant="reload"]:hover:!disabled {{
-                background: #F8FAFC;
-                border-color: #94A3B8;
-                color: #0F172A;
+                background: #F8FAFD;
+                border-color: #BDC1C6;
+                color: #1F1F1F;
             }}
 
             QPushButton[variant="audio"] {{
-                background: #EFF6FF;
-                color: #1D4ED8;
-                border: 1px solid #BFDBFE;
+                background: #E8F0FE;
+                color: #0B57D0;
+                border: 1px solid #D3E3FD;
             }}
 
             QPushButton[variant="audio"]:hover:!disabled {{
-                background: #DBEAFE;
-                border-color: #93C5FD;
-                color: #1E40AF;
+                background: #D3E3FD;
+                border-color: #A8C7FA;
+                color: #0842A0;
             }}
 
             QPushButton[variant="images"] {{
-                background: #ECFDF5;
-                color: #047857;
-                border: 1px solid #A7F3D0;
+                background: #E6F4EA;
+                color: #137333;
+                border: 1px solid #CEEAD6;
             }}
 
             QPushButton[variant="images"]:hover:!disabled {{
-                background: #D1FAE5;
-                border-color: #6EE7B7;
-                color: #065F46;
+                background: #CEEAD6;
+                border-color: #A8DAB5;
+                color: #0D652D;
             }}
 
             QPushButton[variant="captions"] {{
-                background: #EEF2FF;
-                color: #4338CA;
-                border: 1px solid #C7D2FE;
+                background: #F3E8FD;
+                color: #7B1FA2;
+                border: 1px solid #E1BEE7;
             }}
 
             QPushButton[variant="captions"]:hover:!disabled {{
-                background: #E0E7FF;
-                border-color: #A5B4FC;
-                color: #3730A3;
+                background: #EADCF8;
+                border-color: #D7AFE8;
+                color: #6A1B9A;
             }}
 
             QPushButton[variant="pill"] {{
                 min-width: 86px;
-                border-radius: 11px;
-                background: #E2E8F0;
-                border: 1px solid #E2E8F0;
-                color: #334155;
+                border-radius: 18px;
+                background: #F1F3F4;
+                border: 1px solid #E3E7EE;
+                color: #444746;
                 font-size: 12px;
                 font-weight: 600;
             }}
 
             QPushButton[variant="pill"]:checked {{
-                background: #1D4ED8;
-                border-color: #1D4ED8;
-                color: #FFFFFF;
+                background: #D3E3FD;
+                border-color: #D3E3FD;
+                color: #041E49;
             }}
 
             QPushButton[variant="success"] {{
@@ -1999,47 +3210,47 @@ class MainWindow(QMainWindow):
             }}
 
             QPushButton[variant="danger"] {{
-                background: #DC2626;
-                border: 1px solid #DC2626;
-                color: #FFFFFF;
+                background: #FCE8E6;
+                border: 1px solid #F4C7C3;
+                color: #C5221F;
             }}
 
             QPushButton[variant="danger"]:hover:!disabled {{
-                background: #B91C1C;
-                border-color: #B91C1C;
+                background: #FAD2CF;
+                border-color: #F0B8B5;
             }}
 
             QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QTextEdit {{
                 font-size: 13px;
-                border: 1px solid #CBD5E1;
-                border-radius: 10px;
+                border: 1px solid #DADCE0;
+                border-radius: 14px;
                 background: #FFFFFF;
-                padding: 8px 11px;
-                color: #0F172A;
-                selection-background-color: #DBEAFE;
-                selection-color: #1E3A8A;
+                padding: 8px 12px;
+                color: #1F1F1F;
+                selection-background-color: #D3E3FD;
+                selection-color: #041E49;
             }}
 
             QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QTextEdit:focus {{
-                border: 1px solid #2563EB;
+                border: 1px solid #0B57D0;
                 background: #FFFFFF;
             }}
 
             QLineEdit#assetPath {{
-                background: #F8FAFC;
-                color: #334155;
+                background: #F8FAFD;
+                color: #5F6368;
             }}
 
             QLabel#sectionLabel, QLabel#assetCaption {{
-                font-size: 11px;
-                font-weight: 700;
-                color: #64748B;
+                font-size: 12px;
+                font-weight: 600;
+                color: #5F6368;
                 letter-spacing: 0.06em;
             }}
 
             QLabel#hintLabel {{
-                font-size: 13px;
-                color: #64748B;
+                font-size: 14px;
+                color: #5F6368;
             }}
 
             #statusLabel {{
@@ -2052,15 +3263,15 @@ class MainWindow(QMainWindow):
             }}
 
             #durationFrame {{
-                background: #F8FAFC;
-                border: 1px solid #E2E8F0;
-                border-radius: 12px;
+                background: #F8FAFD;
+                border: 1px solid #E3E7EE;
+                border-radius: 16px;
             }}
 
             QListWidget#presetList {{
                 font-size: 13px;
-                border: 1px solid #CBD5E1;
-                border-radius: 10px;
+                border: 1px solid #DADCE0;
+                border-radius: 16px;
                 background: #FFFFFF;
             }}
 
@@ -2070,19 +3281,19 @@ class MainWindow(QMainWindow):
             }}
 
             QListWidget#presetList::item:hover:!selected {{
-                background: #F8FAFC;
+                background: #F8FAFD;
             }}
 
             QListWidget#presetList::item:selected {{
-                background: #DBEAFE;
-                color: #1E3A8A;
+                background: #D3E3FD;
+                color: #041E49;
                 font-weight: 600;
             }}
 
             #projectHierarchyScroll {{
-                border: 1px solid #CBD5E1;
-                border-radius: 12px;
-                background: #F8FAFC;
+                border: 1px solid #DADCE0;
+                border-radius: 16px;
+                background: #F8FAFD;
             }}
 
             #projectHierarchyRoot {{
@@ -2090,15 +3301,15 @@ class MainWindow(QMainWindow):
             }}
 
             QFrame#projectParentCard {{
-                border: 1px solid #E2E8F0;
-                border-radius: 12px;
+                border: 1px solid #E3E7EE;
+                border-radius: 16px;
                 background: #FFFFFF;
             }}
 
             QLabel#projectParentTitle {{
                 font-size: 15px;
                 font-weight: 700;
-                color: #0F172A;
+                color: #1F1F1F;
                 background: transparent;
                 border: none;
             }}
@@ -2106,52 +3317,134 @@ class MainWindow(QMainWindow):
             QLabel#projectParentCount {{
                 font-size: 11px;
                 font-weight: 700;
-                color: #1D4ED8;
-                background: #DBEAFE;
-                border: 1px solid #BFDBFE;
+                color: #0B57D0;
+                background: #E8F0FE;
+                border: 1px solid #D3E3FD;
                 border-radius: 999px;
                 padding: 2px 8px;
             }}
 
             QLabel#projectParentMeta {{
                 font-size: 12px;
-                color: #64748B;
+                color: #5F6368;
                 background: transparent;
                 border: none;
             }}
 
             QTableWidget#projectChildrenTable {{
-                font-size: 12px;
-                border: 1px solid #E2E8F0;
-                border-radius: 10px;
-                background: #FFFFFF;
-                alternate-background-color: #F8FAFC;
+                font-size: 13px;
+                border: none;
+                background: transparent;
+                alternate-background-color: transparent;
+                outline: none;
+                selection-background-color: transparent;
             }}
 
             QTableWidget#projectChildrenTable::item {{
-                padding: 4px 6px;
-                color: #334155;
+                padding: 0px 12px;
+                color: #1E293B;
+                border-bottom: 1px solid #F1F5F9;
+                background: transparent;
+            }}
+
+            QTableWidget#projectChildrenTable::item:selected {{
+                background: #EFF6FF;
+                color: #1D4ED8;
+            }}
+
+            QTableWidget#projectChildrenTable::item:hover:!selected {{
+                background: #F8FAFF;
+            }}
+
+            QTableWidget#projectChildrenTable QHeaderView {{
+                background: transparent;
             }}
 
             QTableWidget#projectChildrenTable QHeaderView::section {{
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 700;
-                letter-spacing: 0.04em;
-                background: #F1F5F9;
-                color: #475569;
+                background: #F8FAFC;
+                color: #475467;
                 border: none;
-                border-right: 1px solid #E2E8F0;
                 border-bottom: 1px solid #E2E8F0;
-                padding: 6px 6px;
+                padding: 12px 12px;
+            }}
+
+            QTableWidget#projectChildrenTable QHeaderView::section:first {{
+                padding: 12px 8px;
+            }}
+
+            QPushButton#rowSelectSquare {{
+                min-width: 18px;
+                max-width: 18px;
+                min-height: 18px;
+                max-height: 18px;
+                border: 1.5px solid #CBD5E1;
+                border-radius: 6px;
+                background: #FFFFFF;
+                color: transparent;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0px;
+            }}
+
+            QPushButton#rowSelectSquare:hover {{
+                border-color: #93C5FD;
+                background: #F8FAFF;
+            }}
+
+            QPushButton#rowSelectSquare:checked {{
+                border-color: #0B57D0;
+                background: #0B57D0;
+                color: #FFFFFF;
+            }}
+
+            QCheckBox#rowCheckbox {{
+                margin: 0px;
+            }}
+
+            QCheckBox#rowCheckbox::indicator {{
+                width: 15px;
+                height: 15px;
+                border: 1.5px solid #CBD5E1;
+                border-radius: 4px;
+                background: white;
+            }}
+
+            QCheckBox#rowCheckbox::indicator:checked {{
+                border: 1.5px solid #3B82F6;
+                background: #3B82F6;
+            }}
+
+            QCheckBox#rowCheckbox::indicator:hover {{
+                border: 1.5px solid #93C5FD;
+            }}
+
+            QCheckBox#headerSelectAll::indicator {{
+                width: 15px;
+                height: 15px;
+                border: 1.5px solid #CBD5E1;
+                border-radius: 4px;
+                background: white;
+            }}
+
+            QCheckBox#headerSelectAll::indicator:checked {{
+                border: 1.5px solid #3B82F6;
+                background: #3B82F6;
+            }}
+
+            QCheckBox#headerSelectAll::indicator:indeterminate {{
+                border: 1.5px solid #3B82F6;
+                background: #BFDBFE;
             }}
 
             #projectTable {{
                 font-size: 13px;
-                border: 1px solid #CBD5E1;
-                border-radius: 12px;
+                border: 1px solid #DADCE0;
+                border-radius: 16px;
                 background: #FFFFFF;
-                alternate-background-color: #F8FAFC;
-                gridline-color: #E2E8F0;
+                alternate-background-color: #F8FAFD;
+                gridline-color: #E3E7EE;
             }}
 
             #projectTable::item {{
@@ -2160,12 +3453,12 @@ class MainWindow(QMainWindow):
             }}
 
             #projectTable::item:selected {{
-                background: #DBEAFE;
-                color: #1E3A8A;
+                background: #D3E3FD;
+                color: #041E49;
             }}
 
             QTableWidget QTableCornerButton::section {{
-                background: #F1F5F9;
+                background: #F1F3F4;
                 border: none;
             }}
 
@@ -2173,11 +3466,11 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 0.04em;
-                background: #F1F5F9;
-                color: #475569;
+                background: #F1F3F4;
+                color: #5F6368;
                 border: none;
-                border-right: 1px solid #E2E8F0;
-                border-bottom: 1px solid #E2E8F0;
+                border-right: 1px solid #E3E7EE;
+                border-bottom: 1px solid #E3E7EE;
                 padding: 10px 8px;
             }}
 
@@ -2185,11 +3478,11 @@ class MainWindow(QMainWindow):
             QHeaderView::section:selected,
             QHeaderView::section:pressed,
             QHeaderView::section:focus {{
-                background: #F1F5F9;
-                color: #475569;
+                background: #F1F3F4;
+                color: #5F6368;
                 border: none;
-                border-right: 1px solid #E2E8F0;
-                border-bottom: 1px solid #E2E8F0;
+                border-right: 1px solid #E3E7EE;
+                border-bottom: 1px solid #E3E7EE;
                 outline: none;
             }}
 
@@ -2218,14 +3511,14 @@ class MainWindow(QMainWindow):
             QTableWidget QCheckBox#rowSelectCheckbox::indicator {{
                 width: 16px;
                 height: 16px;
-                border: 1px solid #94A3B8;
+                border: 1px solid #9AA0A6;
                 border-radius: 4px;
                 background: #FFFFFF;
                 image: none;
             }}
 
             QTableWidget QCheckBox#rowSelectCheckbox::indicator:hover {{
-                border-color: #2563EB;
+                border-color: #0B57D0;
             }}
 
             QTableWidget QCheckBox#rowSelectCheckbox::indicator:unchecked {{
@@ -2233,15 +3526,15 @@ class MainWindow(QMainWindow):
             }}
 
             QTableWidget QCheckBox#rowSelectCheckbox::indicator:checked {{
-                background: #2563EB;
-                border-color: #2563EB;
+                background: #0B57D0;
+                border-color: #0B57D0;
                 image: none;
             }}
 
             QTableWidget QLabel#rowSelectOrderLabel {{
                 min-width: 18px;
                 max-width: 18px;
-                color: #1D4ED8;
+                color: #0B57D0;
                 font-size: 11px;
                 font-weight: 700;
                 background: transparent;
@@ -2251,28 +3544,28 @@ class MainWindow(QMainWindow):
             QTableWidget QComboBox#rowProjectPresetCombo {{
                 min-height: 24px;
                 border: 1px solid transparent;
-                border-radius: 8px;
+                border-radius: 12px;
                 padding: 2px 22px 2px 8px;
-                background: #EFF6FF;
-                color: #1E3A8A;
+                background: #E8F0FE;
+                color: #041E49;
                 font-size: 12px;
                 font-weight: 600;
             }}
 
             QTableWidget QComboBox#rowProjectPresetCombo[hasProject="false"] {{
-                background: #F8FAFC;
-                color: #64748B;
+                background: #F8FAFD;
+                color: #5F6368;
                 font-weight: 500;
             }}
 
             QTableWidget QComboBox#rowProjectPresetCombo:hover {{
-                border-color: #BFDBFE;
-                background: #E0F2FE;
+                border-color: #A8C7FA;
+                background: #D3E3FD;
             }}
 
             QTableWidget QComboBox#rowProjectPresetCombo:focus {{
-                border: 1px solid #2563EB;
-                background: #DBEAFE;
+                border: 1px solid #0B57D0;
+                background: #D3E3FD;
             }}
 
             QTableWidget QComboBox#rowProjectPresetCombo::drop-down {{
@@ -2284,11 +3577,117 @@ class MainWindow(QMainWindow):
             }}
 
             QTableWidget QComboBox#rowProjectPresetCombo QAbstractItemView {{
-                border: 1px solid #CBD5E1;
+                border: 1px solid #DADCE0;
                 background: #FFFFFF;
-                selection-background-color: #DBEAFE;
-                selection-color: #1E3A8A;
+                selection-background-color: #D3E3FD;
+                selection-color: #041E49;
                 padding: 4px;
+            }}
+
+            QDialog#childProjectsDialog {{
+                background: #F7F9FC;
+            }}
+
+            QDialog#childProjectsDialog QLabel#projectParentTitle,
+            QDialog#childProjectsDialog QLabel#workspaceBody,
+            QDialog#childProjectsDialog QLabel#navSection,
+            QDialog#childProjectsDialog QLabel#projectsPanelTitle,
+            QDialog#childProjectsDialog QLabel#workspaceSectionTitle,
+            QDialog#childProjectsDialog QLabel#workspaceEmptyNote {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+                padding: 0px;
+            }}
+
+            QDialog#childProjectsDialog QFrame#childProjectsShell {{
+                background: #FFFFFF;
+                border: 1px solid #DADCE0;
+                border-radius: 24px;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QFrame#childProjectsShell {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QFrame#childToolsSidebar {{
+                background: #F8FAFD;
+                border: none;
+                border-right: 1px solid #E3E7EE;
+                border-top-left-radius: 24px;
+                border-bottom-left-radius: 24px;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QFrame#childToolContent,
+            QDialog#childProjectWorkspaceDialog QScrollArea#childToolScroll,
+            QDialog#childProjectWorkspaceDialog QScrollArea#childToolScroll > QWidget > QWidget,
+            QDialog#childProjectWorkspaceDialog QFrame#projectsDetailCard {{
+                background: transparent;
+                border: none;
+                border-radius: 0px;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QPushButton {{
+                background: #FFFFFF;
+                color: #0B57D0;
+                border: 1px solid #D0D7E2;
+                border-radius: 18px;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QPushButton:hover {{
+                background: #F8FAFC;
+                border-color: #B7C6D8;
+            }}
+
+            QDialog#childProjectWorkspaceDialog QPushButton:checked {{
+                background: #FFFFFF;
+                color: #0B57D0;
+                border: 1px solid #0B57D0;
+            }}
+
+            QDialog#childProjectsDialog QFrame#childToolsSidebar {{
+                background: #F8FAFD;
+                border: none;
+                border-right: 1px solid #E3E7EE;
+                border-top-left-radius: 24px;
+                border-bottom-left-radius: 24px;
+            }}
+
+            QDialog#childProjectsDialog QFrame#childToolContent {{
+                background: #FFFFFF;
+                border: none;
+                border-top-right-radius: 24px;
+                border-bottom-right-radius: 24px;
+            }}
+
+            QDialog#childProjectsDialog QPushButton#childToolNavBtn {{
+                min-height: 46px;
+                padding: 0px 14px;
+                text-align: left;
+                border-radius: 18px;
+                background: transparent;
+                border: 1px solid transparent;
+                color: #444746;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+
+            QDialog#childProjectsDialog QPushButton#childToolNavBtn:hover:!checked {{
+                background: #EEF3FD;
+                color: #0B57D0;
+            }}
+
+            QDialog#childProjectsDialog QPushButton#childToolNavBtn:checked {{
+                background: #D3E3FD;
+                border: 1px solid #D3E3FD;
+                color: #041E49;
+            }}
+
+            QDialog#childProjectsDialog QStackedWidget#childToolStack {{
+                background: transparent;
+                border: none;
             }}
 
             QMessageBox, QProgressDialog, QDialog#renderLogDialog {{
@@ -2578,6 +3977,9 @@ class MainWindow(QMainWindow):
             getattr(self, "roxy_upload_btn", None),
             getattr(self, "project_preset_add_btn", None),
             getattr(self, "project_hierarchy_refresh_btn", None),
+            getattr(self, "project_parent_edit_btn", None),
+            getattr(self, "project_parent_delete_btn", None),
+            getattr(self, "project_parent_open_children_btn", None),
             getattr(self, "automate_button", None),
         )
         for button in controls:
@@ -2626,6 +4028,23 @@ class MainWindow(QMainWindow):
             "rating": 5,
         }
 
+    @staticmethod
+    def _default_manual_child_project_draft() -> dict[str, object]:
+        return {
+            "id": "",
+            "name": "",
+            "status": "draft",
+            "title": "",
+            "description": "",
+            "seeding_comments_raw": "",
+            "keywords_raw": "",
+            "author": "",
+            "publisher": "",
+            "copyright": "",
+            "rating": 5,
+            "folder_path": "",
+        }
+
     @classmethod
     def _normalize_video_child_settings(cls, raw: object) -> dict[str, object]:
         base = cls._default_video_child_settings_draft()
@@ -2643,6 +4062,88 @@ class MainWindow(QMainWindow):
             rating = 5
         payload["rating"] = max(0, min(5, rating))
         return payload
+
+    @classmethod
+    def _normalize_manual_child_project(cls, raw: object) -> dict[str, object] | None:
+        if not isinstance(raw, dict):
+            return None
+        payload = dict(cls._default_manual_child_project_draft())
+        payload["id"] = str(raw.get("id", "")).strip() or uuid4().hex[:12]
+        payload["name"] = str(raw.get("name", "")).strip()
+        payload["status"] = str(raw.get("status", "draft")).strip() or "draft"
+        payload["title"] = str(raw.get("title", "")).strip()
+        payload["description"] = str(raw.get("description", "")).strip()
+        payload["seeding_comments_raw"] = str(raw.get("seeding_comments_raw", "")).strip()
+        payload["keywords_raw"] = str(raw.get("keywords_raw", "")).strip()
+        payload["author"] = str(raw.get("author", "")).strip()
+        payload["publisher"] = str(raw.get("publisher", "")).strip()
+        payload["copyright"] = str(raw.get("copyright", "")).strip()
+        payload["folder_path"] = str(raw.get("folder_path", "")).strip()
+        try:
+            rating = int(raw.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        payload["rating"] = max(0, min(5, rating))
+        if not str(payload["name"]).strip():
+            return None
+        return payload
+
+    @staticmethod
+    def _manual_child_status_options() -> list[tuple[str, str]]:
+        return [
+            ("draft", "Draft"),
+            ("ready", "Ready"),
+            ("paused", "Paused"),
+        ]
+
+    def _manual_child_status_label(self, value: object) -> str:
+        normalized = str(value or "draft").strip() or "draft"
+        for key, label in self._manual_child_status_options():
+            if key == normalized:
+                return label
+        return "Draft"
+
+    def _manual_child_projects_for_parent(self, preset_id: str) -> list[dict[str, object]]:
+        parent_key = str(preset_id).strip()
+        items = self.manual_child_projects_by_parent.get(parent_key, [])
+        normalized: list[dict[str, object]] = []
+        seen_ids: set[str] = set()
+        for item in items:
+            clean = self._normalize_manual_child_project(item)
+            if clean is None:
+                continue
+            child_id = str(clean.get("id", "")).strip()
+            if child_id in seen_ids:
+                clean["id"] = uuid4().hex[:12]
+                child_id = str(clean["id"])
+            seen_ids.add(child_id)
+            normalized.append(clean)
+        self.manual_child_projects_by_parent[parent_key] = normalized
+        return normalized
+
+    @staticmethod
+    def _parse_seeding_comments(raw: str) -> list[str]:
+        comments: list[str] = []
+        for line in raw.splitlines():
+            clean = line.strip()
+            if not clean:
+                continue
+            clean = re.sub(r"^[-*•]+\s*", "", clean)
+            clean = re.sub(r"^\d+[\).\-\s]+", "", clean)
+            clean = clean.strip()
+            if clean:
+                comments.append(clean)
+        return comments
+
+    def _next_manual_child_project_number(self, preset_id: str) -> int:
+        next_number = 1
+        for item in self._manual_child_projects_for_parent(preset_id):
+            name = str(item.get("name", "")).strip()
+            match = re.fullmatch(r"Project\s+(\d+)", name, flags=re.IGNORECASE)
+            if not match:
+                continue
+            next_number = max(next_number, int(match.group(1)) + 1)
+        return next_number
 
     @staticmethod
     def _normalize_project_preset(raw: object) -> dict[str, object] | None:
@@ -2678,6 +4179,7 @@ class MainWindow(QMainWindow):
         self.project_presets = []
         self.project_assignment_by_path = {}
         self.video_child_settings_by_path = {}
+        self.manual_child_projects_by_parent = {}
 
         presets_raw = self._settings.value("project_dashboard/presets", "", type=str) or ""
         if presets_raw:
@@ -2726,6 +4228,26 @@ class MainWindow(QMainWindow):
                         continue
                     self.video_child_settings_by_path[clean_path] = self._normalize_video_child_settings(settings)
 
+        manual_children_raw = (
+            self._settings.value("project_dashboard/manual_child_projects", "", type=str) or ""
+        )
+        if manual_children_raw:
+            try:
+                parsed = json.loads(manual_children_raw)
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                for parent_id, items in parsed.items():
+                    clean_parent_id = str(parent_id).strip()
+                    if not clean_parent_id or not isinstance(items, list):
+                        continue
+                    normalized_items = []
+                    for item in items:
+                        clean = self._normalize_manual_child_project(item)
+                        if clean is not None:
+                            normalized_items.append(clean)
+                    self.manual_child_projects_by_parent[clean_parent_id] = normalized_items
+
     def _save_project_dashboard_settings(self) -> None:
         self._settings.setValue(
             "project_dashboard/presets",
@@ -2738,6 +4260,10 @@ class MainWindow(QMainWindow):
         self._settings.setValue(
             "project_dashboard/video_child_settings",
             json.dumps(self.video_child_settings_by_path, ensure_ascii=False),
+        )
+        self._settings.setValue(
+            "project_dashboard/manual_child_projects",
+            json.dumps(self.manual_child_projects_by_parent, ensure_ascii=False),
         )
 
     def _project_preset_name(self, preset_id: str) -> str:
@@ -2860,6 +4386,8 @@ class MainWindow(QMainWindow):
         cancel_btn.setProperty("variant", "secondary")
         save_btn = QPushButton("Save")
         save_btn.setProperty("variant", "primary")
+        save_btn.setDefault(True)
+        save_btn.setAutoDefault(True)
         actions.addWidget(cancel_btn)
         actions.addWidget(save_btn)
         layout.addLayout(actions)
@@ -3111,87 +4639,453 @@ class MainWindow(QMainWindow):
         dialog.exec()
         return saved
 
+    def _open_manual_child_project_editor(
+        self,
+        preset_id: str,
+        *,
+        initial: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        draft = self._default_manual_child_project_draft()
+        if initial:
+            draft.update({key: initial.get(key, draft.get(key)) for key in draft})
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Child Project")
+        dialog.resize(420, 220)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        info = QLabel("Set the sequence number for this child project.")
+        info.setObjectName("workspaceBody")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        number_label = QLabel("Project Number")
+        number_label.setObjectName("sectionLabel")
+        layout.addWidget(number_label)
+
+        number_spin = QSpinBox()
+        number_spin.setRange(1, 9999)
+        existing_name = str(draft.get("name", "")).strip()
+        existing_match = re.fullmatch(r"Project\s+(\d+)", existing_name, flags=re.IGNORECASE)
+        if existing_match:
+            number_spin.setValue(int(existing_match.group(1)))
+        else:
+            number_spin.setValue(self._next_manual_child_project_number(preset_id))
+        layout.addWidget(number_spin)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setProperty("variant", "secondary")
+        save_btn = QPushButton("Save")
+        save_btn.setProperty("variant", "primary")
+        actions.addWidget(cancel_btn)
+        actions.addWidget(save_btn)
+        layout.addLayout(actions)
+
+        result: dict[str, object] | None = None
+
+        def save_and_close() -> None:
+            nonlocal result
+            project_number = number_spin.value()
+            payload = {
+                "id": str(draft.get("id", "")).strip() or uuid4().hex[:12],
+                "name": f"Project {project_number}",
+                "status": "draft",
+                "title": str(draft.get("title", "")).strip(),
+                "description": str(draft.get("description", "")).strip(),
+                "seeding_comments_raw": str(draft.get("seeding_comments_raw", "")).strip(),
+                "keywords_raw": "",
+                "author": "",
+                "publisher": "",
+                "copyright": "",
+                "rating": 5,
+            }
+            result = self._normalize_manual_child_project(payload)
+            dialog.accept()
+
+        cancel_btn.clicked.connect(dialog.reject)
+        save_btn.clicked.connect(save_and_close)
+        dialog.exec()
+        return result
+
     def _open_project_children_dialog(self, preset_id: str) -> None:
         preset = self._find_project_preset_by_id(preset_id)
         if preset is None:
             QMessageBox.information(self, "No project", "Project not found.")
             return
 
-        children = [
-            project for project in self.projects
-            if str(project.assigned_project_id or "").strip() == preset_id
-        ]
-        dialog = QDialog(self)
+        children = self._manual_child_projects_for_parent(preset_id)
+        dialog = QDialog(self, Qt.WindowType.Window)
         dialog.setWindowTitle(f"Child Projects - {str(preset.get('name', '')).strip()}")
-        dialog.resize(1120, 760)
+        dialog.setObjectName("childProjectsDialog")
+        self._fit_window_to_screen(dialog, min_width=1280, min_height=740)
 
         layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
 
+        header_row = QHBoxLayout()
+        header_col = QVBoxLayout()
         heading = QLabel(f"{str(preset.get('name', '')).strip()} · {len(children)} child project(s)")
         heading.setObjectName("projectParentTitle")
-        layout.addWidget(heading)
+        subtitle = QLabel("Create and manage child projects under this parent preset.")
+        subtitle.setObjectName("workspaceBody")
+        header_col.addWidget(heading)
+        header_col.addWidget(subtitle)
+        header_row.addLayout(header_col, 1)
+        close_btn_top = QPushButton("Back")
+        close_btn_top.setProperty("variant", "primary")
+        close_btn_top.setIcon(dialog.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        close_btn_top.setIconSize(QSize(16, 16))
+        close_btn_top.clicked.connect(dialog.accept)
+        header_row.addWidget(close_btn_top, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header_row)
 
-        table = QTableWidget()
-        table.setObjectName("projectChildrenTable")
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(["Video", "Source", "Status", "Edit"])
-        table.setAlternatingRowColors(True)
-        table.setShowGrid(False)
-        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(34)
-        header = table.horizontalHeader()
-        header.setHighlightSections(False)
-        header.setSectionsClickable(False)
-        header.setSectionResizeMode(0, header.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, header.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, header.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, header.ResizeMode.ResizeToContents)
-
-        table.setRowCount(len(children))
-        for row, project in enumerate(children):
-            name_item = QTableWidgetItem(project.name)
-            child_settings = self._video_child_settings_for_path(project.path)
-            name_item.setToolTip(
-                "Description: "
-                + (str(child_settings.get("description", "")).strip() or "(empty)")
-                + "\nKeywords: "
-                + (str(child_settings.get("keywords_raw", "")).strip() or "(empty)")
+        def refresh_child_dialog_header() -> None:
+            latest_children = self._manual_child_projects_for_parent(preset_id)
+            heading.setText(
+                f"{str(preset.get('name', '')).strip()} · {len(latest_children)} child project(s)"
             )
-            source_item = QTableWidgetItem(project.source.label())
-            status_item = QTableWidgetItem(project.status.label())
-            status_item.setForeground(QBrush(self._status_color(project.status)))
-            for item in (name_item, source_item, status_item):
-                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            table.setItem(row, 0, name_item)
-            table.setItem(row, 1, source_item)
-            table.setItem(row, 2, status_item)
 
-            edit_btn = QPushButton("Edit")
-            edit_btn.setProperty("variant", "secondary")
-            edit_btn.clicked.connect(
-                lambda _checked=False, p=project: self._open_video_child_editor(p)
-            )
-            table.setCellWidget(row, 3, edit_btn)
+        # Build the child videos page directly — no sidebar, full-width
+        child_page = self._build_child_videos_page(preset_id, refresh_child_dialog_header)
+        layout.addWidget(child_page, 1)
 
-        layout.addWidget(table, 1)
-
-        actions = QHBoxLayout()
-        actions.addStretch(1)
-        close_btn = QPushButton("Close")
-        close_btn.setProperty("variant", "primary")
-        close_btn.clicked.connect(dialog.accept)
-        actions.addWidget(close_btn)
-        layout.addLayout(actions)
-
-        dialog.setWindowState(dialog.windowState() | Qt.WindowState.WindowMaximized)
         dialog.exec()
 
+    def _find_manual_child_project(self, preset_id: str, child_id: str) -> dict[str, object] | None:
+        target_parent = str(preset_id).strip()
+        target_child = str(child_id).strip()
+        if not target_parent or not target_child:
+            return None
+        for child in self._manual_child_projects_for_parent(target_parent):
+            if str(child.get("id", "")).strip() == target_child:
+                return dict(child)
+        return None
+
+    def _save_manual_child_project(self, preset_id: str, payload: dict[str, object]) -> None:
+        target_parent = str(preset_id).strip()
+        target_child = str(payload.get("id", "")).strip()
+        children = self._manual_child_projects_for_parent(target_parent)
+        for index, child in enumerate(children):
+            if str(child.get("id", "")).strip() == target_child:
+                children[index] = self._normalize_manual_child_project(payload) or dict(payload)
+                self.manual_child_projects_by_parent[target_parent] = children
+                self._save_project_dashboard_settings()
+                return
+
+    def _build_manual_child_project_workspace(
+        self,
+        preset_id: str,
+        child_id: str,
+        on_saved: Callable[[], None] | None = None,
+    ) -> QWidget | None:
+        child = self._find_manual_child_project(preset_id, child_id)
+        if child is None:
+            return None
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        shell = QFrame()
+        shell.setObjectName("childProjectsShell")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("childToolsSidebar")
+        sidebar.setFixedWidth(220)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(14, 16, 14, 16)
+        sidebar_layout.setSpacing(10)
+
+        sidebar_title = QLabel("Child tools")
+        sidebar_title.setObjectName("navSection")
+        sidebar_layout.addWidget(sidebar_title)
+
+        tool_group = QButtonGroup(page)
+        tool_group.setExclusive(True)
+        tool_stack = QStackedWidget()
+
+        content_host = QFrame()
+        content_host.setObjectName("childToolContent")
+        content_layout = QVBoxLayout(content_host)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setSpacing(0)
+
+        content_scroll = QScrollArea()
+        content_scroll.setObjectName("childToolScroll")
+        content_scroll.setWidgetResizable(True)
+        content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content_scroll.setWidget(tool_stack)
+        content_layout.addWidget(content_scroll, 1)
+
+        def build_details_page() -> QWidget:
+            details_page = QWidget()
+            details_layout = QVBoxLayout(details_page)
+            details_layout.setContentsMargins(0, 0, 0, 0)
+            details_layout.setSpacing(14)
+
+            card = QFrame()
+            card.setObjectName("projectsDetailCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(24, 24, 24, 24)
+            card_layout.setSpacing(12)
+
+            card_heading = QLabel("AI Gen")
+            card_heading.setObjectName("projectsPanelTitle")
+            card_layout.addWidget(card_heading)
+
+            card_name = QLabel(str(child.get("name", "")).strip())
+            card_name.setObjectName("projectDetailTitle")
+            card_layout.addWidget(card_name)
+
+            title_label = QLabel("Title")
+            title_label.setObjectName("sectionLabel")
+            card_layout.addWidget(title_label)
+
+            title_edit = QLineEdit()
+            title_edit.setPlaceholderText("Enter video title")
+            title_edit.setText(str(child.get("title", "")).strip())
+            card_layout.addWidget(title_edit)
+
+            description_label = QLabel("Description")
+            description_label.setObjectName("sectionLabel")
+            card_layout.addWidget(description_label)
+
+            description_edit = QTextEdit()
+            description_edit.setPlaceholderText("Enter description for this child project...")
+            description_edit.setPlainText(str(child.get("description", "")).strip())
+            description_edit.setFixedHeight(140)
+            card_layout.addWidget(description_edit)
+
+            seeding_label = QLabel("Comment seeding")
+            seeding_label.setObjectName("sectionLabel")
+            card_layout.addWidget(seeding_label)
+
+            seeding_edit = QTextEdit()
+            seeding_edit.setPlaceholderText("Paste comment, mỗi dòng một comment")
+            seeding_edit.setPlainText(str(child.get("seeding_comments_raw", "")).strip())
+            seeding_edit.setFixedHeight(180)
+            card_layout.addWidget(seeding_edit)
+
+            parsed_count = QLabel("Parsed comments: 0")
+            parsed_count.setObjectName("hintLabel")
+            card_layout.addWidget(parsed_count)
+
+            parsed_list = QListWidget()
+            parsed_list.setObjectName("presetList")
+            parsed_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+            card_layout.addWidget(parsed_list, 1)
+
+            actions = QHBoxLayout()
+            actions.addStretch(1)
+            save_btn = QPushButton("Save details")
+            save_btn.setProperty("variant", "secondary")
+            actions.addWidget(save_btn)
+            card_layout.addLayout(actions)
+
+            def refresh_comments_preview() -> None:
+                comments = self._parse_seeding_comments(seeding_edit.toPlainText().strip())
+                parsed_count.setText(f"Parsed comments: {len(comments)}")
+                parsed_list.clear()
+                if not comments:
+                    parsed_list.addItem(QListWidgetItem("Chưa có comment nào."))
+                    return
+                for comment in comments:
+                    parsed_list.addItem(QListWidgetItem(comment))
+
+            def save_details() -> None:
+                updated = dict(child)
+                updated["title"] = title_edit.text().strip()
+                updated["description"] = description_edit.toPlainText().strip()
+                updated["seeding_comments_raw"] = seeding_edit.toPlainText().strip()
+                self._save_manual_child_project(preset_id, updated)
+                if on_saved is not None:
+                    on_saved()
+
+            seeding_edit.textChanged.connect(refresh_comments_preview)
+            save_btn.clicked.connect(save_details)
+            refresh_comments_preview()
+
+            details_layout.addWidget(card, 1)
+            return details_page
+
+        pages = [
+            ("ai_gen", "AI Gen", build_details_page()),
+            ("ai_audio", "AI Audio", self._build_child_tool_placeholder_page("AI Audio", "Manage AI audio workflows for the selected child project.")),
+            ("livestream", "Livestream", self._build_child_tool_placeholder_page("Livestream", "Manage livestream workflows for the selected child project.")),
+        ]
+
+        for index, (_key, label, page_widget) in enumerate(pages):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setObjectName("childToolNavButton")
+            if index == 0:
+                button.setChecked(True)
+            tool_group.addButton(button, index)
+            sidebar_layout.addWidget(button)
+            tool_stack.addWidget(page_widget)
+        sidebar_layout.addStretch(1)
+
+        tool_group.idClicked.connect(tool_stack.setCurrentIndex)
+        shell_layout.addWidget(sidebar)
+        shell_layout.addWidget(content_host, 1)
+        layout.addWidget(shell, 1)
+        return page
+
+    def _open_manual_child_project_workspace(
+        self,
+        preset_id: str,
+        child_id: str,
+        on_saved: Callable[[], None] | None = None,
+    ) -> None:
+        preset = self._find_project_preset_by_id(preset_id)
+        child = self._find_manual_child_project(preset_id, child_id)
+        if preset is None or child is None:
+            QMessageBox.information(self, "No project", "Child project not found.")
+            return
+
+        dialog = QDialog(self, Qt.WindowType.Window)
+        dialog.setWindowTitle(f"{str(child.get('name', '')).strip()} - {str(preset.get('name', '')).strip()}")
+        dialog.setObjectName("childProjectWorkspaceDialog")
+        self._fit_window_to_screen(dialog, min_width=1280, min_height=740)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        header_row = QHBoxLayout()
+        header_col = QVBoxLayout()
+        heading = QLabel(str(child.get("name", "")).strip())
+        heading.setObjectName("projectParentTitle")
+        subtitle = QLabel("Double-click workspace for child project tools and detailed editing.")
+        subtitle.setObjectName("workspaceBody")
+        header_col.addWidget(heading)
+        header_col.addWidget(subtitle)
+        header_row.addLayout(header_col, 1)
+
+        back_btn = QPushButton("Back")
+        back_btn.setProperty("variant", "primary")
+        back_btn.setIcon(dialog.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        back_btn.setIconSize(QSize(16, 16))
+        back_btn.clicked.connect(dialog.accept)
+        header_row.addWidget(back_btn, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header_row)
+
+        workspace = self._build_manual_child_project_workspace(
+            preset_id,
+            child_id,
+            on_saved=on_saved,
+        )
+        if workspace is None:
+            QMessageBox.information(self, "No project", "Child project not found.")
+            return
+        layout.addWidget(workspace, 1)
+        dialog.exec()
+
+    def _handle_project_parent_selection_changed(
+        self,
+        current: QListWidgetItem | None,
+        previous: QListWidgetItem | None,
+    ) -> None:
+        del previous
+        self._selected_project_preset_id = str(current.data(Qt.ItemDataRole.UserRole) or "").strip() if current else ""
+        self._refresh_projects_workspace()
+
+    def _refresh_projects_workspace(self, selected_preset_id: str = "") -> None:
+        if self.project_parent_list is None:
+            return
+
+        current_item = self.project_parent_list.currentItem()
+        current_id = (
+            str(current_item.data(Qt.ItemDataRole.UserRole) or "").strip()
+            if current_item is not None
+            else ""
+        )
+        target_id = str(selected_preset_id).strip() or self._selected_project_preset_id or current_id
+        self.project_parent_list.blockSignals(True)
+        self.project_parent_list.clear()
+
+        children_by_parent: dict[str, int] = {
+            str(preset.get("id", "")): len(
+                self._manual_child_projects_for_parent(str(preset.get("id", "")))
+            )
+            for preset in self.project_presets
+        }
+
+        for preset in self._sorted_project_presets():
+            preset_id = str(preset.get("id", "")).strip()
+            item = QListWidgetItem(
+                f"{str(preset.get('name', '')).strip()}\n{children_by_parent.get(preset_id, 0)} child project(s)"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, preset_id)
+            item.setToolTip(
+                "Keywords: "
+                + (str(preset.get("keywords_raw", "")).strip() or "(empty)")
+                + "\nAuthor: "
+                + (str(preset.get("author", "")).strip() or "(empty)")
+                + "\nPublisher: "
+                + (str(preset.get("publisher", "")).strip() or "(empty)")
+            )
+            item.setIcon(self._make_symbol_icon("projects", "#0B57D0"))
+            self.project_parent_list.addItem(item)
+
+        if self.project_parent_empty_label is not None:
+            self.project_parent_empty_label.setVisible(self.project_parent_list.count() == 0)
+        self.project_parent_list.setVisible(self.project_parent_list.count() > 0)
+
+        resolved_id = target_id
+        if self.project_parent_list.count():
+            matched_item: QListWidgetItem | None = None
+            for index in range(self.project_parent_list.count()):
+                item = self.project_parent_list.item(index)
+                if str(item.data(Qt.ItemDataRole.UserRole) or "").strip() == target_id:
+                    matched_item = item
+                    break
+            if matched_item is None:
+                matched_item = self.project_parent_list.item(0)
+            self.project_parent_list.setCurrentItem(matched_item)
+            resolved_id = str(matched_item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        else:
+            resolved_id = ""
+        self.project_parent_list.blockSignals(False)
+
+        self._selected_project_preset_id = resolved_id
+        preset = self._find_project_preset_by_id(resolved_id)
+        child_count = children_by_parent.get(resolved_id, 0)
+
+        if self.project_parent_detail_name is not None:
+            self.project_parent_detail_name.setText(
+                str(preset.get("name", "")).strip() if preset else "Select a parent project"
+            )
+        # detail_meta hidden — keywords/author/publisher removed from display
+        if self.project_parent_detail_stats is not None:
+            self.project_parent_detail_stats.setText(f"Child projects: {child_count}" if preset else "Child projects: 0")
+        if self.project_parent_open_children_btn is not None:
+            self.project_parent_open_children_btn.setText(
+                f"Open child projects ({child_count})" if preset else "Open child projects"
+            )
+
+        has_selection = preset is not None
+        for button in (
+            self.project_parent_edit_btn,
+            self.project_parent_delete_btn,
+            self.project_parent_open_children_btn,
+        ):
+            if button is not None:
+                button.setEnabled(has_selection)
+
     def _refresh_project_preset_tab(self, selected_preset_id: str = "") -> None:
+        self._refresh_projects_workspace(selected_preset_id)
         if self.project_hierarchy_layout is None:
             return
 
@@ -3209,13 +5103,10 @@ class MainWindow(QMainWindow):
             self.project_hierarchy_layout.addStretch(1)
             return
 
-        children_by_parent: dict[str, list[ProjectItem]] = {
-            str(preset.get("id", "")): [] for preset in self.project_presets
+        children_by_parent: dict[str, list[dict[str, object]]] = {
+            str(preset.get("id", "")): self._manual_child_projects_for_parent(str(preset.get("id", "")))
+            for preset in self.project_presets
         }
-        for project in self.projects:
-            parent_id = str(project.assigned_project_id or "").strip()
-            if parent_id in children_by_parent:
-                children_by_parent[parent_id].append(project)
 
         for preset in self._sorted_project_presets():
             parent_id = str(preset.get("id", ""))
@@ -3232,7 +5123,7 @@ class MainWindow(QMainWindow):
             title.setObjectName("projectParentTitle")
             header_row.addWidget(title)
 
-            count = QLabel(f"{len(children)} video(s)")
+            count = QLabel(f"{len(children)} project(s)")
             count.setObjectName("projectParentCount")
             header_row.addWidget(count)
             header_row.addStretch(1)
@@ -3339,12 +5230,12 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _status_color(status: ProjectStatus) -> QColor:
         palette = {
-            ProjectStatus.pending: QColor("#64748B"),
-            ProjectStatus.processing: QColor("#2563EB"),
-            ProjectStatus.done: QColor("#059669"),
-            ProjectStatus.failed: QColor("#DC2626"),
+            ProjectStatus.pending: QColor("#5F6368"),
+            ProjectStatus.processing: QColor("#0B57D0"),
+            ProjectStatus.done: QColor("#137333"),
+            ProjectStatus.failed: QColor("#C5221F"),
         }
-        return palette.get(status, QColor("#374151"))
+        return palette.get(status, QColor("#444746"))
 
     def _refresh_project_metadata(self, project: ProjectItem) -> None:
         info = project.refresh_metadata()

@@ -1,4 +1,4 @@
-PySide6>=6.7
+flet>=0.28
 pyautogui>=0.9
 atomacos>=3.1
 pyobjc-core>=10.1
@@ -11,6 +11,5 @@ numpy>=1.24
 rembg>=2.0.50
 onnxruntime>=1.16
 webrtcvad-wheels>=2.0.14
-pyqtdarktheme>=0.1.7
 watchdog>=4.0
 selenium>=4.24
