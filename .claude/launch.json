@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "AutoCapCut App",
-      "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["main.py"],
-      "port": 0
+      "name": "autocapcut-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend",
+      "port": 1420
     }
   ]
 }
