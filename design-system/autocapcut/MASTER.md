@@ -6,7 +6,7 @@
 
 ---
 
-**Project:** AutoCapCut
+**Project:** MasterOS
 **Generated:** 2026-03-14 17:27:16
 **Category:** Productivity Tool
 
