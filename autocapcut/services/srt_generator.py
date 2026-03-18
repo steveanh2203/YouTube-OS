@@ -281,7 +281,7 @@ def match_content_to_srt(
     ]
 
     if not any(normalized_segment_words):
-        raise SRTGeneratorError("SRT không có nội dung chữ hợp lệ để đối chiếu.")
+        raise SRTGeneratorError("The SRT file does not contain valid text to match against.")
 
     def score_start_candidate(
         start_idx: int,
@@ -347,43 +347,32 @@ def match_content_to_srt(
     total = len(srt_segments)
     content_total = len(content_items)
 
-    def review_or_raise(review: StrictMatchReview) -> bool:
-        if strict_review_cb is None:
-            raise SRTGeneratorError(review.detail)
-
-        decision = strict_review_cb(review)
-        if decision == "skip":
-            logger.warning(
-                "Skipping content #{} after strict review: {}",
-                review.content_index,
-                review.reason,
-            )
-            return True
-        raise SRTGenerationCancelled(f"Đã huỷ tạo SRT ở content #{review.content_index}.")
-
     for content_idx, content in enumerate(content_items, 1):
         if content_total > 0:
             pct = progress_start + int(((content_idx - 1) / content_total) * max(progress_end - progress_start, 1))
             _emit_progress(progress_cb, pct, f"Matching content line {content_idx}/{content_total}...")
 
+        # If we've run out of SRT segments, assign the last segment's time to remaining lines
         if srt_ptr >= total:
-            raise SRTGeneratorError(
-                f"Thiếu segment SRT để ghép cho content #{content.index}."
+            last_seg = srt_segments[total - 1]
+            logger.warning(
+                "Ran out of SRT segments at content #{} — assigning last segment timestamp.",
+                content.index,
             )
+            results.append(OutputEntry(
+                index=content.index,
+                start=last_seg.start,
+                end=last_seg.end,
+                text=content.text,
+            ))
+            continue
 
         content_norm = _normalize(content.text)
         content_words = content_norm.split()
         if not content_words:
-            if review_or_raise(
-                StrictMatchReview(
-                    content_index=content.index,
-                    content_text=content.text,
-                    reason="empty-normalized-content",
-                    detail=f"Content #{content.index} trống sau chuẩn hoá.",
-                )
-            ):
-                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
-                continue
+            logger.warning("Content #{} is empty after normalisation — skipping.", content.index)
+            _emit_progress(progress_cb, pct, f"Skipped empty content line {content_idx}/{content_total}.")
+            continue
 
         chosen_start: int | None = None
         chosen_end: int | None = None
@@ -437,45 +426,34 @@ def match_content_to_srt(
                 second_best_score = score
 
         if chosen_start is None or chosen_end is None:
-            if review_or_raise(
-                StrictMatchReview(
-                    content_index=content.index,
-                    content_text=content.text,
-                    reason="no-candidate",
-                    detail=f"Không thể ghép chắc chắn content #{content.index} với SRT gốc (Strict CapCut).",
+            # No candidate found — fall back to current srt_ptr position
+            chosen_start = srt_ptr
+            chosen_end = srt_ptr
+            logger.warning(
+                "No SRT candidate found for content #{} — using srt_ptr={} as fallback.",
+                content.index,
+                srt_ptr,
+            )
+        else:
+            strong_confidence = (
+                chosen_full_ratio >= _STRICT_MIN_FULL_RATIO
+                and chosen_prefix_ratio >= _STRICT_MIN_PREFIX_RATIO
+                and chosen_coverage >= _STRICT_MIN_COVERAGE
+                and chosen_score >= _STRICT_MIN_SCORE
+            )
+            margin_confidence = (
+                chosen_score >= _STRICT_MARGIN_FALLBACK_SCORE
+                and chosen_full_ratio >= _STRICT_MARGIN_FALLBACK_FULL
+                and (chosen_score - second_best_score) >= _STRICT_MARGIN_DELTA
+            )
+            if not (strong_confidence or margin_confidence):
+                logger.warning(
+                    "Low-confidence match for content #{} (score={:.2f} full={:.2f} cov={:.2f}) — using best-effort.",
+                    content.index,
+                    chosen_score,
+                    chosen_full_ratio,
+                    chosen_coverage,
                 )
-            ):
-                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
-                continue
-        strong_confidence = (
-            chosen_full_ratio >= _STRICT_MIN_FULL_RATIO
-            and chosen_prefix_ratio >= _STRICT_MIN_PREFIX_RATIO
-            and chosen_coverage >= _STRICT_MIN_COVERAGE
-            and chosen_score >= _STRICT_MIN_SCORE
-        )
-        margin_confidence = (
-            chosen_score >= _STRICT_MARGIN_FALLBACK_SCORE
-            and chosen_full_ratio >= _STRICT_MARGIN_FALLBACK_FULL
-            and (chosen_score - second_best_score) >= _STRICT_MARGIN_DELTA
-        )
-        if not (strong_confidence or margin_confidence):
-            if review_or_raise(
-                StrictMatchReview(
-                    content_index=content.index,
-                    content_text=content.text,
-                    reason="low-confidence",
-                    detail=f"Độ tin cậy ghép thấp ở content #{content.index} (Strict CapCut).",
-                    candidate_start_segment=chosen_start + 1,
-                    candidate_end_segment=chosen_end + 1,
-                    score=chosen_score,
-                    full_ratio=chosen_full_ratio,
-                    prefix_ratio=chosen_prefix_ratio,
-                    coverage=chosen_coverage,
-                    score_delta=chosen_score - second_best_score,
-                )
-            ):
-                _emit_progress(progress_cb, pct, f"Skipped content line {content_idx}/{content_total}.")
-                continue
 
         logger.debug(
             "Strict match content #{} -> SRT[{}..{}] score={:.2f} full={:.2f} prefix={:.2f} cov={:.2f} delta={:.2f}",
@@ -564,12 +542,12 @@ def generate_merged_srt(
     try:
         srt_raw = _read_file_text(srt_path)
     except OSError as exc:
-        raise SRTGeneratorError(f"Không đọc được file SRT: {exc}") from exc
+        raise SRTGeneratorError(f"Could not read SRT file: {exc}") from exc
 
     _emit_progress(progress_cb, 18, "Parsing CapCut SRT segments...")
     srt_segments = parse_srt(srt_raw)
     if not srt_segments:
-        raise SRTGeneratorError("File SRT không có segment nào hợp lệ.")
+        raise SRTGeneratorError("The SRT file contains no valid segments.")
 
     _emit_progress(progress_cb, 32, f"Parsed {len(srt_segments)} SRT segments.")
 
@@ -577,7 +555,7 @@ def generate_merged_srt(
     _emit_progress(progress_cb, 38, "Parsing pasted content...")
     content_items = parse_content(content_text)
     if not content_items:
-        raise SRTGeneratorError("Không tìm thấy câu content nào.")
+        raise SRTGeneratorError("No content lines were found.")
     _emit_progress(progress_cb, 44, f"Parsed {len(content_items)} content lines.")
 
     logger.info(
@@ -605,8 +583,8 @@ def generate_merged_srt(
             logger.info("SRT matching engine: Rust")
         elif engine_mode == "rust":
             raise SRTGeneratorError(
-                "Rust engine được bật bắt buộc nhưng không chạy được. "
-                "Kiểm tra binary hoặc dùng AUTOCAPCUT_SRT_ENGINE=auto/python."
+                "Rust engine is required but could not be started. "
+                "Check the binary or use AUTOCAPCUT_SRT_ENGINE=auto/python."
             )
 
     if entries is None:
@@ -625,16 +603,10 @@ def generate_merged_srt(
         logger.info("SRT matching engine: Python")
 
     if not entries:
-        if strict_review_cb is not None:
-            raise SRTGeneratorError("Không còn content nào để xuất SRT sau khi bỏ qua các dòng lỗi.")
-        raise SRTGeneratorError("Không thể ghép content với SRT segments.")
-    if strict_review_cb is None and len(entries) != len(content_items):
-        raise SRTGeneratorError(
-            "Ghép SRT chưa đầy đủ trong chế độ Strict CapCut; dừng để tránh sai timestamp."
-        )
+        raise SRTGeneratorError("Could not merge content with SRT segments.")
     skipped_count = len(content_items) - len(entries)
     if skipped_count > 0:
-        logger.warning("Generated SRT with {} skipped content line(s) after strict review.", skipped_count)
+        logger.warning("Generated SRT with {} skipped content line(s) (empty lines).", skipped_count)
 
     _emit_progress(progress_cb, 92, "Rendering output SRT...")
     output = _to_srt_string(entries)

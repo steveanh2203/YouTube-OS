@@ -490,6 +490,8 @@ def _click_first_visible(driver, by, selectors: list[str]) -> bool:
 def _click_upload_menu_item(driver, by) -> bool:
     xpath_candidates = [
         "//*[contains(translate(normalize-space(.), 'UPLOADVIDEOS', 'uploadvideos'), 'upload') and contains(translate(normalize-space(.), 'VIDEOS', 'videos'), 'video')]",
+        "//*[contains(normalize-space(.), 'Upload video')]",
+        "//*[contains(normalize-space(.), 'Upload videos')]",
         "//*[contains(normalize-space(.), 'Tải video')]",
         "//*[contains(normalize-space(.), 'Đăng video')]",
     ]
