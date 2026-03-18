@@ -45,7 +45,7 @@ export default function Sidebar() {
         </div>
         {!collapsed && (
           <span className="font-semibold text-surface-900 text-sm tracking-tight truncate flex-1">
-            AutoCapCut
+            MasterOS
           </span>
         )}
         <button

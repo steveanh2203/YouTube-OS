@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "AutoCapCut — Flow Helper",
+  "name": "MasterOS — Flow Helper",
   "version": "1.0.0",
-  "description": "Automatically capture Google Flow tokens and send them to AutoCapCut for image generation.",
+  "description": "Automatically capture Google Flow tokens and send them to MasterOS for image generation.",
   "permissions": [
     "activeTab",
     "sidePanel",

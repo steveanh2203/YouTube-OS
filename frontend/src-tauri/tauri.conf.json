@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "AutoCapCut",
+  "productName": "MasterOS",
   "version": "0.1.0",
   "identifier": "com.autocapcut.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "AutoCapCut",
+        "title": "MasterOS",
         "width": 1280,
         "height": 800,
         "minWidth": 960,
