@@ -272,38 +272,47 @@ function PlannerCard({
   onDragStart: () => void
   onDragEnd: () => void
 }) {
-  const overdue   = isOverdue(child, today)
-  const dueToday  = isDueToday(child, today)
+  const overdue  = isOverdue(child, today)
+  const dueToday = isDueToday(child, today)
 
+  // Single element: motion.div with drag + click + role=button.
+  // WebKit (Tauri) blocks parent-div drag when child is <button>.
+  // Solution: one element owns both drag and click, no nested button.
   return (
-    <div
+    <motion.div
       draggable
-      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart() }}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', child.id) // required for WebKit
+        onDragStart()
+      }}
       onDragEnd={onDragEnd}
-      className="w-full"
-    >
-    <motion.button
       onClick={onSelect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect() }}
       animate={
         celebrating
           ? { scale: [1, 1.04, 1], backgroundColor: ['#ffffff', '#d1fae5', '#ffffff'] }
           : { scale: 1, backgroundColor: '#ffffff' }
       }
       transition={{ duration: 0.35 }}
+      style={{ WebkitUserDrag: 'element', userSelect: 'none', cursor: 'grab' } as React.CSSProperties}
       className={cn(
         'group w-full rounded-2xl border bg-white p-4 text-left shadow-sm',
         'transition-shadow duration-150 hover:-translate-y-0.5 hover:shadow-md',
         'focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-1',
-        selected    ? 'border-primary-300 ring-2 ring-primary-100'  : 'border-surface-200',
-        overdue     ? 'bg-rose-50/40'   : '',
-        dueToday    ? 'bg-amber-50/40'  : '',
+        'active:cursor-grabbing',
+        selected    ? 'border-primary-300 ring-2 ring-primary-100' : 'border-surface-200',
+        overdue     ? '!bg-rose-50/60'  : '',
+        dueToday    ? '!bg-amber-50/60' : '',
         celebrating ? 'border-emerald-300' : ''
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-400">
-            <GripVertical size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60 cursor-grab" />
+            <GripVertical size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60" />
             <span className="truncate">{parent?.name ?? '—'}</span>
           </div>
           <p className="mt-1.5 text-sm font-semibold leading-snug text-surface-900">
@@ -319,8 +328,8 @@ function PlannerCard({
         {(overdue || dueToday) && (
           <span className={cn(
             'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
-            overdue   ? 'bg-rose-100 text-rose-700'   : '',
-            dueToday  ? 'bg-amber-100 text-amber-700'  : ''
+            overdue  ? 'bg-rose-100 text-rose-700'  : '',
+            dueToday ? 'bg-amber-100 text-amber-700' : ''
           )}>
             {overdue ? 'Late' : 'Today'}
           </span>
@@ -340,8 +349,7 @@ function PlannerCard({
           {dueLabel(child, today)}
         </span>
       </div>
-    </motion.button>
-    </div>
+    </motion.div>
   )
 }
 
@@ -512,7 +520,10 @@ export default function ProductionPlanner() {
   const [weekOffset, setWeekOffset]         = useState(0)
 
   // ── Drag state ──
+  // useRef ensures handleDrop always reads the latest draggedChildId,
+  // avoiding stale-closure bug where drop fires after dragend clears state.
   const [draggedChildId, setDraggedChildId] = useState<string | null>(null)
+  const draggedChildIdRef = useRef<string | null>(null)
   const [dragTarget, setDragTarget]         = useState<PlannerStage | null>(null)
 
   // ── Inspector state ──
@@ -657,18 +668,23 @@ export default function ProductionPlanner() {
     }
   }
 
-  async function handleDrop(stage: PlannerStage) {
-    if (!draggedChildId) return
-    const child = childProjects.find((c) => c.id === draggedChildId)
+  async function handleDrop(e: React.DragEvent, stage: PlannerStage) {
+    e.preventDefault()
+    e.stopPropagation()
+    // Read from ref — immune to stale closure even if dragend fired first
+    const id = draggedChildIdRef.current
+    if (!id) return
+    const child = childProjects.find((c) => c.id === id)
     setDragTarget(null)
     setDraggedChildId(null)
+    draggedChildIdRef.current = null
     if (!child || child.planningStage === stage) return
 
     await patchPlanner(child, { planningStage: stage })
 
     // Micro-celebration when promoted to Published
     if (stage === 'published') {
-      setCelebratingId(draggedChildId)
+      setCelebratingId(id)
       setPublishedToast(child.title || child.name)
       setTimeout(() => { setCelebratingId(null); setPublishedToast(null) }, 2500)
     }
@@ -984,12 +1000,12 @@ export default function ProductionPlanner() {
 
                 <div
                   className={cn(
-                    'flex-1 overflow-y-auto p-3 space-y-2',
+                    'flex-1 overflow-y-scroll p-3 space-y-2',
                     dragTarget === 'backlog' && 'ring-2 ring-inset ring-primary-200 bg-primary-50/30'
                   )}
                   onDragOver={(e) => { e.preventDefault(); setDragTarget('backlog') }}
                   onDragLeave={() => setDragTarget((cur) => cur === 'backlog' ? null : cur)}
-                  onDrop={() => handleDrop('backlog')}
+                  onDrop={(e) => handleDrop(e, 'backlog')}
                 >
                   {loading ? (
                     [1, 2, 3].map((n) => <SkeletonCard key={n} />)
@@ -1006,8 +1022,8 @@ export default function ProductionPlanner() {
                           selected={selectedChildId === child.id}
                           celebrating={celebratingId === child.id}
                           onSelect={() => setSelectedChildId(child.id === selectedChildId ? null : child.id)}
-                          onDragStart={() => setDraggedChildId(child.id)}
-                          onDragEnd={() => { setDraggedChildId(null); setDragTarget(null) }}
+                          onDragStart={() => { setDraggedChildId(child.id); draggedChildIdRef.current = child.id }}
+                          onDragEnd={() => { setDraggedChildId(null); draggedChildIdRef.current = null; setDragTarget(null) }}
                         />
                       ))}
                     </AnimatePresence>
@@ -1051,7 +1067,7 @@ export default function ProductionPlanner() {
                       )}
                       onDragOver={(e) => { e.preventDefault(); setDragTarget(stage) }}
                       onDragLeave={() => setDragTarget((cur) => cur === stage ? null : cur)}
-                      onDrop={() => handleDrop(stage)}
+                      onDrop={(e) => handleDrop(e, stage)}
                     >
                       {/* Column header */}
                       <div className="border-b border-white/60 px-4 py-3.5">
@@ -1068,7 +1084,7 @@ export default function ProductionPlanner() {
                       </div>
 
                       {/* Cards */}
-                      <div className="flex-1 space-y-2 overflow-y-auto p-3">
+                      <div className="flex-1 space-y-2 overflow-y-scroll p-3">
                         {loading ? (
                           [1, 2].map((n) => <SkeletonCard key={n} />)
                         ) : cards.length === 0 ? (
@@ -1086,8 +1102,8 @@ export default function ProductionPlanner() {
                                 selected={selectedChildId === child.id}
                                 celebrating={celebratingId === child.id}
                                 onSelect={() => setSelectedChildId(child.id === selectedChildId ? null : child.id)}
-                                onDragStart={() => setDraggedChildId(child.id)}
-                                onDragEnd={() => { setDraggedChildId(null); setDragTarget(null) }}
+                                onDragStart={() => { setDraggedChildId(child.id); draggedChildIdRef.current = child.id }}
+                                onDragEnd={() => { setDraggedChildId(null); draggedChildIdRef.current = null; setDragTarget(null) }}
                               />
                             ))}
                           </AnimatePresence>
