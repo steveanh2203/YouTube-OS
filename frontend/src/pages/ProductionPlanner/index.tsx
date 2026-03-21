@@ -259,6 +259,7 @@ function PlannerCard({
   today,
   selected,
   celebrating,
+  isDragging,
   onSelect,
   onPointerDown,
 }: {
@@ -267,6 +268,7 @@ function PlannerCard({
   today: Date
   selected?: boolean
   celebrating?: boolean
+  isDragging?: boolean
   onSelect: () => void
   onPointerDown: (x: number, y: number) => void
 }) {
@@ -288,18 +290,19 @@ function PlannerCard({
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect() }}
       animate={
-        celebrating
-          ? { scale: [1, 1.04, 1], backgroundColor: ['#ffffff', '#d1fae5', '#ffffff'] }
-          : { scale: 1, backgroundColor: '#ffffff' }
+        isDragging
+          ? { scale: 0.96, opacity: 0.75, y: -6, boxShadow: '0 24px 48px rgba(0,0,0,0.18)' }
+          : celebrating
+          ? { scale: [1, 1.04, 1], backgroundColor: ['#ffffff', '#d1fae5', '#ffffff'], y: 0, opacity: 1 }
+          : { scale: 1, opacity: 1, y: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }
       }
-      transition={{ duration: 0.35 }}
-      style={{ userSelect: 'none', cursor: 'grab' }}
+      transition={isDragging ? { duration: 0.12, ease: 'easeOut' } : { duration: 0.35 }}
+      style={{ userSelect: 'none', cursor: isDragging ? 'grabbing' : 'grab' }}
       className={cn(
         'group w-full rounded-2xl border bg-white p-4 text-left shadow-sm',
-        'transition-shadow duration-150 hover:-translate-y-0.5 hover:shadow-md',
         'focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-1',
-        'active:cursor-grabbing',
-        selected    ? 'border-primary-300 ring-2 ring-primary-100' : 'border-surface-200',
+        isDragging  ? 'border-primary-400 ring-2 ring-primary-200 z-50 relative' : 'hover:-translate-y-0.5 hover:shadow-md transition-shadow duration-150',
+        selected    ? 'border-primary-300 ring-2 ring-primary-100' : (!isDragging ? 'border-surface-200' : ''),
         overdue     ? '!bg-rose-50/60'  : '',
         dueToday    ? '!bg-amber-50/60' : '',
         celebrating ? 'border-emerald-300' : ''
@@ -308,7 +311,7 @@ function PlannerCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-400">
-            <GripVertical size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60" />
+            <GripVertical size={12} className={cn('shrink-0 transition-opacity', isDragging ? 'opacity-60' : 'opacity-0 group-hover:opacity-60')} />
             <span className="truncate">{parent?.name ?? '—'}</span>
           </div>
           <p className="mt-1.5 text-sm font-semibold leading-snug text-surface-900">
@@ -516,7 +519,8 @@ export default function ProductionPlanner() {
   const [weekOffset, setWeekOffset]         = useState(0)
 
   // ── Drag state (Pointer-event based — HTML5 drag API is unreliable in WKWebView) ──
-  const [draggedChildId, setDraggedChildId] = useState<string | null>(null)
+  const [draggedChildId, setDraggedChildId]   = useState<string | null>(null)
+  const [isPointerDragging, setIsPointerDragging] = useState(false)  // triggers card animation
   const draggedChildIdRef = useRef<string | null>(null)
   const dragStartPosRef   = useRef({ x: 0, y: 0 })
   const isDraggingRef     = useRef(false)           // true once threshold crossed
@@ -550,7 +554,10 @@ export default function ProductionPlanner() {
       const dx = Math.abs(e.clientX - dragStartPosRef.current.x)
       const dy = Math.abs(e.clientY - dragStartPosRef.current.y)
       if (dx > THRESHOLD || dy > THRESHOLD) {
-        isDraggingRef.current = true
+        if (!isDraggingRef.current) {
+          isDraggingRef.current = true
+          setIsPointerDragging(true)   // triggers card shrink animation
+        }
         // Find a column with data-stage under the pointer
         const els = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]
         const hit  = els.find((el) => el.dataset.stage)
@@ -565,6 +572,7 @@ export default function ProductionPlanner() {
       if (!isDraggingRef.current) {
         // Pointer up without threshold → treat as click, don't suppress
         setDraggedChildId(null)
+        setIsPointerDragging(false)
         draggedChildIdRef.current = null
         isDraggingRef.current     = false
         return
@@ -572,6 +580,7 @@ export default function ProductionPlanner() {
 
       suppressClickRef.current = true   // next onClick on the card → ignore
       isDraggingRef.current    = false
+      setIsPointerDragging(false)       // remove card drag animation
 
       const els  = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]
       const hit  = els.find((el) => el.dataset.stage)
@@ -1061,6 +1070,7 @@ export default function ProductionPlanner() {
                           today={today}
                           selected={selectedChildId === child.id}
                           celebrating={celebratingId === child.id}
+                          isDragging={draggedChildId === child.id && isPointerDragging}
                           onSelect={() => {
                             if (suppressClickRef.current) { suppressClickRef.current = false; return }
                             setSelectedChildId(child.id === selectedChildId ? null : child.id)
@@ -1104,14 +1114,18 @@ export default function ProductionPlanner() {
                   const Icon  = meta.icon
 
                   return (
-                    <div
+                    <motion.div
                       key={stage}
                       data-stage={stage}
+                      animate={dragTarget === stage
+                        ? { scale: 1.025, transition: { duration: 0.15, ease: 'easeOut' } }
+                        : { scale: 1,     transition: { duration: 0.2,  ease: 'easeOut' } }
+                      }
                       className={cn(
-                        'flex min-h-full flex-col rounded-2xl border transition-all',
+                        'flex min-h-full flex-col rounded-2xl border transition-colors duration-150',
                         meta.surface,
                         meta.border,
-                        dragTarget === stage && 'ring-2 ring-primary-300'
+                        dragTarget === stage && 'ring-2 ring-primary-400 border-primary-300 shadow-lg shadow-primary-100'
                       )}
                     >
                       {/* Column header */}
@@ -1146,6 +1160,7 @@ export default function ProductionPlanner() {
                                 today={today}
                                 selected={selectedChildId === child.id}
                                 celebrating={celebratingId === child.id}
+                                isDragging={draggedChildId === child.id && isPointerDragging}
                                 onSelect={() => {
                                   if (suppressClickRef.current) { suppressClickRef.current = false; return }
                                   setSelectedChildId(child.id === selectedChildId ? null : child.id)
@@ -1161,7 +1176,7 @@ export default function ProductionPlanner() {
                           </AnimatePresence>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   )
                 })}
               </div>
