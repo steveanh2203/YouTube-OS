@@ -276,20 +276,20 @@ function PlannerCard({
   const dueToday  = isDueToday(child, today)
 
   return (
-    <motion.button
+    <div
       draggable
-      onDragStart={onDragStart}
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart() }}
       onDragEnd={onDragEnd}
+      className="w-full"
+    >
+    <motion.button
       onClick={onSelect}
-      layout
-      initial={{ opacity: 0, y: 8 }}
       animate={
         celebrating
-          ? { opacity: 1, y: 0, scale: [1, 1.04, 1], backgroundColor: ['#ffffff', '#d1fae5', '#ffffff'] }
-          : { opacity: 1, y: 0 }
+          ? { scale: [1, 1.04, 1], backgroundColor: ['#ffffff', '#d1fae5', '#ffffff'] }
+          : { scale: 1, backgroundColor: '#ffffff' }
       }
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ duration: 0.25 }}
+      transition={{ duration: 0.35 }}
       className={cn(
         'group w-full rounded-2xl border bg-white p-4 text-left shadow-sm',
         'transition-shadow duration-150 hover:-translate-y-0.5 hover:shadow-md',
@@ -341,6 +341,7 @@ function PlannerCard({
         </span>
       </div>
     </motion.button>
+    </div>
   )
 }
 
@@ -790,41 +791,108 @@ export default function ProductionPlanner() {
 
         {/* ── Filters ── */}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[200px] flex-1">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400" />
+          {/* Search */}
+          <div className="relative min-w-[200px] flex-1 max-w-xs">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-surface-400 pointer-events-none" />
             <input
               ref={searchRef}
-              className="input pl-8 text-sm"
+              className="w-full rounded-xl border border-surface-200 bg-white py-2 pl-8 pr-3 text-sm text-surface-900 placeholder:text-surface-400 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 transition-colors"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search videos… (⌘K)"
             />
           </div>
 
-          <select className="input w-[160px] text-sm cursor-pointer" value={parentFilter} onChange={(e) => setParentFilter(e.target.value)}>
-            <option value="all">All channels</option>
-            {parentProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          {/* Channel filter — only show if there are multiple parents */}
+          {parentProjects.length > 1 && (
+            <div className="flex items-center gap-1 rounded-xl border border-surface-200 bg-white px-1 py-1">
+              <button
+                onClick={() => setParentFilter('all')}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
+                  parentFilter === 'all' ? 'bg-surface-900 text-white' : 'text-surface-500 hover:text-surface-800'
+                )}
+              >
+                All
+              </button>
+              {parentProjects.slice(0, 4).map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setParentFilter(parentFilter === p.id ? 'all' : p.id)}
+                  className={cn(
+                    'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer truncate max-w-[120px]',
+                    parentFilter === p.id ? 'bg-surface-900 text-white' : 'text-surface-500 hover:text-surface-800'
+                  )}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
 
-          <select className="input w-[140px] text-sm cursor-pointer" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as 'all' | PlannerPriority)}>
-            <option value="all">All priority</option>
-            {PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          {/* Priority filter — pill chips */}
+          <div className="flex items-center gap-1 rounded-xl border border-surface-200 bg-white px-1 py-1">
+            <button
+              onClick={() => setPriorityFilter('all')}
+              className={cn(
+                'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
+                priorityFilter === 'all' ? 'bg-surface-900 text-white' : 'text-surface-500 hover:text-surface-800'
+              )}
+            >
+              All
+            </button>
+            {PRIORITY_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                onClick={() => setPriorityFilter(priorityFilter === o.value ? 'all' : o.value)}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer',
+                  priorityFilter === o.value
+                    ? o.value === 'urgent' ? 'bg-rose-600 text-white'
+                    : o.value === 'high'   ? 'bg-amber-500 text-white'
+                    : o.value === 'medium' ? 'bg-primary-600 text-white'
+                    : 'bg-slate-600 text-white'
+                    : 'text-surface-500 hover:text-surface-800'
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
 
-          <select className="input w-[140px] text-sm cursor-pointer" value={deadlineFilter} onChange={(e) => setDeadlineFilter(e.target.value as DeadlineFilter)}>
-            <option value="all">All deadlines</option>
-            <option value="overdue">Overdue</option>
-            <option value="today">Due today</option>
-            <option value="this-week">This week</option>
-            <option value="none">No deadline</option>
-          </select>
+          {/* Deadline filter — pill chips */}
+          <div className="flex items-center gap-1 rounded-xl border border-surface-200 bg-white px-1 py-1">
+            {([
+              { value: 'all',       label: 'All' },
+              { value: 'overdue',   label: 'Late' },
+              { value: 'today',     label: 'Today' },
+              { value: 'this-week', label: 'This week' },
+              { value: 'none',      label: 'No date' },
+            ] as { value: DeadlineFilter; label: string }[]).map((o) => (
+              <button
+                key={o.value}
+                onClick={() => setDeadlineFilter(o.value)}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap',
+                  deadlineFilter === o.value
+                    ? o.value === 'overdue' ? 'bg-rose-600 text-white'
+                    : o.value === 'today'   ? 'bg-amber-500 text-white'
+                    : 'bg-surface-900 text-white'
+                    : 'text-surface-500 hover:text-surface-800'
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
 
+          {/* Clear all */}
           {(search || parentFilter !== 'all' || priorityFilter !== 'all' || deadlineFilter !== 'all') && (
             <button
               onClick={() => { setSearch(''); setParentFilter('all'); setPriorityFilter('all'); setDeadlineFilter('all') }}
-              className="flex items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium text-surface-500 hover:bg-surface-100 hover:text-surface-800 transition-colors cursor-pointer"
+              className="flex items-center gap-1 rounded-xl border border-surface-200 bg-white px-3 py-2 text-xs font-semibold text-surface-500 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition-colors cursor-pointer"
             >
-              <X size={12} /> Clear
+              <X size={12} /> Clear filters
             </button>
           )}
         </div>
