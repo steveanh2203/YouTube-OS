@@ -260,8 +260,7 @@ function PlannerCard({
   selected,
   celebrating,
   onSelect,
-  onDragStart,
-  onDragEnd,
+  onPointerDown,
 }: {
   child: ChildProject
   parent?: ParentProject
@@ -269,24 +268,21 @@ function PlannerCard({
   selected?: boolean
   celebrating?: boolean
   onSelect: () => void
-  onDragStart: () => void
-  onDragEnd: () => void
+  onPointerDown: (x: number, y: number) => void
 }) {
   const overdue  = isOverdue(child, today)
   const dueToday = isDueToday(child, today)
 
-  // Single element: motion.div with drag + click + role=button.
-  // WebKit (Tauri) blocks parent-div drag when child is <button>.
-  // Solution: one element owns both drag and click, no nested button.
+  // Pointer-event-based drag — replaces HTML5 drag API which is unreliable
+  // in WKWebView (Tauri on macOS). Pointer events work in all WebKit versions.
   return (
     <motion.div
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move'
-        e.dataTransfer.setData('text/plain', child.id) // required for WebKit
-        onDragStart()
+      onPointerDown={(e) => {
+        // Only primary button (left click)
+        if (e.button !== 0 && e.buttons !== 1) return
+        e.stopPropagation()
+        onPointerDown(e.clientX, e.clientY)
       }}
-      onDragEnd={onDragEnd}
       onClick={onSelect}
       role="button"
       tabIndex={0}
@@ -297,7 +293,7 @@ function PlannerCard({
           : { scale: 1, backgroundColor: '#ffffff' }
       }
       transition={{ duration: 0.35 }}
-      style={{ WebkitUserDrag: 'element', userSelect: 'none', cursor: 'grab' } as React.CSSProperties}
+      style={{ userSelect: 'none', cursor: 'grab' }}
       className={cn(
         'group w-full rounded-2xl border bg-white p-4 text-left shadow-sm',
         'transition-shadow duration-150 hover:-translate-y-0.5 hover:shadow-md',
@@ -519,11 +515,12 @@ export default function ProductionPlanner() {
   const [backlogOpen, setBacklogOpen]       = useState(true)
   const [weekOffset, setWeekOffset]         = useState(0)
 
-  // ── Drag state ──
-  // useRef ensures handleDrop always reads the latest draggedChildId,
-  // avoiding stale-closure bug where drop fires after dragend clears state.
+  // ── Drag state (Pointer-event based — HTML5 drag API is unreliable in WKWebView) ──
   const [draggedChildId, setDraggedChildId] = useState<string | null>(null)
   const draggedChildIdRef = useRef<string | null>(null)
+  const dragStartPosRef   = useRef({ x: 0, y: 0 })
+  const isDraggingRef     = useRef(false)           // true once threshold crossed
+  const suppressClickRef  = useRef(false)           // suppress onClick after drag
   const [dragTarget, setDragTarget]         = useState<PlannerStage | null>(null)
 
   // ── Inspector state ──
@@ -540,6 +537,71 @@ export default function ProductionPlanner() {
 
   // ── Refs ──
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // ── Pointer drag global effect ──────────────────────────────────────────────
+  // When a card sets draggedChildId via onPointerDown, we attach global
+  // pointermove + pointerup listeners to track the drag across the whole board.
+  // This works in WKWebView where HTML5 dragstart/dragover/drop do NOT fire.
+  useEffect(() => {
+    if (!draggedChildId) return
+    const THRESHOLD = 5 // px — must move this far before it counts as a drag
+
+    const onMove = (e: PointerEvent) => {
+      const dx = Math.abs(e.clientX - dragStartPosRef.current.x)
+      const dy = Math.abs(e.clientY - dragStartPosRef.current.y)
+      if (dx > THRESHOLD || dy > THRESHOLD) {
+        isDraggingRef.current = true
+        // Find a column with data-stage under the pointer
+        const els = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]
+        const hit  = els.find((el) => el.dataset.stage)
+        setDragTarget((hit?.dataset.stage as PlannerStage) ?? null)
+      }
+    }
+
+    const onUp = async (e: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup',   onUp)
+
+      if (!isDraggingRef.current) {
+        // Pointer up without threshold → treat as click, don't suppress
+        setDraggedChildId(null)
+        draggedChildIdRef.current = null
+        isDraggingRef.current     = false
+        return
+      }
+
+      suppressClickRef.current = true   // next onClick on the card → ignore
+      isDraggingRef.current    = false
+
+      const els  = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[]
+      const hit  = els.find((el) => el.dataset.stage)
+      const stage = hit?.dataset.stage as PlannerStage | undefined
+
+      const id = draggedChildIdRef.current
+      setDragTarget(null)
+      setDraggedChildId(null)
+      draggedChildIdRef.current = null
+
+      if (!stage || !id) return
+      const child = childProjects.find((c) => c.id === id)
+      if (!child || child.planningStage === stage) return
+
+      await patchPlanner(child, { planningStage: stage })
+      if (stage === 'published') {
+        setCelebratingId(id)
+        setPublishedToast(child.title || child.name)
+        setTimeout(() => { setCelebratingId(null); setPublishedToast(null) }, 2500)
+      }
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup',   onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup',   onUp)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draggedChildId])
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
@@ -668,29 +730,7 @@ export default function ProductionPlanner() {
     }
   }
 
-  async function handleDrop(e: React.DragEvent, stage: PlannerStage) {
-    e.preventDefault()
-    e.stopPropagation()
-    // getData is the most reliable source in WebKit — dataTransfer survives even
-    // if dragend fires before drop (WebKit quirk that clears our ref first).
-    // Fall back to ref for non-WebKit environments.
-    const id = e.dataTransfer.getData('text/plain') || draggedChildIdRef.current
-    if (!id) return
-    const child = childProjects.find((c) => c.id === id)
-    setDragTarget(null)
-    setDraggedChildId(null)
-    draggedChildIdRef.current = null
-    if (!child || child.planningStage === stage) return
-
-    await patchPlanner(child, { planningStage: stage })
-
-    // Micro-celebration when promoted to Published
-    if (stage === 'published') {
-      setCelebratingId(id)
-      setPublishedToast(child.title || child.name)
-      setTimeout(() => { setCelebratingId(null); setPublishedToast(null) }, 2500)
-    }
-  }
+  // handleDrop removed — drop logic now lives in the pointer useEffect above.
 
   async function handleSaveInspector() {
     if (!selectedChild) return
@@ -1001,13 +1041,11 @@ export default function ProductionPlanner() {
                 </div>
 
                 <div
+                  data-stage="backlog"
                   className={cn(
                     'flex-1 overflow-y-scroll p-3 space-y-2',
                     dragTarget === 'backlog' && 'ring-2 ring-inset ring-primary-200 bg-primary-50/30'
                   )}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragTarget('backlog') }}
-                  onDragLeave={() => setDragTarget((cur) => cur === 'backlog' ? null : cur)}
-                  onDrop={(e) => handleDrop(e, 'backlog')}
                 >
                   {loading ? (
                     [1, 2, 3].map((n) => <SkeletonCard key={n} />)
@@ -1023,9 +1061,16 @@ export default function ProductionPlanner() {
                           today={today}
                           selected={selectedChildId === child.id}
                           celebrating={celebratingId === child.id}
-                          onSelect={() => setSelectedChildId(child.id === selectedChildId ? null : child.id)}
-                          onDragStart={() => { setDraggedChildId(child.id); draggedChildIdRef.current = child.id }}
-                          onDragEnd={() => { setDraggedChildId(null); draggedChildIdRef.current = null; setDragTarget(null) }}
+                          onSelect={() => {
+                            if (suppressClickRef.current) { suppressClickRef.current = false; return }
+                            setSelectedChildId(child.id === selectedChildId ? null : child.id)
+                          }}
+                          onPointerDown={(x, y) => {
+                            draggedChildIdRef.current = child.id
+                            dragStartPosRef.current   = { x, y }
+                            isDraggingRef.current     = false
+                            setDraggedChildId(child.id)
+                          }}
                         />
                       ))}
                     </AnimatePresence>
@@ -1061,15 +1106,13 @@ export default function ProductionPlanner() {
                   return (
                     <div
                       key={stage}
+                      data-stage={stage}
                       className={cn(
                         'flex min-h-full flex-col rounded-2xl border transition-all',
                         meta.surface,
                         meta.border,
                         dragTarget === stage && 'ring-2 ring-primary-300'
                       )}
-                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragTarget(stage) }}
-                      onDragLeave={() => setDragTarget((cur) => cur === stage ? null : cur)}
-                      onDrop={(e) => handleDrop(e, stage)}
                     >
                       {/* Column header */}
                       <div className="border-b border-white/60 px-4 py-3.5">
@@ -1103,9 +1146,16 @@ export default function ProductionPlanner() {
                                 today={today}
                                 selected={selectedChildId === child.id}
                                 celebrating={celebratingId === child.id}
-                                onSelect={() => setSelectedChildId(child.id === selectedChildId ? null : child.id)}
-                                onDragStart={() => { setDraggedChildId(child.id); draggedChildIdRef.current = child.id }}
-                                onDragEnd={() => { setDraggedChildId(null); draggedChildIdRef.current = null; setDragTarget(null) }}
+                                onSelect={() => {
+                                  if (suppressClickRef.current) { suppressClickRef.current = false; return }
+                                  setSelectedChildId(child.id === selectedChildId ? null : child.id)
+                                }}
+                                onPointerDown={(x, y) => {
+                                  draggedChildIdRef.current = child.id
+                                  dragStartPosRef.current   = { x, y }
+                                  isDraggingRef.current     = false
+                                  setDraggedChildId(child.id)
+                                }}
                               />
                             ))}
                           </AnimatePresence>
