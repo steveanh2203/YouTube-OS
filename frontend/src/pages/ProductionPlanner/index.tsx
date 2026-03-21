@@ -671,8 +671,10 @@ export default function ProductionPlanner() {
   async function handleDrop(e: React.DragEvent, stage: PlannerStage) {
     e.preventDefault()
     e.stopPropagation()
-    // Read from ref — immune to stale closure even if dragend fired first
-    const id = draggedChildIdRef.current
+    // getData is the most reliable source in WebKit — dataTransfer survives even
+    // if dragend fires before drop (WebKit quirk that clears our ref first).
+    // Fall back to ref for non-WebKit environments.
+    const id = e.dataTransfer.getData('text/plain') || draggedChildIdRef.current
     if (!id) return
     const child = childProjects.find((c) => c.id === id)
     setDragTarget(null)
@@ -1003,7 +1005,7 @@ export default function ProductionPlanner() {
                     'flex-1 overflow-y-scroll p-3 space-y-2',
                     dragTarget === 'backlog' && 'ring-2 ring-inset ring-primary-200 bg-primary-50/30'
                   )}
-                  onDragOver={(e) => { e.preventDefault(); setDragTarget('backlog') }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragTarget('backlog') }}
                   onDragLeave={() => setDragTarget((cur) => cur === 'backlog' ? null : cur)}
                   onDrop={(e) => handleDrop(e, 'backlog')}
                 >
@@ -1065,7 +1067,7 @@ export default function ProductionPlanner() {
                         meta.border,
                         dragTarget === stage && 'ring-2 ring-primary-300'
                       )}
-                      onDragOver={(e) => { e.preventDefault(); setDragTarget(stage) }}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragTarget(stage) }}
                       onDragLeave={() => setDragTarget((cur) => cur === stage ? null : cur)}
                       onDrop={(e) => handleDrop(e, stage)}
                     >
