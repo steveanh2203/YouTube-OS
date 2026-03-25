@@ -9,12 +9,14 @@ import threading
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from autocapcut.api.routes import projects, sync, srt, seo, animation, roxy
+from autocapcut.api.routes import projects, sync, srt, seo, animation, roxy, competitors, audio
 from autocapcut.api.routes import parent_projects, child_projects
 from autocapcut.api.routes import ai_gen
 from autocapcut.api.routes import livestream
 from autocapcut.api.routes import fast_edit
 from autocapcut.api.routes import cut_automate
+from autocapcut.api.routes import extension
+from autocapcut.api.routes import sora
 from autocapcut.database.connection import init_db
 
 _log = logging.getLogger("autocapcut.api")
@@ -50,6 +52,8 @@ app.include_router(sync.router,             prefix="/api/sync",             tags
 app.include_router(srt.router,             prefix="/api/srt",              tags=["srt"])
 app.include_router(seo.router,             prefix="/api/seo",              tags=["seo"])
 app.include_router(animation.router,       prefix="/api/animation",        tags=["animation"])
+app.include_router(competitors.router,     prefix="/api/competitors",      tags=["competitors"])
+app.include_router(audio.router,           prefix="/api/audio",            tags=["audio"])
 app.include_router(roxy.router,            prefix="/api/roxy",             tags=["roxy"])
 app.include_router(parent_projects.router, prefix="/api/parent-projects",  tags=["parent-projects"])
 app.include_router(child_projects.router,  prefix="/api/child-projects",   tags=["child-projects"])
@@ -57,11 +61,13 @@ app.include_router(ai_gen.router,          prefix="/api/ai-gen",           tags=
 app.include_router(livestream.router,      prefix="/api/livestream",        tags=["livestream"])
 app.include_router(fast_edit.router,       prefix="/api/fast-edit",         tags=["fast-edit"])
 app.include_router(cut_automate.router,    prefix="/api/cut-automate",      tags=["cut-automate"])
+app.include_router(extension.router,       prefix="/api/extension",          tags=["extension"])
+app.include_router(sora.router,            prefix="/api/sora",               tags=["sora"])
 
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "service": "autocapcut-api"}
+    return {"status": "ok", "service": "masteros-api"}
 
 
 def main() -> None:
