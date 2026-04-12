@@ -1,9 +1,9 @@
 # TODO
 
 ## GitHub Push Without Secrets
-- [in_progress] Lọc file local và config chứa token/cookie trước khi push public repo
-- [pending] Thêm ignore + file mẫu sạch cho config local
-- [pending] Tạo branch, commit toàn bộ code an toàn, rồi push sang repo `YouTube-OS`
+- [x] Lọc file local và config chứa token/cookie trước khi push public repo
+- [x] Thêm ignore + file mẫu sạch cho config local
+- [x] Tạo branch, commit toàn bộ code an toàn, rồi push sang repo `YouTube-OS`
 
 ## Audio Visualizer Preview Parity Fix
 - [x] Audit root cause vì sao render video lệch so với preview
