@@ -8,44 +8,12 @@ import {
   RefreshCcw, Shuffle, FolderOpen,
   FolderCheck, FolderPlus, ChevronDown, ChevronUp,
 } from 'lucide-react'
-import { cutAutomateApi, type CutAutomateTaskResponse, type CutAutonateScanResult, type CutAutomateInitResult } from '@/lib/api'
+import { cutAutomateApi, type CutAutomateTaskResponse, type CutAutonateScanResult, type CutAutomateInitResult, type CutAutomateJobData, type CutAutomateJobResponse } from '@/lib/api'
 import { PathBreadcrumb } from '@/components/ui/PathBreadcrumb'
 import { cn } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
-
-/** Simulated progress: 0→90% while running, then 100% on done */
-function useSimulatedProgress(running: boolean): number {
-  const [progress, setProgress] = useState(0)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  useEffect(() => {
-    if (running) {
-      setProgress(0)
-      // accelerate quickly to 30%, then slow down toward 90%
-      timerRef.current = setInterval(() => {
-        setProgress(prev => {
-          if (prev < 30) return prev + 3
-          if (prev < 60) return prev + 1.5
-          if (prev < 80) return prev + 0.7
-          if (prev < 90) return prev + 0.2
-          return prev
-        })
-      }, 200)
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current)
-      // jump to 100 briefly, then reset
-      setProgress(p => (p > 0 ? 100 : 0))
-      const t = setTimeout(() => setProgress(0), 1200)
-      return () => clearTimeout(t)
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [running])
-
-  return Math.min(Math.round(progress), 100)
-}
-
 
 async function pickDirectory(): Promise<string | null> {
   try {
@@ -73,6 +41,39 @@ interface StepDef {
   color: string       // bg color class for icon bg
   iconColor: string   // text color for icon
   borderColor: string // border accent
+}
+
+interface RunningJobBinding {
+  jobId: string
+  stepKey: StepKey
+  stepLabel: string
+  stepSubtitle: string
+  taskId: string
+  startedAt: number
+  progress: number
+  message: string
+  status: CutAutomateJobData['status']
+}
+
+const STEP_PROGRESS_ESTIMATE_MS: Record<StepKey, number> = {
+  '01': 60_000,
+  '02': 150_000,
+  '03': 75_000,
+  '04': 45_000,
+  '05': 55_000,
+  '06': 55_000,
+  '07': 20_000,
+  '08_le': 12_000,
+  '08_chan': 12_000,
+  '10': 90_000,
+  '11': 100_000,
+}
+
+function simulateProgress(stepKey: StepKey, startedAt: number): number {
+  const elapsed = Date.now() - startedAt
+  const estimate = STEP_PROGRESS_ESTIMATE_MS[stepKey] ?? 60_000
+  const progress = 8 + (elapsed / estimate) * 84
+  return Math.max(8, Math.min(92, Math.round(progress)))
 }
 
 const STEPS: StepDef[] = [
@@ -329,15 +330,11 @@ interface ModalProps {
   running: Partial<Record<StepKey, boolean>>
   results: Partial<Record<StepKey, CutAutomateTaskResponse>>
   ffmpegOk: boolean | null
-  onRun: (key: StepKey, fn: () => Promise<CutAutomateTaskResponse>) => void
-  // progress
-  progressValue: number
-  progressDone: boolean
-  progressResult: CutAutomateTaskResponse | null
+  onRun: (key: StepKey, fn: () => Promise<{ ok: boolean; message: string; data: CutAutomateJobData | null }>) => void
 }
 
 function StepModal(props: ModalProps) {
-  const { step, onClose, ffmpegOk, running, results, onRun, progressValue, progressDone, progressResult } = props
+  const { step, onClose, ffmpegOk, running, results, onRun } = props
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // close on backdrop click only if not running
@@ -354,19 +351,18 @@ function StepModal(props: ModalProps) {
     if (d) setter(d)
   }
 
-  // ── inline progress bar shown inside modal ────────────────────────────────
-  const showProgress = isRunning || progressDone
-  const isSuccess = progressDone && progressResult?.ok === true
-  const isError   = progressDone && progressResult?.ok === false
-
   // ── per-step content ──────────────────────────────────────────────────────
   let body: React.ReactNode = null
   let canRun = false
-  let runFn: (() => Promise<CutAutomateTaskResponse>) | null = null
+  let runFn: (() => Promise<CutAutomateJobResponse>) | null = null
 
   if (step.key === '01') {
     canRun = !!props.videoDir && !!props.catStockDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.catstock(props.videoDir, props.catStockDir, props.segmentTime)
+    runFn = () => cutAutomateApi.startJob('01', {
+      input_dir: props.videoDir,
+      output_dir: props.catStockDir,
+      segment_time: props.segmentTime,
+    })
     body = (
       <>
         <PathBreadcrumb label="Source video (input)" value={props.videoDir} onChange={props.setVideoDir}
@@ -383,7 +379,11 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '02') {
     canRun = !!props.videoDir && !!props.editDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.edit(props.videoDir, props.editDir)
+    runFn = () => cutAutomateApi.startJob('02', {
+      input_dir: props.videoDir,
+      output_dir: props.editDir,
+      bg_wav: null,
+    })
     body = (
       <>
         <PathBreadcrumb label="Source video (input)" value={props.videoDir} onChange={props.setVideoDir}
@@ -395,7 +395,11 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '03') {
     canRun = !!props.videoDir && !!props.taChangDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.tachanh(props.videoDir, props.taChangDir, props.fpsFraction)
+    runFn = () => cutAutomateApi.startJob('03', {
+      input_dir: props.videoDir,
+      output_dir: props.taChangDir,
+      fps_fraction: props.fpsFraction,
+    })
     body = (
       <>
         <PathBreadcrumb label="Source video (input)" value={props.videoDir} onChange={props.setVideoDir}
@@ -412,7 +416,10 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '04') {
     canRun = !!props.videoDir && !!props.tachMp3Dir && !!ffmpegOk
-    runFn = () => cutAutomateApi.tachmp3(props.videoDir, props.tachMp3Dir)
+    runFn = () => cutAutomateApi.startJob('04', {
+      input_dir: props.videoDir,
+      output_dir: props.tachMp3Dir,
+    })
     body = (
       <>
         <PathBreadcrumb label="Source video (input)" value={props.videoDir} onChange={props.setVideoDir}
@@ -424,7 +431,11 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '05') {
     canRun = !!props.catStockDir && !!props.gopLeDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.gopLe(props.catStockDir, props.gopLeDir)
+    runFn = () => cutAutomateApi.startJob('05', {
+      input_dir: props.catStockDir,
+      output_dir: props.gopLeDir,
+      output_name: 'video_gop_le.mp4',
+    })
     body = (
       <>
         <PathBreadcrumb label="Input (01.catstock)" value={props.catStockDir} onChange={props.setCatStockDir}
@@ -436,7 +447,11 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '06') {
     canRun = !!props.catStockDir && !!props.gopChanDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.gopChan(props.catStockDir, props.gopChanDir)
+    runFn = () => cutAutomateApi.startJob('06', {
+      input_dir: props.catStockDir,
+      output_dir: props.gopChanDir,
+      output_name: 'video_gop_chan.mp4',
+    })
     body = (
       <>
         <PathBreadcrumb label="Input (01.catstock)" value={props.catStockDir} onChange={props.setCatStockDir}
@@ -448,7 +463,10 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '07') {
     canRun = !!props.projectDir
-    runFn = () => cutAutomateApi.reset(props.projectDir)
+    runFn = () => cutAutomateApi.startJob('07', {
+      project_dir: props.projectDir,
+      dirs: null,
+    })
     body = (
       <>
         <PathBreadcrumb label="Project folder" value={props.projectDir} onChange={props.setProjectDir}
@@ -461,7 +479,10 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '08_le') {
     canRun = !!props.taChangDir
-    runFn = () => cutAutomateApi.xoaPhotoLe(props.taChangDir)
+    runFn = () => cutAutomateApi.startJob('08_le', {
+      image_dir: props.taChangDir,
+      dry_run: false,
+    })
     body = (
       <>
         <PathBreadcrumb label="Image folder (03.tachanh)" value={props.taChangDir} onChange={props.setTaChangDir}
@@ -471,7 +492,10 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '08_chan') {
     canRun = !!props.taChangDir
-    runFn = () => cutAutomateApi.xoaPhotoChan(props.taChangDir)
+    runFn = () => cutAutomateApi.startJob('08_chan', {
+      image_dir: props.taChangDir,
+      dry_run: false,
+    })
     body = (
       <>
         <PathBreadcrumb label="Image folder (03.tachanh)" value={props.taChangDir} onChange={props.setTaChangDir}
@@ -481,7 +505,12 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '10') {
     canRun = !!props.taChangDir && !!props.photoRandomDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.gopPhotoRandom(props.taChangDir, props.photoRandomDir, props.photoFps)
+    runFn = () => cutAutomateApi.startJob('10', {
+      image_dir: props.taChangDir,
+      output_dir: props.photoRandomDir,
+      fps: props.photoFps,
+      output_name: 'video_random.mp4',
+    })
     body = (
       <>
         <PathBreadcrumb label="Image input (03.tachanh)" value={props.taChangDir} onChange={props.setTaChangDir}
@@ -498,7 +527,11 @@ function StepModal(props: ModalProps) {
     )
   } else if (step.key === '11') {
     canRun = !!props.catStockDir && !!props.stockRandomDir && !!ffmpegOk
-    runFn = () => cutAutomateApi.gopVideoStockRandom(props.catStockDir, props.stockRandomDir)
+    runFn = () => cutAutomateApi.startJob('11', {
+      input_dir: props.catStockDir,
+      output_dir: props.stockRandomDir,
+      output_name: 'gop_stock_random.mp4',
+    })
     body = (
       <>
         <PathBreadcrumb label="Input (01.catstock)" value={props.catStockDir} onChange={props.setCatStockDir}
@@ -549,84 +582,30 @@ function StepModal(props: ModalProps) {
         </div>
 
         {/* Modal footer */}
-        <div className="px-5 pb-5 space-y-3">
+        <div className="space-y-3 px-5 pb-5">
+          <div className="rounded-xl border border-surface-200 bg-surface-50 px-3.5 py-3 text-xs leading-relaxed text-surface-500">
+            Khi chạy, tiến trình sẽ nổi ở góc phải dưới. Bạn vẫn có thể tiếp tục dùng các step khác trong Cut Image song song.
+          </div>
 
-          {/* ── Inline progress bar ── */}
-          {showProgress && (
-            <div className={cn(
-              'rounded-xl border px-3.5 py-3 space-y-2',
-              isSuccess ? 'bg-green-50 border-green-200'
-              : isError  ? 'bg-red-50 border-red-200'
-              : 'bg-indigo-50 border-indigo-200',
-            )}>
-              {/* Header row */}
-              <div className="flex items-center gap-2">
-                <div className={cn(
-                  'w-6 h-6 rounded-lg flex items-center justify-center shrink-0',
-                  isSuccess ? 'bg-green-100' : isError ? 'bg-red-100' : 'bg-indigo-100',
-                )}>
-                  {isSuccess
-                    ? <CheckCircle size={12} className="text-green-600" />
-                    : isError
-                      ? <AlertCircle size={12} className="text-red-500" />
-                      : <Loader size={12} className="text-indigo-600 animate-spin" />
-                  }
-                </div>
-                <p className={cn(
-                  'flex-1 text-xs font-semibold',
-                  isSuccess ? 'text-green-800' : isError ? 'text-red-800' : 'text-indigo-700',
-                )}>
-                  {isSuccess ? 'Completed!' : isError ? 'An error occurred' : `Running...`}
-                </p>
-                {!progressDone && (
-                  <span className="text-xs font-bold tabular-nums text-indigo-600">
-                    {progressValue}%
-                  </span>
-                )}
-              </div>
-
-              {/* Progress bar */}
-              {!progressDone ? (
-                <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${progressValue}%` }}
-                  />
-                </div>
-              ) : (
-                <div className="h-1.5 rounded-full overflow-hidden">
-                  <div className={cn('h-full rounded-full', isSuccess ? 'bg-green-500' : 'bg-red-400')}
-                    style={{ width: '100%' }} />
-                </div>
-              )}
-
-              {/* Result message */}
-              {progressDone && progressResult?.message && (
-                <p className={cn(
-                  'text-[11px] leading-snug',
-                  isSuccess ? 'text-green-700' : 'text-red-600',
-                )}>
-                  {progressResult.message}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* ── Run button ── */}
           <button
             className={cn(
               'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150',
-              'text-white shadow-sm',
+              'shadow-sm',
               canRun && !isRunning
-                ? 'bg-primary-500 hover:bg-primary-600 cursor-pointer'
+                ? 'bg-primary-500 text-white hover:bg-primary-600 cursor-pointer'
                 : 'bg-surface-200 text-surface-400 cursor-not-allowed',
             )}
-            onClick={() => { if (canRun && runFn && !isRunning) onRun(step.key, runFn) }}
+            onClick={() => {
+              if (canRun && runFn && !isRunning) {
+                onRun(step.key, runFn)
+                onClose()
+              }
+            }}
             disabled={!canRun || isRunning}
           >
             {isRunning
-              ? <><Loader size={14} className="animate-spin" /> Running...</>
-              : <><Play size={14} /> Run step {step.number}</>
+              ? <><Loader size={14} className="animate-spin" /> Already running…</>
+              : <><Play size={14} /> Run step {step.number} in background</>
             }
           </button>
         </div>
@@ -746,50 +725,118 @@ export default function CutAutomate() {
   // ── Per-step running/result state ─────────────────────────────────────────
   const [running, setRunning] = useState<Partial<Record<StepKey, boolean>>>({})
   const [results, setResults] = useState<Partial<Record<StepKey, CutAutomateTaskResponse>>>({})
+  const [runningJobs, setRunningJobs] = useState<Record<string, RunningJobBinding>>({})
+  const runningJobsRef = useRef<Record<string, RunningJobBinding>>({})
 
-  // ── Progress overlay state ────────────────────────────────────────────────
-  const [progressStep, setProgressStep] = useState<{ key: StepKey; label: string; number: string } | null>(null)
-  const [progressDone, setProgressDone] = useState(false)
-  const [progressResult, setProgressResult] = useState<CutAutomateTaskResponse | null>(null)
-  const progressValue = useSimulatedProgress(!!(progressStep && !progressDone))
+  useEffect(() => {
+    runningJobsRef.current = runningJobs
+  }, [runningJobs])
 
-  const run = async (key: StepKey, fn: () => Promise<CutAutomateTaskResponse>) => {
-    const stepDef = STEPS.find(s => s.key === key)!
-    setProgressStep({ key, label: stepDef.sublabel, number: stepDef.number })
-    setProgressDone(false)
-    setProgressResult(null)
-    setRunning(p => ({ ...p, [key]: true }))
+  const run = async (
+    key: StepKey,
+    fn: () => Promise<{ ok: boolean; message: string; data: CutAutomateJobData | null }>,
+  ) => {
+    const stepDef = STEPS.find(s => s.key === key)
+    if (!stepDef) return
 
-    // Register task in global store for background notification
-    const taskId = taskStore.add({
-      toolId: 'cut-automate',
-      toolLabel: 'Cut Automate',
-      label: `Step ${stepDef.number} - ${stepDef.label}`,
-    })
-
+    setRunning(prev => ({ ...prev, [key]: true }))
     try {
-      const r = await fn()
-      setResults(p => ({ ...p, [key]: r }))
-      setProgressResult(r)
-      setProgressDone(true)
-      taskStore.complete(taskId, r.ok ? 'done' : 'error', r.message)
+      const started = await fn()
+      if (!started.ok || !started.data) {
+        const errRes = { ok: false, message: started.message || 'Unable to start task', data: null }
+        setResults(prev => ({ ...prev, [key]: errRes }))
+        setRunning(prev => ({ ...prev, [key]: false }))
+        return
+      }
+
+      const taskId = taskStore.add({
+        toolId: 'cut-automate',
+        toolLabel: 'Cut Image',
+        label: `Step ${stepDef.number} - ${stepDef.label}`,
+        message: stepDef.sublabel,
+        progress: 8,
+        canCancel: true,
+        jobId: started.data.job_id,
+      })
+
+      const binding: RunningJobBinding = {
+        jobId: started.data.job_id,
+        stepKey: key,
+        stepLabel: stepDef.label,
+        stepSubtitle: stepDef.sublabel,
+        taskId,
+        startedAt: Date.now(),
+        progress: 8,
+        message: stepDef.sublabel,
+        status: 'running',
+      }
+
+      setRunningJobs(prev => ({ ...prev, [started.data!.job_id]: binding }))
     } catch (e: any) {
       const errRes = { ok: false, message: e?.message ?? 'Unknown error', data: null }
-      setResults(p => ({ ...p, [key]: errRes }))
-      setProgressResult(errRes)
-      setProgressDone(true)
-      taskStore.complete(taskId, 'error', errRes.message)
-    } finally {
-      setRunning(p => ({ ...p, [key]: false }))
-      // Modal stays open so user sees the result inline
-      // Auto-reset progress display after 3s
-      setTimeout(() => {
-        setProgressStep(null)
-        setProgressDone(false)
-        setProgressResult(null)
-      }, 3000)
+      setResults(prev => ({ ...prev, [key]: errRes }))
+      setRunning(prev => ({ ...prev, [key]: false }))
     }
   }
+
+  useEffect(() => {
+    if (Object.keys(runningJobs).length === 0) return
+
+    const tick = window.setInterval(() => {
+      const entries = Object.entries(runningJobsRef.current)
+      if (entries.length === 0) return
+
+      void Promise.all(entries.map(async ([jobId, binding]) => {
+        try {
+          const snapshot = await cutAutomateApi.getJob(jobId)
+          if (!snapshot.ok || !snapshot.data) return
+
+          if (snapshot.data.status === 'running') {
+            taskStore.update(binding.taskId, {
+              progress: simulateProgress(binding.stepKey, binding.startedAt),
+              message: snapshot.data.stop_requested ? 'Stopping…' : binding.stepSubtitle,
+            })
+            return
+          }
+
+          const finalResult = snapshot.data.result ?? {
+            ok: snapshot.data.status === 'done',
+            message: snapshot.data.message,
+            data: null,
+          }
+
+          setResults(prev => ({ ...prev, [binding.stepKey]: finalResult }))
+          setRunning(prev => ({ ...prev, [binding.stepKey]: false }))
+
+          if (snapshot.data.status === 'cancelled') {
+            taskStore.complete(binding.taskId, 'cancelled', finalResult.message || 'Stopped by user.')
+          } else {
+            taskStore.complete(binding.taskId, finalResult.ok ? 'done' : 'error', finalResult.message)
+          }
+
+          setRunningJobs(prev => {
+            const next = { ...prev }
+            delete next[jobId]
+            return next
+          })
+        } catch (error: any) {
+          setResults(prev => ({
+            ...prev,
+            [binding.stepKey]: { ok: false, message: error?.message ?? 'Failed to fetch job status', data: null },
+          }))
+          setRunning(prev => ({ ...prev, [binding.stepKey]: false }))
+          taskStore.complete(binding.taskId, 'error', error?.message ?? 'Failed to fetch job status')
+          setRunningJobs(prev => {
+            const next = { ...prev }
+            delete next[jobId]
+            return next
+          })
+        }
+      }))
+    }, 800)
+
+    return () => window.clearInterval(tick)
+  }, [runningJobs])
 
   // ── Active modal ──────────────────────────────────────────────────────────
   const [activeStep, setActiveStep] = useState<StepKey | null>(null)
@@ -811,9 +858,6 @@ export default function CutAutomate() {
     photoFps, setPhotoFps,
     running, results, ffmpegOk,
     onRun: run,
-    progressValue,
-    progressDone,
-    progressResult,
   }
 
   const doneCount = Object.values(results).filter(r => r?.ok).length

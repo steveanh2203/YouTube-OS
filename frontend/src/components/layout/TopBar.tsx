@@ -1,59 +1,41 @@
 import { useAppStore } from '@/store/app.store'
-import { RefreshCw, Settings } from 'lucide-react'
-
-const VIEW_LABELS: Record<string, string> = {
-  projects:   'Projects',
-  render:     'Render Dashboard',
-  analytics:  'Analytics',
-}
-
-const SUB_LABELS: Record<string, string> = {
-  parents:    'All Projects',
-  children:   'Child Projects',
-  'ai-gen':   'AI Gen',
-  'ai-audio': 'AI Audio',
-  livestream: 'Livestream',
-}
+import { Columns2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 export default function TopBar() {
-  const { mainView, projectSubView, isLoading, loadingText } = useAppStore()
-
-  const title = VIEW_LABELS[mainView] ?? mainView
-  const sub = mainView === 'projects' ? SUB_LABELS[projectSubView] : undefined
+  const { splitView, setSplitView, isLoading, loadingText } = useAppStore()
 
   return (
     <header
-      className="flex items-center h-11 px-4 border-b border-surface-200 bg-white shrink-0 gap-3"
+      className="flex items-center h-10 px-4 border-b border-surface-200 bg-white shrink-0 gap-3"
       data-tauri-drag-region
     >
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-1.5 flex-1" data-tauri-drag-region>
-        <span className="text-sm font-semibold text-surface-900">{title}</span>
-        {sub && (
-          <>
-            <span className="text-surface-300">/</span>
-            <span className="text-sm text-surface-500">{sub}</span>
-          </>
-        )}
+      {/* App title / drag region */}
+      <div className="flex-1 text-xs text-surface-400 select-none" data-tauri-drag-region>
+        MasterOS
       </div>
 
       {/* Loading indicator */}
       {isLoading && (
         <div className="flex items-center gap-2 text-xs text-surface-500">
-          <RefreshCw size={12} className="animate-spin" />
+          <span className="animate-spin inline-block w-3 h-3 border border-surface-400 border-t-transparent rounded-full" />
           <span>{loadingText || 'Loading...'}</span>
         </div>
       )}
 
-      {/* Settings */}
-      <div className="flex items-center gap-1 ml-2">
-        <button
-          className="btn-icon text-surface-400 hover:text-surface-700 hover:bg-surface-100"
-          title="Settings"
-        >
-          <Settings size={14} />
-        </button>
-      </div>
+      {/* Split View toggle */}
+      <button
+        className={cn(
+          'btn-icon transition-colors',
+          splitView
+            ? 'text-primary-600 bg-primary-50 hover:bg-primary-100'
+            : 'text-surface-400 hover:text-surface-700 hover:bg-surface-100',
+        )}
+        title={splitView ? 'Close split view' : 'Open split view'}
+        onClick={() => setSplitView(!splitView)}
+      >
+        <Columns2 size={15} />
+      </button>
     </header>
   )
 }

@@ -93,6 +93,18 @@ def _ensure_sqlite_columns(engine) -> None:
         conn.exec_driver_sql(
             "UPDATE child_projects SET planning_note = '' WHERE planning_note IS NULL"
         )
+        conn.exec_driver_sql(
+            """
+            CREATE INDEX IF NOT EXISTS idx_community_posts_parent_status
+            ON community_posts (parent_project_id, status)
+            """
+        )
+        conn.exec_driver_sql(
+            """
+            CREATE INDEX IF NOT EXISTS idx_community_posts_schedule_at
+            ON community_posts (status, schedule_at)
+            """
+        )
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

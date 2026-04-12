@@ -2,11 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR/frontend"
 
-if [ ! -d ".venv" ]; then
-  python3 -m venv .venv
+if [ ! -d "node_modules" ]; then
+  npm install
 fi
 
-"$ROOT_DIR/.venv/bin/python" -m pip install -r requirements.txt
-exec "$ROOT_DIR/.venv/bin/python" main.py
+exec npm run tauri:dev

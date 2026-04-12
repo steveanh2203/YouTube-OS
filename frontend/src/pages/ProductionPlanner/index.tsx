@@ -707,10 +707,10 @@ export default function ProductionPlanner() {
   }
 
   const stats = [
-    { label: 'Overdue',   value: overdueCount,  sub: 'overdue',    icon: AlertTriangle, tone: 'text-rose-700   bg-rose-50   border-rose-200'    },
-    { label: 'Due Today', value: dueTodayCount,  sub: 'due today',  icon: CalendarClock, tone: 'text-amber-700  bg-amber-50  border-amber-200'   },
-    { label: 'Ready',     value: readyCount,     sub: 'ready',      icon: Sparkles,      tone: 'text-primary-700 bg-primary-50 border-primary-200' },
-    { label: 'Editing',   value: editingCount,   sub: 'editing',    icon: ChevronsRight, tone: 'text-sky-700    bg-sky-50    border-sky-200'      },
+    { label: 'Overdue',   value: overdueCount,  icon: AlertTriangle, accentBg: 'bg-rose-500',    iconBg: 'bg-rose-100',    iconColor: 'text-rose-600'    },
+    { label: 'Due Today', value: dueTodayCount,  icon: CalendarClock, accentBg: 'bg-amber-500',   iconBg: 'bg-amber-100',   iconColor: 'text-amber-600'   },
+    { label: 'Ready',     value: readyCount,     icon: Sparkles,      accentBg: 'bg-primary-500', iconBg: 'bg-primary-100', iconColor: 'text-primary-600' },
+    { label: 'Editing',   value: editingCount,   icon: ChevronsRight, accentBg: 'bg-sky-500',     iconBg: 'bg-sky-100',     iconColor: 'text-sky-600'     },
   ]
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -843,14 +843,16 @@ export default function ProductionPlanner() {
         {/* ── Focus strip (stat cards) ── */}
         <div className="mt-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
           {stats.map((s) => (
-            <div key={s.label} className={cn('flex items-center gap-3 rounded-xl border px-4 py-3', s.tone)}>
-              <s.icon size={16} className="shrink-0" />
-              <div className="min-w-0">
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-2xl font-bold leading-none">{s.value}</span>
-                  <span className="text-xs font-medium opacity-70">{s.sub}</span>
+            <div key={s.label} className="relative bg-white rounded-xl border border-surface-100 shadow-sm overflow-hidden flex items-stretch">
+              <div className={cn('w-1 shrink-0', s.accentBg)} />
+              <div className="flex items-center gap-3 px-4 py-3 flex-1">
+                <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center shrink-0', s.iconBg)}>
+                  <s.icon size={15} className={s.iconColor} />
                 </div>
-                <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-60">{s.label}</p>
+                <div className="min-w-0">
+                  <div className="text-2xl font-bold text-surface-900 leading-none tabular-nums">{s.value}</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-surface-400 mt-0.5">{s.label}</div>
+                </div>
               </div>
             </div>
           ))}

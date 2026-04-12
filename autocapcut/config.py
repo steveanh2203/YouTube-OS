@@ -1,4 +1,4 @@
-"""Centralised configuration for the AutoCapcut prototype."""
+"""Centralized configuration for MasterOS."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

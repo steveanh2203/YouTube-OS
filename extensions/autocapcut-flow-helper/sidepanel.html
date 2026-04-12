@@ -7,13 +7,15 @@
     <style>
       :root {
         color-scheme: light;
-        --bg: #edf3fb;
+        --bg: #f0fdfa;
         --panel: rgba(255, 255, 255, 0.96);
-        --border: #d6e1ef;
-        --text: #17324d;
+        --border: #cfe9e6;
+        --text: #134e4a;
         --muted: #64748b;
-        --accent: #0f9fb0;
-        --accent-dark: #0a7181;
+        --accent: #0d9488;
+        --accent-dark: #115e59;
+        --cta: #f97316;
+        --cta-dark: #ea580c;
       }
 
       * {
@@ -24,7 +26,7 @@
       body {
         margin: 0;
         min-height: 100%;
-        background: linear-gradient(180deg, #f4f7fc 0%, var(--bg) 100%);
+        background: linear-gradient(180deg, #f9fffe 0%, var(--bg) 100%);
         color: var(--text);
         font: 14px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
       }
@@ -157,6 +159,21 @@
         font-weight: 600;
       }
 
+      .status.is-success {
+        background: #ecfdf5;
+        color: #047857;
+      }
+
+      .status.is-error {
+        background: #fff1f2;
+        color: #be123c;
+      }
+
+      .status.is-idle {
+        background: #fff7ed;
+        color: #c2410c;
+      }
+
       .dot {
         width: 8px;
         height: 8px;
@@ -231,6 +248,75 @@
         color: var(--text);
         white-space: nowrap;
       }
+
+      .section-card {
+        margin-top: 16px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 16px;
+        background: linear-gradient(180deg, #ffffff 0%, #f7fffd 100%);
+        box-shadow: 0 10px 26px rgba(13, 148, 136, 0.08);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .section-title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .section-copy {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .sora-input {
+        width: 100%;
+        min-height: 44px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #ffffff;
+        color: var(--text);
+        font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .sora-input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
+      }
+
+      .status-copy {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .sora-actions {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+      }
+
+      .sora-open {
+        background: var(--cta);
+        color: #fff;
+      }
+
+      .sora-open:hover {
+        background: var(--cta-dark);
+      }
     </style>
   </head>
   <body>
@@ -297,7 +383,39 @@
           </div>
         </div>
       </section>
+
+      <section class="section-card">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Sora Worker</h2>
+            <p class="section-copy">Paste the bridge key from MasterOS. The extension will auto verify, then the Sora tab will pick jobs from the desktop app.</p>
+          </div>
+          <div id="sora-status-pill" class="status is-idle">
+            <span class="dot"></span>
+            <span id="sora-status-text">Paste bridge key</span>
+          </div>
+        </div>
+
+        <div class="stack" style="margin-top:0">
+          <div class="field">
+            <label class="label" for="sora-api-key">Bridge Key</label>
+            <div class="sora-actions">
+              <input id="sora-api-key" class="sora-input" type="text" placeholder="Paste the key from MasterOS Sora Gen" autocomplete="off" spellcheck="false">
+              <button id="sora-copy-key" class="copy-inline" type="button" disabled>Copy</button>
+            </div>
+            <p id="sora-status-sub" class="status-copy">Copy the key from MasterOS, then open a Sora tab.</p>
+          </div>
+
+          <button id="sora-open-tab" class="sora-open" type="button">Open Sora</button>
+
+          <div class="field">
+            <div class="label">Sora Logs</div>
+            <div id="sora-log-box" class="log-box empty">No Sora logs yet.</div>
+          </div>
+        </div>
+      </section>
     </main>
     <script src="popup.js"></script>
+    <script src="sora-panel.js"></script>
   </body>
   </html>

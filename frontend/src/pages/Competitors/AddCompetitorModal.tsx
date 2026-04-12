@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppStore, type CompetitorPurpose } from '@/store/app.store'
-import { extractVideoId } from './index'
+import { extractVideoId } from './utils'
 import { X, Loader2, AlertTriangle, CheckCircle2, Link } from 'lucide-react'
 import { cn } from '@/lib/utils'
 

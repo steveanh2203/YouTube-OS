@@ -1,7 +1,10 @@
-def main() -> None:
-    from autocapcut.ui.flet_app import launch
+"""Compatibility entrypoint for the Tauri/FastAPI desktop stack."""
 
-    launch()
+from autocapcut.api.server import main as run_api
+
+
+def main() -> None:
+    run_api()
 
 
 if __name__ == "__main__":

@@ -203,6 +203,34 @@ class CompetitorVideo(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Community Post
+# ---------------------------------------------------------------------------
+
+class CommunityPost(SQLModel, table=True):
+    __tablename__ = "community_posts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    parent_project_id: int = Field(foreign_key="parent_projects.id", nullable=False, index=True)
+    child_project_id: Optional[int] = Field(default=None, foreign_key="child_projects.id", index=True)
+    body: str = Field(default="", nullable=False)
+    image_path: Optional[str] = Field(default=None)
+    status: str = Field(default="draft", index=True)  # draft | queued | posting | published | failed | cancelled
+    post_mode: str = Field(default="now")             # now | schedule
+    schedule_at: Optional[datetime] = Field(default=None, index=True)
+    queued_at: Optional[datetime] = Field(default=None)
+    posting_started_at: Optional[datetime] = Field(default=None)
+    published_at: Optional[datetime] = Field(default=None)
+    youtube_post_url: Optional[str] = Field(default=None)
+    youtube_post_id: Optional[str] = Field(default=None)
+    channel_url: Optional[str] = Field(default=None)
+    last_error: Optional[str] = Field(default=None)
+    last_attempt_at: Optional[datetime] = Field(default=None)
+    attempt_count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Parent Doc Folder  (named folder inside a parent project's documents area)
 # ---------------------------------------------------------------------------
 
@@ -236,3 +264,40 @@ class ParentDoc(SQLModel, table=True):
 
     parent_project: Optional[ParentProject] = Relationship(back_populates="docs")
     folder: Optional[ParentDocFolder] = Relationship(back_populates="docs")
+
+
+# ---------------------------------------------------------------------------
+# Sora Job  (N generation jobs per child project — batch video gen)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Visualizer Preset  (Audio Visualizer tool — save/load named configs)
+# ---------------------------------------------------------------------------
+
+class VisualizerPreset(SQLModel, table=True):
+    __tablename__ = "visualizer_presets"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(nullable=False, unique=True)
+    config: str = Field(nullable=False)               # JSON blob — VisualizerConfig
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SoraJob(SQLModel, table=True):
+    __tablename__ = "sora_jobs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    child_project_id: int = Field(index=True, nullable=False)
+    job_index: int = Field(default=1)                    # thứ tự hiển thị: 1, 2, 3...
+    prompt: str = Field(nullable=False)
+    ratio: str = Field(default="16:9")                   # "16:9" | "9:16" | "1:1"
+    duration: int = Field(default=5)                     # 5 | 10 | 20 giây
+    status: str = Field(default="pending")               # pending | generating | done | failed
+    progress: int = Field(default=0)                     # 0-100
+    video_path: Optional[str] = Field(default=None)      # local path sau khi download
+    generation_id: Optional[str] = Field(default=None)   # Sora generation ID
+    permalink: Optional[str] = Field(default=None)       # public Sora link
+    error_msg: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

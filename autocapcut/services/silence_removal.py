@@ -1,11 +1,14 @@
 """Silence compression using WebRTC VAD and FFmpeg chunk concat."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Sequence, Tuple
@@ -87,10 +90,19 @@ def remove_silence_batch(
     skipped = 0
     errors: List[str] = []
 
-    for index, audio_path in enumerate(audio_files, start=1):
-        if progress_callback:
-            progress_callback(index - 1, total, audio_path)
+    # Thread-safe progress counter
+    _progress_lock = threading.Lock()
+    _done_count = [0]
 
+    def _process_one(audio_path: Path):
+        with _progress_lock:
+            idx = _done_count[0]
+            _done_count[0] += 1
+
+        if progress_callback:
+            progress_callback(idx, total, audio_path)
+
+        result = {"processed": 0, "output_files": 0, "skipped": 0, "errors": []}
         try:
             output_path = output_folder / audio_path.name
             if output_path.exists():
@@ -121,23 +133,23 @@ def remove_silence_batch(
 
             if not keep_ranges:
                 _copy_original(audio_path, output_path)
-                processed += 1
-                output_files += 1
-                errors.append(
+                result["processed"] += 1
+                result["output_files"] += 1
+                result["errors"].append(
                     f"[NOTE] {audio_path.name}: No non-silent segments detected; copied original file unchanged."
                 )
             elif _is_full_coverage(keep_ranges, duration_s):
                 _copy_original(audio_path, output_path)
-                processed += 1
-                output_files += 1
-                errors.append(
+                result["processed"] += 1
+                result["output_files"] += 1
+                result["errors"].append(
                     f"[NOTE] {audio_path.name}: No sizable silence removed; copied original file unchanged."
                 )
             elif _is_overcut_or_fragmented(keep_ranges, duration_s):
                 _copy_original(audio_path, output_path)
-                processed += 1
-                output_files += 1
-                errors.append(
+                result["processed"] += 1
+                result["output_files"] += 1
+                result["errors"].append(
                     f"[NOTE] {audio_path.name}: Safety rollback triggered (over-cut risk); copied original file unchanged."
                 )
             else:
@@ -148,18 +160,32 @@ def remove_silence_batch(
                     ffmpeg_bin=ffmpeg_bin,
                     keep_temp_chunks=False,
                 )
-                processed += 1
-                output_files += 1
+                result["processed"] += 1
+                result["output_files"] += 1
         except SilenceRemovalError as exc:
-            skipped += 1
-            errors.append(f"{audio_path.name}: {exc}")
+            result["skipped"] += 1
+            result["errors"].append(f"{audio_path.name}: {exc}")
         except Exception as exc:  # pragma: no cover - defensive guard
-            skipped += 1
+            result["skipped"] += 1
             logger.exception("Unexpected error while processing {}", audio_path.name)
-            errors.append(f"{audio_path.name}: Unexpected error: {exc}")
+            result["errors"].append(f"{audio_path.name}: Unexpected error: {exc}")
 
         if progress_callback:
-            progress_callback(index, total, audio_path)
+            with _progress_lock:
+                done = _done_count[0]
+            progress_callback(done, total, audio_path)
+
+        return result
+
+    max_workers = min(4, os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_process_one, path): path for path in audio_files}
+        for future in as_completed(futures):
+            r = future.result()
+            processed += r["processed"]
+            output_files += r["output_files"]
+            skipped += r["skipped"]
+            errors.extend(r["errors"])
 
     return SilenceRemovalSummary(
         processed=processed,

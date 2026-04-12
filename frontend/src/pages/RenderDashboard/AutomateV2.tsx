@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/store/app.store'
 import { seoApi, roxyApi } from '@/lib/api'
+import { loadRoxyConfig, normalizeRoxyHost, saveRoxyConfig, type RoxyConfig } from '@/lib/roxy'
 import {
   Zap, Plus, Play, Loader, CheckCircle, XCircle,
   ChevronDown, ChevronUp, Settings, Film, Trash2,
@@ -20,23 +21,6 @@ interface AutomateJob {
   childId: string
   status: JobStatus
   errorMsg?: string
-}
-
-interface RoxyConfig {
-  apiHost: string
-  apiToken: string
-  workspaceId: number | null
-  profileId: string
-}
-
-const ROXY_KEY = 'automate_v2_roxy'
-
-function loadRoxy(): RoxyConfig {
-  try {
-    const s = localStorage.getItem(ROXY_KEY)
-    if (s) return JSON.parse(s)
-  } catch { /* ignore */ }
-  return { apiHost: 'http://127.0.0.1:1080', apiToken: '', workspaceId: null, profileId: '' }
 }
 
 // ─── Add Video Dialog ─────────────────────────────────────────────────────────
@@ -147,11 +131,11 @@ export default function AutomateV2() {
   const [jobs, setJobs]                   = useState<AutomateJob[]>([])
   const [pendingPath, setPendingPath]     = useState<string | null>(null)
   const [running, setRunning]             = useState(false)
-  const [roxy, setRoxy]                   = useState<RoxyConfig>(loadRoxy)
+  const [roxy, setRoxy]                   = useState<RoxyConfig>(loadRoxyConfig)
   const [showConfig, setShowConfig]       = useState(false)
 
   useEffect(() => {
-    localStorage.setItem(ROXY_KEY, JSON.stringify(roxy))
+    saveRoxyConfig(roxy)
   }, [roxy])
 
   const updateJob = (id: string, patch: Partial<AutomateJob>) =>
@@ -214,7 +198,7 @@ export default function AutomateV2() {
     updateJob(job.id, { status: 'upload' })
     try {
       const res = await roxyApi.upload({
-        api_host: roxy.apiHost,
+        api_host: normalizeRoxyHost(roxy.apiHost),
         api_token: roxy.apiToken,
         workspace_id: roxy.workspaceId,
         profile_id: roxy.profileId,
@@ -269,7 +253,8 @@ export default function AutomateV2() {
             <div className="col-span-2">
               <label className="label">API Host</label>
               <input className="input text-xs font-mono" value={roxy.apiHost}
-                onChange={e => setRoxy(r => ({ ...r, apiHost: e.target.value }))} />
+                onChange={e => setRoxy(r => ({ ...r, apiHost: e.target.value }))}
+                onBlur={e => setRoxy(r => ({ ...r, apiHost: normalizeRoxyHost(e.target.value) }))} />
             </div>
             <div className="col-span-2">
               <label className="label">API Token</label>

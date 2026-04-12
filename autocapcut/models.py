@@ -1,4 +1,4 @@
-"""Domain models used across the AutoCapcut prototype."""
+"""Domain models used across MasterOS."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

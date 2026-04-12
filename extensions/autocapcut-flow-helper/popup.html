@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Google Flow Helper</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef3fb;
+        --panel: #ffffff;
+        --border: #d7e0ee;
+        --text: #17324d;
+        --muted: #64748b;
+        --accent: #0f9fb0;
+        --accent-dark: #0a7181;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 360px;
+        background: linear-gradient(180deg, #f4f7fc 0%, var(--bg) 100%);
+        color: var(--text);
+        font: 14px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      .shell {
+        padding: 16px;
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 10px 30px rgba(15, 35, 60, 0.08);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.2;
+      }
+
+      .subhead {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .value {
+        min-height: 46px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: #fbfdff;
+        font-size: 14px;
+        word-break: break-word;
+      }
+
+      textarea.value,
+      select.value {
+        width: 100%;
+        min-height: 0;
+        color: var(--text);
+        resize: vertical;
+        font: inherit;
+      }
+
+      textarea.value {
+        min-height: 96px;
+      }
+
+      .value.empty {
+        color: var(--muted);
+      }
+
+      .token-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .token-value {
+        min-height: 38px;
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #fbfdff;
+        font-size: 12px;
+        font-family: monospace;
+        word-break: break-all;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        line-height: 1.5;
+      }
+
+      .copy-inline {
+        flex-shrink: 0;
+        padding: 8px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        background: #e9f0fa;
+        color: var(--text);
+        white-space: nowrap;
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .button-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 14px;
+        padding: 11px 14px;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      button.primary:hover {
+        background: var(--accent-dark);
+      }
+
+      button.secondary {
+        background: #e9f0fa;
+        color: var(--text);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 999px;
+        background: #eef8fa;
+        color: var(--accent-dark);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="card">
+        <h1>Google Flow Helper</h1>
+        <div class="subhead">Create or detect the current Flow project ID.</div>
+
+        <div class="stack">
+          <div id="status-pill" class="status">
+            <span class="dot"></span>
+            <span id="status-text">Checking active tab</span>
+          </div>
+
+          <div class="field">
+            <div class="label">Project ID</div>
+            <div class="token-row">
+              <div id="project-id" class="token-value empty">Open a Google Flow tab to detect a project ID.</div>
+              <button id="copy-project-inline" class="copy-inline" type="button" disabled>Copy</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">Access Key (Bearer Token)</div>
+            <div class="token-row">
+              <div id="bearer-token" class="token-value empty">Not captured yet — trigger a generate in Flow</div>
+              <button id="copy-bearer" class="copy-inline" type="button" disabled>Copy</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="label">Session Cookie</div>
+            <div class="token-row">
+              <div id="session-cookie" class="token-value empty">Not captured yet — open a Flow tab</div>
+              <button id="copy-session-cookie" class="copy-inline" type="button" disabled>Copy</button>
+            </div>
+          </div>
+
+          <div class="meta">
+            <div class="field">
+              <div class="label">Source</div>
+              <div id="source" class="value empty">Not detected</div>
+            </div>
+            <div class="field">
+              <div class="label">Model</div>
+              <div id="model" class="value empty">Unknown</div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="label" for="prompt-input">Prompt</label>
+            <textarea id="prompt-input" class="value" placeholder="Enter a prompt for Google Flow"></textarea>
+          </div>
+
+          <div class="field">
+            <label class="label" for="model-select">Generate With</label>
+            <select id="model-select" class="value">
+              <option value="Nano Banana Pro">Nano Banana Pro</option>
+              <option value="Nano Banana 2">Nano Banana 2</option>
+              <option value="Imagen 4">Imagen 4</option>
+            </select>
+          </div>
+
+          <div class="button-row">
+            <button id="create-project" class="primary" type="button">Get Token</button>
+            <button id="refresh" class="secondary" type="button">Refresh</button>
+          </div>
+
+          <button id="open-flow" class="secondary" type="button">Open Google Flow</button>
+          <button id="copy-config" class="secondary" type="button" disabled>Copy Flow Config</button>
+          <button id="copy-project" class="secondary" type="button" disabled>Copy Project ID</button>
+        </div>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+  </html>

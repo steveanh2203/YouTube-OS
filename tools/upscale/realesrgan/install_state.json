@@ -1,0 +1,9 @@
+{
+  "version": "v0.2.5.0",
+  "platform": "macos",
+  "asset_name": "realesrgan-ncnn-vulkan-20220424-macos.zip",
+  "archive_sha256": "e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a",
+  "binary_path": "/Users/steveanh/Desktop/Quản lý project/Vibe Coding/Phần mềm bổ trợ YouTube/Auto Capcut/AutoCapCut/tools/upscale/realesrgan/bin/macos/realesrgan-ncnn-vulkan",
+  "model_dir": "/Users/steveanh/Desktop/Quản lý project/Vibe Coding/Phần mềm bổ trợ YouTube/Auto Capcut/AutoCapCut/tools/upscale/realesrgan/models",
+  "installed_at": "2026-03-16T09:55:57Z"
+}

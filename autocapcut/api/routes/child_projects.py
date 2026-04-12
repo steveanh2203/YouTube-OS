@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -33,6 +33,10 @@ class ChildProjectCreate(BaseModel):
     video_number: int
     description: str = ""
     base_folder_path: str | None = None
+    planning_stage: str = "backlog"
+    priority: str = "medium"
+    deadline: date | None = None
+    planning_note: str = ""
 
 
 class ChildProjectUpdate(BaseModel):
@@ -42,6 +46,13 @@ class ChildProjectUpdate(BaseModel):
     seeding_comments: str | None = None
     base_folder_path: str | None = None
     status: str | None = None
+    planning_stage: str | None = None
+    priority: str | None = None
+    deadline: date | None = None
+    planning_note: str | None = None
+    roxy_workspace_id: int | None = None
+    roxy_profile_id: str | None = None
+    roxy_profile_name: str | None = None
     # Resource-prep checkmarks
     prep_title_done: bool | None = None
     prep_desc_done: bool | None = None
@@ -62,18 +73,37 @@ class CreateFoldersRequest(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+def _serialize_child(child: ChildProject) -> dict:
+    data = child.model_dump()
+
+    if not data.get("planning_stage"):
+        if child.status == "published":
+            data["planning_stage"] = "published"
+        elif child.status == "editing":
+            data["planning_stage"] = "editing"
+        elif child.status == "resource_prep":
+            data["planning_stage"] = "ready"
+        else:
+            data["planning_stage"] = "backlog"
+
+    if not data.get("priority"):
+        data["priority"] = "medium"
+    if data.get("planning_note") is None:
+        data["planning_note"] = ""
+
+    return {**data, "display_name": f"Video {child.video_number}"}
+
+
 @router.get("/")
-async def list_child_projects(parent_id: int, session: SessionDep):
+async def list_child_projects(session: SessionDep, parent_id: int | None = None):
+    query = select(ChildProject)
+    if parent_id is not None:
+        query = query.where(ChildProject.parent_project_id == parent_id)
+
     children = (await session.execute(
-        select(ChildProject)
-        .where(ChildProject.parent_project_id == parent_id)
-        .order_by(ChildProject.video_number)
+        query.order_by(ChildProject.parent_project_id, ChildProject.video_number)
     )).scalars().all()
-    # Thêm display name
-    return [
-        {**c.model_dump(), "display_name": f"Video {c.video_number}"}
-        for c in children
-    ]
+    return [_serialize_child(c) for c in children]
 
 
 @router.post("/create-folders", status_code=201)
@@ -146,7 +176,7 @@ async def get_child_project(child_id: int, session: SessionDep):
     child = await session.get(ChildProject, child_id)
     if not child:
         raise HTTPException(status_code=404, detail="Child project not found")
-    return {**child.model_dump(), "display_name": f"Video {child.video_number}"}
+    return _serialize_child(child)
 
 
 @router.post("/", status_code=201)
@@ -165,6 +195,13 @@ async def create_child_project(
         description=data.description,
         status="draft",
         base_folder_path=data.base_folder_path,
+        planning_stage=data.planning_stage,
+        priority=data.priority,
+        deadline=data.deadline,
+        planning_note=data.planning_note,
+        roxy_workspace_id=parent.roxy_workspace_id,
+        roxy_profile_id=parent.roxy_profile_id,
+        roxy_profile_name=parent.roxy_profile_name,
     )
     session.add(child)
     await session.commit()
@@ -175,7 +212,7 @@ async def create_child_project(
         await _create_folders_from_template(child, session)
         await session.commit()
 
-    return {**child.model_dump(), "display_name": f"Video {child.video_number}"}
+    return _serialize_child(child)
 
 
 @router.patch("/{child_id}")
@@ -196,6 +233,20 @@ async def update_child_project(child_id: int, data: ChildProjectUpdate, session:
         child.base_folder_path = data.base_folder_path
     if data.status is not None:
         child.status = data.status
+    if data.planning_stage is not None:
+        child.planning_stage = data.planning_stage
+    if data.priority is not None:
+        child.priority = data.priority
+    if data.deadline is not None or "deadline" in data.model_fields_set:
+        child.deadline = data.deadline
+    if data.planning_note is not None:
+        child.planning_note = data.planning_note
+    if data.roxy_workspace_id is not None:
+        child.roxy_workspace_id = data.roxy_workspace_id
+    if data.roxy_profile_id is not None:
+        child.roxy_profile_id = data.roxy_profile_id
+    if data.roxy_profile_name is not None:
+        child.roxy_profile_name = data.roxy_profile_name
     if data.prep_title_done is not None:
         child.prep_title_done = data.prep_title_done
     if data.prep_desc_done is not None:
@@ -215,7 +266,7 @@ async def update_child_project(child_id: int, data: ChildProjectUpdate, session:
     session.add(child)
     await session.commit()
     await session.refresh(child)
-    return {**child.model_dump(), "display_name": f"Video {child.video_number}"}
+    return _serialize_child(child)
 
 
 @router.delete("/{child_id}", status_code=204)

@@ -40,6 +40,9 @@ class ParentProjectOut(BaseModel):
     publisher: str | None = None
     copyright: str | None = None
     keywords_raw: str | None = None
+    roxy_workspace_id: int | None = None
+    roxy_profile_id: str | None = None
+    roxy_profile_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -52,6 +55,9 @@ class ParentProjectCreate(BaseModel):
     publisher: str | None = None
     copyright: str | None = None
     keywords_raw: str | None = None
+    roxy_workspace_id: int | None = None
+    roxy_profile_id: str | None = None
+    roxy_profile_name: str | None = None
     folder_templates: list[FolderTemplateIn] = []
 
 
@@ -61,6 +67,9 @@ class ParentProjectUpdate(BaseModel):
     publisher: str | None = None
     copyright: str | None = None
     keywords_raw: str | None = None
+    roxy_workspace_id: int | None = None
+    roxy_profile_id: str | None = None
+    roxy_profile_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +99,9 @@ async def create_parent_project(data: ParentProjectCreate, session: SessionDep):
         publisher=data.publisher,
         copyright=data.copyright,
         keywords_raw=data.keywords_raw,
+        roxy_workspace_id=data.roxy_workspace_id,
+        roxy_profile_id=data.roxy_profile_id,
+        roxy_profile_name=data.roxy_profile_name,
     )
     session.add(project)
     await session.commit()
@@ -125,6 +137,12 @@ async def update_parent_project(project_id: int, data: ParentProjectUpdate, sess
         project.copyright = data.copyright
     if data.keywords_raw is not None:
         project.keywords_raw = data.keywords_raw
+    if data.roxy_workspace_id is not None:
+        project.roxy_workspace_id = data.roxy_workspace_id
+    if data.roxy_profile_id is not None:
+        project.roxy_profile_id = data.roxy_profile_id
+    if data.roxy_profile_name is not None:
+        project.roxy_profile_name = data.roxy_profile_name
 
     project.updated_at = datetime.utcnow()
     session.add(project)

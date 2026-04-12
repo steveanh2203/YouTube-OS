@@ -19,14 +19,18 @@ import FastEdit from '@/pages/Projects/tools/FastEdit'
 import CutAutomate from '@/pages/Projects/tools/CutAutomate'
 import ResourcePrep from '@/pages/Projects/tools/ResourcePrep'
 import SoraGen from '@/pages/Projects/tools/SoraGen'
+import AudioVisualizer from '@/pages/Projects/tools/AudioVisualizer'
 import RenderDashboard from '@/pages/RenderDashboard'
+import AutomatePage from '@/pages/Automate'
 import Analytics from '@/pages/Analytics'
 import CompetitorsPage from '@/pages/Competitors'
 import ProductionPlanner from '@/pages/ProductionPlanner'
+import ReplyCenter from '@/pages/ReplyCenter'
+import SettingsPage from '@/pages/Settings'
 
 // ─── Keep-alive tool views ────────────────────────────────────────────────────
 
-const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'animation', 'fast-edit', 'cut-automate', 'sora-gen'] as const
+const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'animation', 'fast-edit', 'cut-automate', 'sora-gen', 'audio-visualizer'] as const
 type ToolView = typeof TOOL_VIEWS[number]
 
 function isToolView(v: string): v is ToolView {
@@ -64,8 +68,11 @@ function PanelInner() {
   if (!showingTool) {
     if (mainView === 'planner')             nonToolPage = <ProductionPlanner />
     else if (mainView === 'render')         nonToolPage = <RenderDashboard />
+    else if (mainView === 'automate')       nonToolPage = <AutomatePage />
+    else if (mainView === 'reply-center')   nonToolPage = <ReplyCenter />
     else if (mainView === 'analytics')      nonToolPage = <Analytics />
     else if (mainView === 'competitors')    nonToolPage = <CompetitorsPage />
+    else if (mainView === 'settings')       nonToolPage = <SettingsPage />
     else if (projectSubView === 'children') nonToolPage = <ChildProjects />
     else                                    nonToolPage = <ParentProjects />
   }
@@ -110,7 +117,8 @@ function PanelInner() {
             {mountedTools.has('animation')   && <div className={projectSubView === 'animation'   ? 'h-full' : 'hidden'}><AnimationTool /></div>}
             {mountedTools.has('fast-edit')     && <div className={projectSubView === 'fast-edit'     ? 'h-full' : 'hidden'}><FastEdit /></div>}
             {mountedTools.has('cut-automate') && <div className={projectSubView === 'cut-automate' ? 'h-full' : 'hidden'}><CutAutomate /></div>}
-            {mountedTools.has('sora-gen')    && <div className={projectSubView === 'sora-gen'    ? 'h-full' : 'hidden'}><SoraGen /></div>}
+            {mountedTools.has('sora-gen')          && <div className={projectSubView === 'sora-gen'          ? 'h-full' : 'hidden'}><SoraGen /></div>}
+            {mountedTools.has('audio-visualizer') && <div className={projectSubView === 'audio-visualizer' ? 'h-full' : 'hidden'}><AudioVisualizer /></div>}
           </div>
 
         </main>

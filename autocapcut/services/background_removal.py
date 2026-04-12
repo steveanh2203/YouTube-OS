@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import gc
 import threading
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import Callable, Literal
 import numpy as np
 from loguru import logger
 from PIL import Image, ImageFilter
+from scipy.ndimage import label as ndimage_label
 
 # AI-based background removal (lazy import)
 _rembg_session = None
@@ -442,38 +442,22 @@ def remove_white_background(
 
 
 def _border_connected_white_mask(mask: np.ndarray) -> np.ndarray:
-    """Return white regions connected to the image border."""
+    """Return white regions connected to the image border (scipy.ndimage version)."""
 
     if mask.size == 0 or not mask.any():
         return np.zeros_like(mask, dtype=bool)
 
-    height, width = mask.shape
-    connected = np.zeros_like(mask, dtype=bool)
-    visited = np.zeros_like(mask, dtype=bool)
-    queue: deque[tuple[int, int]] = deque()
+    labeled, _ = ndimage_label(mask)
 
-    def enqueue(y: int, x: int) -> None:
-        if 0 <= y < height and 0 <= x < width:
-            if not visited[y, x] and mask[y, x]:
-                visited[y, x] = True
-                queue.append((y, x))
+    # Collect all component labels that touch any border pixel
+    border_labels: set[int] = set()
+    border_labels.update(labeled[0, :].tolist())
+    border_labels.update(labeled[-1, :].tolist())
+    border_labels.update(labeled[:, 0].tolist())
+    border_labels.update(labeled[:, -1].tolist())
+    border_labels.discard(0)  # 0 is background (non-white)
 
-    for x in range(width):
-        enqueue(0, x)
-        if height > 1:
-            enqueue(height - 1, x)
-    for y in range(1, height - 1):
-        enqueue(y, 0)
-        if width > 1:
-            enqueue(y, width - 1)
+    if not border_labels:
+        return np.zeros_like(mask, dtype=bool)
 
-    while queue:
-        y, x = queue.popleft()
-        connected[y, x] = True
-        for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
-            if 0 <= ny < height and 0 <= nx < width:
-                if not visited[ny, nx] and mask[ny, nx]:
-                    visited[ny, nx] = True
-                    queue.append((ny, nx))
-
-    return connected
+    return np.isin(labeled, list(border_labels))

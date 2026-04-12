@@ -1,15 +1,17 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useExtensionSocket } from '@/hooks/useExtensionSocket'
+import { toast } from '@/store/toast.store'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, Download, Loader, Settings2, Wand2,
   ChevronDown, ChevronLeft, ChevronRight, ImageIcon,
   Key, Plus, Trash2, Camera, Zap, Upload,
   RefreshCw, XCircle, CheckCircle2, Clock, AlertCircle,
-  Square, CheckSquare, FolderOpen,
+  Square, CheckSquare, FolderOpen, X, Copy, Check, CircleHelp,
 } from 'lucide-react'
 import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
 import { cn } from '@/lib/utils'
-import { toast } from '@/store/toast.store'
 import { taskStore } from '@/store/task.store'
 
 const API = 'http://127.0.0.1:8765'
@@ -47,6 +49,8 @@ interface RefImage {
 }
 
 type RowStatus = 'pending' | 'generating' | 'upscaling' | 'done' | 'failed'
+type OutputConflictMode = 'overwrite' | 'keep_both' | 'replace_all'
+type BackendMode = 'whisk' | 'google_flow'
 
 interface PromptRow {
   id: string
@@ -62,12 +66,41 @@ interface Toast {
   visible: boolean; projectId: string; tokenPreview: string; autoStart: boolean
 }
 
+interface OutputFolderInspectResult {
+  folder: string
+  exists: boolean
+  image_count: number
+  managed_image_count: number
+  sample_names: string[]
+  video_count: number
+  video_sample_names: string[]
+}
+
+interface OutputFolderInitResult {
+  folder: string
+  conflict_mode: OutputConflictMode
+  start_index: number
+  image_count_before: number
+  removed_image_count: number
+}
+
+interface OutputConflictDialogState {
+  folder: string
+  imageCount: number
+  videoCount: number
+  sampleNames: string[]
+  videoSampleNames: string[]
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function uid() { return Math.random().toString(36).slice(2) }
+function readBackendMode(): BackendMode {
+  return localStorage.getItem(LS('backend')) === 'google_flow' ? 'google_flow' : 'whisk'
+}
 
 /** Strip leading number prefix: "1  " / "2. " / "3) " */
 function stripNum(line: string) {
-  return line.replace(/^\d+[\.\)\s]\s*/, '').trim()
+  return line.replace(/^\d+[.)\s]\s*/, '').trim()
 }
 
 /**
@@ -151,6 +184,49 @@ function StatusBadge({ status, errorMsg }: { status: RowStatus; errorMsg?: strin
   )
 }
 
+function StatHelp({
+  label,
+  help,
+  tone = 'default',
+}: {
+  label: string
+  help: string
+  tone?: 'default' | 'success' | 'error'
+}) {
+  const toneClass = tone === 'success'
+    ? 'text-green-500 hover:text-green-600'
+    : tone === 'error'
+      ? 'text-red-400 hover:text-red-500'
+      : 'text-surface-400 hover:text-surface-500'
+
+  return (
+    <Tooltip.Root delayDuration={120}>
+      <Tooltip.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`Guide for ${label}`}
+          className={cn(
+            'inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-violet-300 focus:ring-offset-1',
+            toneClass,
+          )}
+        >
+          <CircleHelp size={12} />
+        </button>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content
+          side="top"
+          sideOffset={8}
+          className="z-[70] max-w-[220px] rounded-lg border border-surface-200 bg-white px-2.5 py-2 text-[11px] leading-relaxed text-surface-600 shadow-xl"
+        >
+          {help}
+          <Tooltip.Arrow className="fill-white" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+}
+
 // ── Upscale resolution map ─────────────────────────────────────────────────
 const UPSCALE_RESOLUTIONS: { key: string; label: string }[] = [
   { key: 'FHD', label: 'Full HD' },
@@ -174,7 +250,7 @@ function resolveUpscaleDimensions(aspectRatio: string, resKey: string): { w: num
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AIGen() {
   // Settings
-  const [backend, setBackend]                     = useState<'whisk' | 'google_flow'>(() => (localStorage.getItem(LS('backend')) as any) ?? 'whisk')
+  const [backend, setBackend]                     = useState<BackendMode>(readBackendMode)
   const [cookie, setCookie]                       = useState(() => localStorage.getItem(LS('cookie')) ?? '')
   const [flowSessionCookie, setFlowSessionCookie] = useState(() => localStorage.getItem(LS('flow_session_cookie')) ?? '')
   const [flowProjectId, setFlowProjectId]         = useState(() => localStorage.getItem(LS('flow_project_id')) ?? '')
@@ -189,6 +265,7 @@ export default function AIGen() {
 
   // Output folder
   const [outputFolder, setOutputFolder] = useState(() => localStorage.getItem(LS('output_folder')) ?? '')
+  const [outputConflictDialog, setOutputConflictDialog] = useState<OutputConflictDialogState | null>(null)
 
   // Upscale
   const [upscaleEnabled, setUpscaleEnabled]       = useState(() => localStorage.getItem(LS('upscale_enabled')) === 'true')
@@ -198,6 +275,16 @@ export default function AIGen() {
   const [rawText, setRawText]   = useState('')
   const [rows, setRows]         = useState<PromptRow[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  // ── Extension bridge — nhận prompt từ Claude extension ────────────────────
+  useExtensionSocket('ai_gen', (msg) => {
+    setRawText(prev => {
+      const trimmed = prev.trim()
+      // Append vào existing prompts, ngăn cách bằng newline
+      return trimmed ? `${trimmed}\n${msg.content}` : msg.content
+    })
+    toast.success('⚡ Prompts received from Claude', `Added ${msg.content.split('\n').filter(Boolean).length} prompt(s) to the list`, 4000)
+  })
 
   // UI state
   const [isRunning, setIsRunning]   = useState(false)
@@ -236,6 +323,23 @@ export default function AIGen() {
   const [tokenToast, setTokenToast] = useState<Toast>({ visible: false, projectId: '', tokenPreview: '', autoStart: false })
   const toastTimerRef         = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Failed prompts modal
+  const [showFailedModal, setShowFailedModal] = useState(false)
+  const [copiedRowId, setCopiedRowId]         = useState<string | null>(null)
+  const [copiedAll, setCopiedAll]             = useState(false)
+
+  useEffect(() => {
+    if (!showFailedModal) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowFailedModal(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showFailedModal])
+
+  useEffect(() => () => {
+    outputConflictResolverRef.current?.(null)
+    outputConflictResolverRef.current = null
+  }, [])
+
   // Stable refs
   const addInputRef         = useRef<HTMLInputElement>(null)
   const lastExtTokenTs      = useRef<number>(0)
@@ -243,6 +347,7 @@ export default function AIGen() {
   const rawTextRef          = useRef('')
   const cookieRef           = useRef(cookie)
   const rowsRef             = useRef<PromptRow[]>([])
+  const outputConflictResolverRef = useRef<((mode: OutputConflictMode | null) => void) | null>(null)
   const handleGenerateRef   = useRef<() => void>(() => {})
   const abortControllerRef  = useRef<AbortController | null>(null)
 
@@ -252,6 +357,67 @@ export default function AIGen() {
   useEffect(() => { rowsRef.current = rows }, [rows])
 
   const save = (k: string, v: string) => localStorage.setItem(LS(k), v)
+  const applyOutputFolder = useCallback((folder: string) => {
+    const next = folder.trim()
+    setOutputFolder(next)
+    save('output_folder', next)
+  }, [])
+
+  const inspectOutputFolder = useCallback(async (folder: string): Promise<OutputFolderInspectResult> => {
+    const res = await fetch(`${API}/api/ai-gen/output-folder/inspect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail ?? 'Cannot inspect output folder')
+    return data as OutputFolderInspectResult
+  }, [])
+
+  const initOutputFolder = useCallback(async (
+    folder: string,
+    conflictMode: OutputConflictMode,
+    expectedCount: number,
+  ): Promise<OutputFolderInitResult> => {
+    const res = await fetch(`${API}/api/ai-gen/output-folder/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, conflict_mode: conflictMode, expected_count: expectedCount }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail ?? 'Cannot prepare output folder')
+    return data as OutputFolderInitResult
+  }, [])
+
+  const askOutputConflictMode = useCallback((info: OutputConflictDialogState) => (
+    new Promise<OutputConflictMode | null>((resolve) => {
+      outputConflictResolverRef.current = resolve
+      setOutputConflictDialog(info)
+    })
+  ), [])
+
+  const resolveOutputConflictMode = useCallback((mode: OutputConflictMode | null) => {
+    const resolver = outputConflictResolverRef.current
+    outputConflictResolverRef.current = null
+    setOutputConflictDialog(null)
+    resolver?.(mode)
+  }, [])
+
+  const ensureOutputFolderMode = useCallback(async (folder: string): Promise<OutputConflictMode | null> => {
+    const target = folder.trim()
+    if (!target) return 'keep_both'
+    const info = await inspectOutputFolder(target)
+    if ((info.video_count || 0) === 0) {
+      return 'keep_both'
+    }
+    return askOutputConflictMode({
+      folder: target,
+      imageCount: info.image_count,
+      videoCount: info.video_count || 0,
+      sampleNames: info.sample_names || [],
+      videoSampleNames: info.video_sample_names || [],
+    })
+  }, [askOutputConflictMode, inspectOutputFolder])
 
   // ── Sync rows from rawText ────────────────────────────────────────────────
   useEffect(() => {
@@ -271,7 +437,6 @@ export default function AIGen() {
       })
       return next
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawText])
 
   // ── Paste handler: auto-split multiline paste into numbered prompts ────────
@@ -413,7 +578,12 @@ export default function AIGen() {
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r))
 
   const toggleSelect = (id: string) =>
-    setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+    setSelected(prev => {
+      const s = new Set(prev)
+      if (s.has(id)) s.delete(id)
+      else s.add(id)
+      return s
+    })
 
   const toggleSelectAll = () => {
     setSelected(prev =>
@@ -424,8 +594,12 @@ export default function AIGen() {
   }
 
   const clearResults = () => {
-    setRows(prev => prev.map(r => ({ ...r, status: 'pending' as RowStatus, imageSrc: undefined, seed: undefined, errorMsg: undefined, createdAt: undefined })))
+    setRawText('')
+    setRows([])
     setSelected(new Set())
+    setErrorMsg('')
+    setLightbox(null)
+    setShowFailedModal(false)
   }
 
   // ── Progress helpers ──────────────────────────────────────────────────────
@@ -470,6 +644,24 @@ export default function AIGen() {
     if (!pending.length) return
     const currentCookie = cookieRef.current.trim()
     if (!currentCookie || isRunningRef.current) return
+    const currentOutputFolder = outputFolder.trim()
+
+    let outputPlan: OutputFolderInitResult | null = null
+    if (currentOutputFolder) {
+      try {
+        const conflictMode = await ensureOutputFolderMode(currentOutputFolder)
+        if (!conflictMode) return
+        outputPlan = await initOutputFolder(currentOutputFolder, conflictMode, pending.length)
+        if (outputPlan.removed_image_count > 0) {
+          toast.info('Old images cleared', `Removed ${outputPlan.removed_image_count} existing image(s) before saving the new batch`)
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e || 'Output folder failed')
+        setErrorMsg(msg)
+        toast.error('Folder error', msg)
+        return
+      }
+    }
 
     // Create fresh AbortController for this run
     const controller = new AbortController()
@@ -520,13 +712,14 @@ export default function AIGen() {
     }
 
     const concurrency = threadCount > 0 ? threadCount : suggestThreads(pending.length)
-    const tasks = pending.map((row) => async () => {
+    const tasks = pending.map((row, rowIndex) => async () => {
       // Skip if already aborted (worker picked up task after stop)
       if (signal.aborted) {
         updateRow(row.id, { status: 'pending', errorMsg: undefined })
         return
       }
       updateRow(row.id, { status: 'generating', errorMsg: undefined })
+      const outputIndex = outputPlan ? outputPlan.start_index + rowIndex : null
 
       try {
         const res = await fetch(`${API}/api/ai-gen/generate`, {
@@ -541,7 +734,8 @@ export default function AIGen() {
             flow_project_id: flowProjectId.trim(),
             flow_model_name: flowModel,
             flow_session_cookie: flowSessionCookie.trim(),
-            output_folder: upscaleEnabled ? '' : outputFolder.trim(),
+            output_folder: upscaleEnabled ? '' : currentOutputFolder,
+            output_index: upscaleEnabled ? null : outputIndex,
           }),
         })
         const data = await res.json()
@@ -564,6 +758,7 @@ export default function AIGen() {
           const capturedRowId = row.id
           const capturedSeed = data.seed
           const capturedPrompt = row.prompt
+          const capturedOutputIndex = outputIndex
           upscaleQueue.push(async () => {
             if (signal.aborted) return
             updateRow(capturedRowId, { status: 'upscaling' })
@@ -577,7 +772,8 @@ export default function AIGen() {
                   target_width: w,
                   target_height: h,
                   engine: 'auto',
-                  output_folder: outputFolder.trim(),
+                  output_folder: currentOutputFolder,
+                  output_index: capturedOutputIndex,
                   prompt: capturedPrompt,
                   seed: capturedSeed,
                 }),
@@ -600,12 +796,12 @@ export default function AIGen() {
           // Kick off drain without awaiting (fire-and-forget)
           drainUpscaleQueue()
         }
-      } catch (e: any) {
-        if (e?.name === 'AbortError') {
+      } catch (e: unknown) {
+        if (e instanceof DOMException && e.name === 'AbortError') {
           // Stopped by user — reset row to pending
           updateRow(row.id, { status: 'pending', errorMsg: undefined })
         } else {
-          const msg = String(e)
+          const msg = e instanceof Error ? e.message : String(e)
           updateRow(row.id, { status: 'failed', errorMsg: msg })
           setGenDone(prev => prev + 1)
           lastError = msg
@@ -625,9 +821,7 @@ export default function AIGen() {
     abortControllerRef.current = null
     if (!signal.aborted && !anySuccess && lastError) setErrorMsg(lastError)
 
-    // Toast notification
     if (signal.aborted) {
-      toast.warning('Generation stopped', 'Cancelled by user')
       taskStore.complete(bgTaskId, 'error', 'Cancelled by user')
     } else if (anySuccess) {
       const successRows = rowsRef.current.filter(r => rowsToGen.some(p => p.id === r.id) && r.status === 'done')
@@ -636,25 +830,16 @@ export default function AIGen() {
       if (failRows.length > 0) parts.push(`${failRows.length} prompt${failRows.length !== 1 ? 's' : ''} failed`)
       if (upscaleFailCount > 0) parts.push(`${upscaleFailCount} upscale${upscaleFailCount !== 1 ? 's' : ''} failed`)
       if (parts.length > 0) {
-        toast.warning(
-          `Generated ${successRows.length} image${successRows.length !== 1 ? 's' : ''}`,
-          parts.join(', ')
-        )
         taskStore.complete(bgTaskId, 'done', `${successRows.length} images done, ${parts.join(', ')}`)
       } else {
         const upscaleNote = upscaleEnabled ? ' (upscaled)' : ''
-        toast.success(
-          `Generated ${successRows.length} image${successRows.length !== 1 ? 's' : ''}${upscaleNote}`,
-          'AI Image Generation complete'
-        )
         taskStore.complete(bgTaskId, 'done', `${successRows.length} images completed${upscaleNote}`)
       }
     } else {
-      toast.error('Generation failed', lastError || 'Unknown error')
       taskStore.complete(bgTaskId, 'error', lastError || 'Unknown error')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, ratio, style, seedMode, seed, flowProjectId, flowModel, flowSessionCookie, refImages, threadCount, upscaleEnabled, upscaleResolution, outputFolder])
+  }, [backend, ensureOutputFolderMode, flowModel, flowProjectId, flowSessionCookie, initOutputFolder, outputFolder, ratio, refImages, seed, seedMode, style, threadCount, upscaleEnabled, upscaleResolution])
 
   // Expose generate all pending as stable ref for extension polling
   const handleGenerateAll = useCallback(() => {
@@ -692,9 +877,16 @@ export default function AIGen() {
         setBackend('google_flow'); save('backend', 'google_flow')
 
         const preview = token.length > 20 ? token.slice(0, 16) + '…' : token
-        setTokenToast({ visible: true, projectId: projId, tokenPreview: preview, autoStart })
-        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-        toastTimerRef.current = setTimeout(() => setTokenToast(t => ({ ...t, visible: false })), 5000)
+        const shouldShowTokenToast = !autoStart && !isRunningRef.current
+        if (shouldShowTokenToast) {
+          setTokenToast({ visible: true, projectId: projId, tokenPreview: preview, autoStart })
+          if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = setTimeout(() => setTokenToast(t => ({ ...t, visible: false })), 5000)
+        } else if (toastTimerRef.current) {
+          clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = null
+          setTokenToast(t => ({ ...t, visible: false }))
+        }
 
         if (autoStart && parsePrompts(rawTextRef.current).length > 0 && !isRunningRef.current) {
           setTimeout(() => handleGenerateRef.current(), 600)
@@ -703,7 +895,6 @@ export default function AIGen() {
     }
     const interval = setInterval(() => { if (!stopped) poll() }, 2000)
     return () => { stopped = true; clearInterval(interval) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── File helpers ──────────────────────────────────────────────────────────
@@ -948,15 +1139,14 @@ export default function AIGen() {
                       className="input flex-1 text-xs font-mono min-w-0"
                       placeholder="/path/to/save/images…"
                       value={outputFolder}
-                      onChange={e => { setOutputFolder(e.target.value); save('output_folder', e.target.value) }}
+                      onChange={e => applyOutputFolder(e.target.value)}
                     />
                     <button
                       onClick={async () => {
                         try {
                           const selected = await tauriOpen({ directory: true, multiple: false })
                           if (selected && typeof selected === 'string') {
-                            setOutputFolder(selected)
-                            save('output_folder', selected)
+                            applyOutputFolder(selected)
                           }
                         } catch { /* user cancelled */ }
                       }}
@@ -1348,23 +1538,45 @@ export default function AIGen() {
 
             {/* Stats footer */}
             {rows.length > 0 && (
-              <div className="shrink-0 border-t border-surface-200 bg-white px-5 py-2.5 flex items-center gap-6">
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-700">
-                  <CheckCircle2 size={12} />
-                  <span>{doneCount} Completed</span>
+              <Tooltip.Provider>
+                <div className="shrink-0 border-t border-surface-200 bg-white px-5 py-2.5 flex items-center gap-6">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-700">
+                    <CheckCircle2 size={12} />
+                    <span>{doneCount} Completed</span>
+                    <StatHelp
+                      label="Completed"
+                      help="Images that finished generating successfully and are ready to preview or download."
+                      tone="success"
+                    />
+                  </div>
+                  <div
+                    className={cn(
+                      'flex items-center gap-1.5 text-[11px] font-medium text-red-600 transition-colors',
+                      failedCount > 0 && 'cursor-pointer hover:text-red-700 hover:underline'
+                    )}
+                    onClick={() => failedCount > 0 && setShowFailedModal(true)}
+                  >
+                    <XCircle size={12} />
+                    <span>{failedCount} Failed</span>
+                    <StatHelp
+                      label="Failed"
+                      help="Prompts that failed during generation. Click this status to review each error."
+                      tone="error"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-surface-500">
+                    <Clock size={12} />
+                    <span>{pendingCount + generatingCount} Pending</span>
+                    <StatHelp
+                      label="Pending"
+                      help="Prompts that are still waiting or currently being processed."
+                    />
+                  </div>
+                  {selected.size > 0 && (
+                    <span className="ml-auto text-[11px] text-violet-600 font-medium">{selected.size} selected</span>
+                  )}
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-red-600">
-                  <XCircle size={12} />
-                  <span>{failedCount} Failed</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-surface-500">
-                  <Clock size={12} />
-                  <span>{pendingCount + generatingCount} Pending</span>
-                </div>
-                {selected.size > 0 && (
-                  <span className="ml-auto text-[11px] text-violet-600 font-medium">{selected.size} selected</span>
-                )}
-              </div>
+              </Tooltip.Provider>
             )}
           </div>
 
@@ -1447,6 +1659,71 @@ export default function AIGen() {
         </main>
       </div>
 
+      {/* ── Output Folder Conflict Modal ── */}
+      <AnimatePresence>
+        {outputConflictDialog && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px] flex items-center justify-center p-6"
+            onClick={() => resolveOutputConflictMode(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="w-full max-w-[460px] rounded-2xl border border-surface-200 bg-white px-7 py-6 shadow-xl"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="text-xl font-semibold text-surface-900">
+                Existing video found
+              </h3>
+              <p className="mt-3 text-sm leading-6 text-surface-500">
+                This folder already has {outputConflictDialog.videoCount} video(s).
+                Choose whether to continue in this folder or close and pick another folder.
+              </p>
+              {outputConflictDialog.videoCount > 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                  Video files stay safe. AI Gen only writes image files, but this warning prevents mixing a new image batch into a video folder by accident.
+                  {outputConflictDialog.videoSampleNames.length > 0 && (
+                    <div className="mt-1 font-medium">
+                      Videos: {outputConflictDialog.videoSampleNames.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )}
+              {outputConflictDialog.sampleNames.length > 0 && (
+                <div className="mt-3 rounded-xl border border-surface-200 bg-surface-50 px-4 py-3 text-xs leading-5 text-surface-500">
+                  Existing images in folder: {outputConflictDialog.sampleNames.join(', ')}
+                </div>
+              )}
+
+              <div className="mt-6 flex items-center justify-end gap-2.5">
+                <button
+                  className="inline-flex h-10 items-center justify-center rounded-lg px-3.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-50 hover:text-surface-700"
+                  onClick={() => resolveOutputConflictMode(null)}
+                >
+                  Close
+                </button>
+                <button
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-[#0D9488]/20 px-4 text-sm font-semibold text-[#0D9488] transition-colors hover:bg-[#0D9488]/5"
+                  onClick={() => resolveOutputConflictMode('keep_both')}
+                >
+                  Keep
+                </button>
+                <button
+                  className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#EA580C]"
+                  onClick={() => resolveOutputConflictMode('replace_all')}
+                >
+                  Override
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Lightbox ── */}
       <AnimatePresence>
         {lightbox && (
@@ -1503,6 +1780,120 @@ export default function AIGen() {
                 </div>
                 <button className="btn-secondary flex items-center gap-1.5 text-xs shrink-0" onClick={() => handleDownload(lightbox)}>
                   <Download size={13} /> Download
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Failed Prompts Modal ── */}
+      <AnimatePresence>
+        {showFailedModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-6"
+            onClick={() => setShowFailedModal(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface-200">
+                <div className="flex items-center gap-2">
+                  <XCircle size={14} className="text-red-500" />
+                  <h3 className="text-sm font-semibold text-surface-800">
+                    Failed Prompts ({failedCount})
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowFailedModal(false)}
+                  className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-surface-100 text-surface-400 hover:text-surface-600 transition-colors"
+                  aria-label="Close"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-y-auto max-h-[60vh]">
+                <table className="w-full text-[12px]">
+                  <thead className="sticky top-0 bg-surface-50 border-b border-surface-200">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-[11px] font-medium text-surface-500 uppercase tracking-wide w-10">#</th>
+                      <th className="text-left px-4 py-2.5 text-[11px] font-medium text-surface-500 uppercase tracking-wide">Prompt</th>
+                      <th className="text-left px-4 py-2.5 text-[11px] font-medium text-surface-500 uppercase tracking-wide w-40">Error</th>
+                      <th className="px-4 py-2.5 w-10" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedRows.map((row, idx) => (
+                      <tr key={row.id} className="border-b border-surface-100 last:border-0 hover:bg-red-50/40 transition-colors">
+                        <td className="px-4 py-2.5 text-surface-400 font-mono">{idx + 1}</td>
+                        <td className="px-4 py-2.5 max-w-0">
+                          <span
+                            className="block truncate text-surface-700"
+                            title={row.prompt}
+                          >
+                            {row.prompt}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className="block truncate text-red-500 text-[11px]"
+                            title={row.errorMsg}
+                          >
+                            {row.errorMsg || 'Unknown error'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(row.prompt)
+                              setCopiedRowId(row.id)
+                              setTimeout(() => setCopiedRowId(null), 1000)
+                            }}
+                            className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-colors"
+                            aria-label="Copy prompt"
+                          >
+                            {copiedRowId === row.id
+                              ? <Check size={12} className="text-green-500" />
+                              : <Copy size={12} />
+                            }
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between px-5 py-3 border-t border-surface-200 bg-surface-50">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(failedRows.map(r => r.prompt).join('\n'))
+                    setCopiedAll(true)
+                    setTimeout(() => setCopiedAll(false), 1500)
+                  }}
+                  className="flex items-center gap-1.5 text-[12px] font-medium text-surface-600 hover:text-surface-800 px-3 py-1.5 rounded-lg hover:bg-surface-200 transition-colors"
+                >
+                  {copiedAll
+                    ? <><Check size={12} className="text-green-500" /><span className="text-green-600">Copied!</span></>
+                    : <><Copy size={12} /><span>Copy All Prompts</span></>
+                  }
+                </button>
+                <button
+                  onClick={() => setShowFailedModal(false)}
+                  className="px-4 py-1.5 text-[12px] font-medium bg-surface-800 text-white rounded-lg hover:bg-surface-700 transition-colors"
+                >
+                  Close
                 </button>
               </div>
             </motion.div>

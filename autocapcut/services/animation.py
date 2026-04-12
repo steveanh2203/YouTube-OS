@@ -260,12 +260,12 @@ def remove_animations(
     if removed_entries:
         save_draft(draft_path, data, make_backup=make_backup)
         logger.info(
-            "Removed %d AutoCapcut animation entries from project %s",
+            "Removed %d MasterOS animation entries from project %s",
             removed_entries,
             project.name,
         )
     else:
-        logger.info("No matching AutoCapcut animations found in project %s", project.name)
+        logger.info("No matching MasterOS animations found in project %s", project.name)
 
     return AnimationRemoveSummary(
         project=project,
@@ -348,12 +348,12 @@ def remove_effects(
     if removed_entries:
         save_draft(draft_path, data, make_backup=make_backup)
         logger.info(
-            "Removed %d AutoCapcut effect entries from project %s",
+            "Removed %d MasterOS effect entries from project %s",
             removed_entries,
             project.name,
         )
     else:
-        logger.info("No AutoCapcut effects to remove in project %s", project.name)
+        logger.info("No MasterOS effects to remove in project %s", project.name)
 
     return EffectRemoveSummary(
         project=project,

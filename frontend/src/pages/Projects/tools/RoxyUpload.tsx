@@ -1,132 +1,533 @@
-import { useState, useRef } from 'react'
-import { useAppStore } from '@/store/app.store'
+import { useEffect, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import {
+  Briefcase,
+  CheckCheck,
+  CheckCircle,
+  ChevronDown,
+  FileVideo,
+  FolderOpen,
+  KeyRound,
+  ListChecks,
+  Loader,
+  PlayCircle,
+  RefreshCw,
+  Server,
+  Settings2,
+  Upload,
+  User,
+  Wifi,
+  XCircle,
+  ShieldAlert,
+  type LucideIcon,
+} from 'lucide-react'
+
 import { usePanelContext } from '@/contexts/PanelContext'
-import { Upload, Loader, CheckCircle, XCircle, RefreshCw, FolderOpen, Wifi } from 'lucide-react'
-import { roxyApi, type RoxyWorkspaceInfo, type RoxyProfileInfo } from '@/lib/api'
+import { useRoxyAutoConnect } from '@/hooks/useRoxyAutoConnect'
+import { roxyApi } from '@/lib/api'
+import { normalizeRoxyHost } from '@/lib/roxy'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store/app.store'
 import { taskStore } from '@/store/task.store'
 
 type Step = 'config' | 'profile' | 'upload' | 'done'
+type FileWithPath = File & { path?: string }
+
+type StepMeta = {
+  key: Step
+  label: string
+  hint: string
+  icon: LucideIcon
+}
+
+const STEPS: StepMeta[] = [
+  { key: 'config', label: 'Connect API', hint: 'Nhập host và token để kết nối Roxy.', icon: Server },
+  { key: 'profile', label: 'Choose Profile', hint: 'Chọn workspace và profile upload.', icon: ListChecks },
+  { key: 'upload', label: 'Open Upload', hint: 'Chọn video và mở flow upload trên Roxy.', icon: PlayCircle },
+  { key: 'done', label: 'Ready', hint: 'Roxy đã mở luồng upload thành công.', icon: CheckCheck },
+]
+
+const STEP_INDEX: Record<Step, number> = {
+  config: 0,
+  profile: 1,
+  upload: 2,
+  done: 3,
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+function looksLikeRealFilePath(value: string): boolean {
+  const path = value.trim()
+  if (!path) return false
+  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
+}
 
 export default function RoxyUpload() {
-  const { childProjects } = useAppStore()
+  const { childProjects, parentProjects } = useAppStore()
   const { selectedChildId } = usePanelContext()
   const child = childProjects.find(c => c.id === selectedChildId)
-
-  // Config
-  const [apiHost,    setApiHost]    = useState('http://127.0.0.1:1080')
-  const [apiToken,   setApiToken]   = useState('')
-
-  // Workspaces + Profiles
-  const [workspaces,   setWorkspaces]   = useState<RoxyWorkspaceInfo[]>([])
-  const [profiles,     setProfiles]     = useState<RoxyProfileInfo[]>([])
-  const [workspaceId,  setWorkspaceId]  = useState<number | null>(null)
-  const [profileId,    setProfileId]    = useState('')
-
-  // Upload
-  const [videoPath,    setVideoPath]    = useState('')
-  const [closeAfter,   setCloseAfter]   = useState(false)
-
-  // State
-  const [step,         setStep]         = useState<Step>('config')
-  const [loading,      setLoading]      = useState(false)
-  const [error,        setError]        = useState<string | null>(null)
-  const [successMsg,   setSuccessMsg]   = useState('')
+  const parent = parentProjects.find(item => item.id === child?.parentId)
+  const preferredWorkspaceId = child?.roxyWorkspaceId ?? parent?.roxyWorkspaceId ?? undefined
+  const preferredProfileId = child?.roxyProfileId || parent?.roxyProfileId || undefined
+  const {
+    activeProfile,
+    activeWorkspace,
+    apiHost,
+    apiToken,
+    connect: connectRoxy,
+    error,
+    handleWorkspaceChange: changeWorkspace,
+    hasConfig,
+    loading,
+    normalizedHost,
+    profileId,
+    profiles,
+    setApiHost,
+    setApiToken,
+    setProfileId,
+    setShowReminder,
+    showReminder,
+    workspaceId,
+    workspaces,
+  } = useRoxyAutoConnect({
+    preferredWorkspaceId,
+    preferredProfileId,
+  })
+  const [videoPath, setVideoPath] = useState('')
+  const [closeAfter, setCloseAfter] = useState(false)
+  const [step, setStep] = useState<Step>('config')
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [successMsg, setSuccessMsg] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const stepIndex = STEP_INDEX[step]
+  const busy = loading || uploading
+  const errorMessage = uploadError || error
+  const canContinueProfile = !!workspaceId && !!profileId && profiles.length > 0
+  const canUpload = !!videoPath.trim() && !!profileId && !!workspaceId
+  const loadingLabel =
+    step === 'config'
+      ? 'Connecting to Roxy API and loading profiles...'
+      : step === 'profile'
+        ? 'Loading available profiles...'
+        : 'Opening Roxy profile and YouTube Studio...'
 
-  // ── Step 1: Connect & load workspaces ──────────────────────────────────────
+  const summaryCards = [
+    {
+      label: 'API Host',
+      value: normalizedHost,
+      state: hasConfig ? 'Configured' : 'Missing',
+      tone: hasConfig ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white' : 'bg-white text-surface-700',
+    },
+    {
+      label: 'Workspace',
+      value: activeWorkspace?.workspace_name || 'Chưa chọn',
+      state: activeWorkspace ? 'Selected' : 'Pending',
+      tone: activeWorkspace ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white' : 'bg-white text-surface-700',
+    },
+    {
+      label: 'Profile',
+      value: activeProfile?.display_name || 'Chưa chọn',
+      state: activeProfile ? 'Ready' : 'Pending',
+      tone: activeProfile ? 'bg-gradient-to-br from-sky-500 to-blue-600 text-white' : 'bg-white text-surface-700',
+    },
+    {
+      label: 'Video',
+      value: videoPath.trim() ? (videoPath.split('/').pop() ?? videoPath) : 'Chưa có file',
+      state: videoPath.trim() ? 'Attached' : 'Pending',
+      tone: videoPath.trim() ? 'bg-gradient-to-br from-emerald-400 to-green-600 text-white' : 'bg-white text-surface-700',
+    },
+  ]
+
   const handleConnect = async () => {
-    if (!apiHost.trim() || !apiToken.trim()) return
-    setLoading(true); setError(null)
-    try {
-      const res = await roxyApi.workspaces(apiHost.trim(), apiToken.trim())
-      if (!res.ok || res.workspaces.length === 0) {
-        setError(res.message || 'No workspaces found'); return
-      }
-      setWorkspaces(res.workspaces)
-      setWorkspaceId(res.workspaces[0].workspace_id)
-      setStep('profile')
-    } catch (err: any) {
-      setError(err?.message ?? 'Could not connect to the Roxy API')
-    } finally {
-      setLoading(false)
-    }
+    if (!hasConfig) return
+    setUploadError(null)
+    const ok = await connectRoxy()
+    if (ok) setStep('profile')
   }
 
-  // ── Step 2: Load profiles ──────────────────────────────────────────────────
-  const handleLoadProfiles = async () => {
-    if (!workspaceId) return
-    setLoading(true); setError(null)
-    try {
-      const res = await roxyApi.profiles(apiHost.trim(), apiToken.trim(), workspaceId)
-      if (!res.ok) { setError(res.message); return }
-      setProfiles(res.profiles)
-      if (res.profiles.length > 0) setProfileId(res.profiles[0].dir_id)
-      setStep('upload')
-    } catch (err: any) {
-      setError(err?.message ?? 'Could not load profiles')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Step 3: Upload ─────────────────────────────────────────────────────────
   const handleUpload = async () => {
-    if (!videoPath.trim() || !profileId || !workspaceId) return
-    setLoading(true); setError(null)
+    if (!canUpload || !workspaceId) return
+    if (!looksLikeRealFilePath(videoPath)) {
+      setUploadError('Đường dẫn video chưa đúng. Bấm `Choose file` để lấy full path thật, hoặc paste full path vào ô này.')
+      return
+    }
+
+    setUploading(true)
+    setUploadError(null)
     const taskId = taskStore.add({ toolId: 'roxy-upload', toolLabel: 'Roxy Upload', label: 'Upload video YouTube' })
+
     try {
       const res = await roxyApi.upload({
-        api_host: apiHost.trim(),
+        api_host: normalizedHost,
         api_token: apiToken.trim(),
         workspace_id: workspaceId,
         profile_id: profileId,
         video_path: videoPath.trim(),
         close_after: closeAfter,
       })
+
+      setApiHost(normalizedHost)
       if (res.ok) {
         setSuccessMsg(res.message)
         setStep('done')
         taskStore.complete(taskId, 'done', res.message)
-      } else {
-        setError(res.message)
-        taskStore.complete(taskId, 'error', res.message)
+        return
       }
-    } catch (err: any) {
-      const msg = err?.message ?? 'Upload failed'
-      setError(msg)
-      taskStore.complete(taskId, 'error', msg)
+
+      setUploadError(res.message)
+      taskStore.complete(taskId, 'error', res.message)
+    } catch (err: unknown) {
+      const message = getErrorMessage(err, 'Upload failed')
+      setUploadError(message)
+      taskStore.complete(taskId, 'error', message)
     } finally {
-      setLoading(false)
+      setUploading(false)
     }
   }
 
-  const handleFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  const handleFilePick = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] as FileWithPath | undefined
     if (!file) return
-    const path = (file as any).path ?? ''
-    setVideoPath(path || file.name)
+    const nextPath = file.path?.trim()
+    if (nextPath) {
+      setVideoPath(nextPath)
+      setUploadError(null)
+      return
+    }
+
+    setVideoPath(file.name)
+    setUploadError('Picker này chỉ lấy được tên file. Bấm `Choose file` để mở picker desktop, hoặc paste full path vào ô này.')
+  }
+
+  const handleChooseFile = async () => {
+    try {
+      const selected = await tauriOpen({
+        directory: false,
+        multiple: false,
+        filters: [
+          { name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] },
+        ],
+      })
+
+      if (selected && typeof selected === 'string') {
+        setVideoPath(selected)
+        setUploadError(null)
+        return
+      }
+    } catch {
+      // Fallback to browser input below.
+    }
+
+    fileInputRef.current?.click()
   }
 
   const reset = () => {
-    setStep('config'); setError(null); setSuccessMsg('')
-    setWorkspaces([]); setProfiles([]); setWorkspaceId(null); setProfileId('')
+    setStep(profiles.length > 0 ? 'profile' : 'config')
+    setUploadError(null)
+    setSuccessMsg('')
+    setVideoPath('')
+    setCloseAfter(false)
   }
 
-  // ── Step indicator ─────────────────────────────────────────────────────────
-  const STEPS = [
-    { key: 'config',  label: '1. Connect' },
-    { key: 'profile', label: '2. Workspace' },
-    { key: 'upload',  label: '3. Upload' },
-    { key: 'done',    label: '4. Xong' },
-  ]
+  useEffect(() => {
+    if (step !== 'config' || workspaces.length === 0) return
+    const timer = window.setTimeout(() => setStep('profile'), 0)
+    return () => window.clearTimeout(timer)
+  }, [step, workspaces.length])
+
+  const renderStepCard = () => {
+    if (step === 'config') {
+      return (
+        <div className="card overflow-hidden">
+          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+            <p className="text-base font-semibold text-surface-800">Connect to Roxy API</p>
+            <p className="mt-1 text-sm text-surface-500">Nhập đúng host local API và token trước khi nạp workspace.</p>
+          </div>
+
+          <div className="space-y-4 px-5 py-5 md:px-6 md:py-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-surface-200 bg-surface-50/70 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                    <Server size={17} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-surface-800">API Host</p>
+                    <p className="text-xs text-surface-500">Địa chỉ local API của Roxy</p>
+                  </div>
+                </div>
+                <label className="label">API Host</label>
+                <input
+                  className="input bg-white font-mono text-xs"
+                  value={apiHost}
+                  onChange={e => setApiHost(e.target.value)}
+                  onBlur={e => setApiHost(normalizeRoxyHost(e.target.value))}
+                />
+                <p className="mt-2 text-xs text-surface-400">Mặc định nên là `http://127.0.0.1:50000`.</p>
+              </div>
+
+              <div className="rounded-2xl border border-surface-200 bg-surface-50/70 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                    <KeyRound size={17} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-surface-800">API Token</p>
+                    <p className="text-xs text-surface-500">Token dùng để gọi Roxy API</p>
+                  </div>
+                </div>
+                <label className="label">API Token</label>
+                <input
+                  className="input bg-white font-mono text-xs"
+                  type="password"
+                  placeholder="Paste token của Roxy"
+                  value={apiToken}
+                  onChange={e => setApiToken(e.target.value)}
+                />
+                <p className="mt-2 text-xs text-surface-400">Token đúng vẫn fail nếu host/port chưa có service chạy.</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-surface-100 pt-4 md:flex-row md:items-center md:justify-between">
+              <p className="text-xs text-surface-400">Sau khi connect thành công, app sẽ tự lấy danh sách workspace của tài khoản.</p>
+              <button className="btn-primary justify-center" onClick={handleConnect} disabled={busy || !hasConfig}>
+                {busy ? <Loader size={14} className="animate-spin" /> : <Wifi size={14} />}
+                {busy ? 'Connecting...' : 'Connect to Roxy API'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (step === 'profile') {
+      return (
+        <div className="card overflow-hidden">
+          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+            <p className="text-base font-semibold text-surface-800">Choose workspace and upload profile</p>
+            <p className="mt-1 text-sm text-surface-500">Connect xong là app tự load sẵn profile cho ngươi.</p>
+          </div>
+
+          <div className="space-y-4 px-5 py-5 md:px-6 md:py-6">
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="rounded-2xl border border-surface-200 bg-surface-50/80 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                      <Briefcase size={17} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-surface-800">Workspace</p>
+                      <p className="text-xs text-surface-500">{workspaces.length} workspace</p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 shadow-sm">
+                    auto loaded
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <select
+                    className="input h-11 appearance-none bg-white pr-10 text-sm shadow-sm"
+                    value={workspaceId ?? ''}
+                    onChange={e => changeWorkspace(Number(e.target.value))}
+                    disabled={busy}
+                  >
+                    {workspaces.map(w => (
+                      <option key={w.workspace_id} value={w.workspace_id}>
+                        {w.workspace_name || `Workspace #${w.workspace_id}`}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-surface-400" />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-surface-200 bg-surface-50/80 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                      <User size={17} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-surface-800">Profile</p>
+                      <p className="text-xs text-surface-500">{profiles.length} profile</p>
+                    </div>
+                  </div>
+                  {busy && <Loader size={14} className="animate-spin text-surface-400" />}
+                </div>
+
+                <div className="relative">
+                  <select
+                    className="input h-11 appearance-none bg-white pr-10 text-sm shadow-sm"
+                    value={profileId}
+                    onChange={e => setProfileId(e.target.value)}
+                    disabled={profiles.length === 0 || busy}
+                  >
+                    {profiles.length === 0 && <option value="">Đang load profile...</option>}
+                    {profiles.map(p => (
+                      <option key={p.dir_id} value={p.dir_id}>{p.display_name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-surface-400" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-surface-100 pt-4 md:flex-row md:items-center md:justify-between">
+              <p className="text-xs text-surface-400">Đổi workspace là app tự nạp lại profile, không cần bấm thêm gì nữa.</p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button className="btn-secondary justify-center" onClick={() => setStep('config')}>Back</button>
+                <button className="btn-primary justify-center" onClick={() => setStep('upload')} disabled={!canContinueProfile || busy}>
+                  Continue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    if (step === 'upload') {
+      return (
+        <div className="card overflow-hidden">
+          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className="text-base font-semibold text-surface-800">Video to upload</p>
+                <p className="mt-1 text-sm text-surface-500">Thêm video rồi mở trực tiếp luồng upload trên profile đã chọn.</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-surface-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Workspace</p>
+                  <p className="mt-1 text-sm font-medium text-surface-700">{activeWorkspace?.workspace_name || 'N/A'}</p>
+                </div>
+                <div className="rounded-xl border border-surface-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Profile</p>
+                  <p className="mt-1 text-sm font-medium text-surface-700">{activeProfile?.display_name || 'N/A'}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-5 px-5 py-5 md:px-6 md:py-6">
+            <div className="rounded-2xl border border-dashed border-primary-200 bg-gradient-to-br from-primary-50 to-white p-4 md:p-5">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-primary-600 shadow-sm">
+                  <FileVideo size={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-surface-800">File path or choose a video</p>
+                  <p className="text-xs text-surface-500">Hỗ trợ mp4, mov, avi, mkv, webm.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 lg:flex-row">
+                <input
+                  className="input min-w-0 flex-1 bg-white font-mono text-xs"
+                  placeholder="/path/to/video.mp4"
+                  value={videoPath}
+                  onChange={e => {
+                    setVideoPath(e.target.value)
+                    if (uploadError) setUploadError(null)
+                  }}
+                />
+                <button className="btn-secondary shrink-0 justify-center px-4 lg:min-w-[160px]" onClick={handleChooseFile}>
+                  <FolderOpen size={14} /> Choose file
+                </button>
+                <input ref={fileInputRef} type="file" accept=".mp4,.mov,.avi,.mkv,.webm" className="hidden" onChange={handleFilePick} />
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <span className="rounded-full border border-surface-200 bg-white px-3 py-1 text-surface-500">Formats: mp4, mov, avi, mkv, webm</span>
+                {videoPath.trim() && (
+                  <span className="rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-primary-700">File ready</span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4 rounded-2xl border border-surface-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+              <label className="flex items-start gap-3 text-sm text-surface-700 cursor-pointer select-none">
+                <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-surface-300" checked={closeAfter} onChange={e => setCloseAfter(e.target.checked)} />
+                <span>
+                  <span className="block font-medium text-surface-700">Close profile after upload</span>
+                  <span className="mt-0.5 block text-xs text-surface-400">Bật nếu muốn Roxy tự đóng profile sau khi mở luồng upload.</span>
+                </span>
+              </label>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button className="btn-secondary justify-center" onClick={() => setStep('profile')}>
+                  Back to profile selection
+                </button>
+                <button className="btn-primary justify-center px-5" onClick={handleUpload} disabled={busy || !canUpload}>
+                  {busy ? <Loader size={14} className="animate-spin" /> : <Upload size={14} />}
+                  {busy ? 'Uploading...' : 'Open upload in Roxy'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="card overflow-hidden border-green-200">
+        <div className="bg-gradient-to-r from-green-50 to-white px-5 py-4 md:px-6">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-500 text-white shadow-sm">
+              <CheckCircle size={20} />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-green-700">Upload flow is ready</p>
+              <p className="mt-1 text-sm text-green-600">Roxy đã mở luồng upload. Anh có thể tiếp tục thao tác trong browser.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5 px-5 py-5 md:px-6 md:py-6">
+          <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-700">
+            <p className="font-semibold">Upload started!</p>
+            <p className="mt-1 whitespace-pre-wrap text-green-600">{successMsg}</p>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Workspace</p>
+              <p className="mt-1 text-sm font-semibold text-surface-700">{activeWorkspace?.workspace_name || 'N/A'}</p>
+            </div>
+            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Profile</p>
+              <p className="mt-1 text-sm font-semibold text-surface-700">{activeProfile?.display_name || 'N/A'}</p>
+            </div>
+            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Video</p>
+              <p className="mt-1 truncate text-sm font-semibold text-surface-700">{videoPath.split('/').pop() ?? videoPath}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <button className="btn-secondary justify-center" onClick={() => setStep('upload')}>
+              Review upload setup
+            </button>
+            <button className="btn-primary justify-center" onClick={reset}>
+              <RefreshCw size={14} /> Upload another video
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-white">
-        <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-          <Upload size={16} className="text-red-600" />
+    <>
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-3 border-b border-surface-200 bg-white px-6 py-4">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-100 text-red-600">
+          <Upload size={17} />
         </div>
         <div>
           <h1 className="page-title">Roxy Upload</h1>
@@ -134,171 +535,158 @@ export default function RoxyUpload() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-5">
-        {/* Step progress */}
-        <div className="flex items-center gap-1">
-          {STEPS.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-1">
-              <div className={cn(
-                'px-3 py-1 rounded-full text-xs font-medium transition-colors',
-                step === s.key ? 'bg-primary-600 text-white' :
-                STEPS.findIndex(x => x.key === step) > i ? 'bg-green-100 text-green-700' :
-                'bg-surface-100 text-surface-400'
-              )}>
-                {s.label}
+      <div className="flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-7xl flex-col gap-6 p-6">
+          <div className="grid gap-4 xl:grid-cols-4">
+            {summaryCards.map(card => (
+              <div key={card.label} className={cn('stat-card border-surface-200 shadow-card', card.tone)}>
+                <span className={cn('stat-label', card.tone.includes('gradient') ? 'text-white/80' : 'text-surface-400')}>{card.label}</span>
+                <span className={cn('truncate text-sm font-semibold', card.tone.includes('gradient') ? 'text-white' : 'text-surface-800')}>
+                  {card.value}
+                </span>
+                <span className={cn('text-xs', card.tone.includes('gradient') ? 'text-white/80' : 'text-surface-400')}>{card.state}</span>
               </div>
-              {i < STEPS.length - 1 && <div className="w-4 h-px bg-surface-200" />}
+            ))}
+          </div>
+
+          {errorMessage && (
+            <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm">
+              <XCircle size={16} className="mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold">Có lỗi khi chạy Roxy Upload</p>
+                <p className="mt-1 whitespace-pre-wrap text-red-600">{errorMessage}</p>
+              </div>
             </div>
-          ))}
+          )}
+
+          {busy && (
+            <div className="flex items-center gap-3 rounded-2xl border border-primary-100 bg-primary-50 px-4 py-3 text-sm text-primary-700 shadow-sm">
+              <Loader size={16} className="shrink-0 animate-spin" />
+              <div>
+                <p className="font-semibold">{loadingLabel}</p>
+                <p className="text-primary-600">Giữ nguyên màn hình này, app đang xử lý theo bước hiện tại.</p>
+              </div>
+            </div>
+          )}
+
+          {(child?.roxyProfileName || parent?.roxyProfileName) && (
+            <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-700 shadow-sm">
+              Profile mặc định của project này: <span className="font-semibold">{child?.roxyProfileName || parent?.roxyProfileName}</span>
+            </div>
+          )}
+
+          <div className="space-y-6">
+              <div className="card p-5 md:p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-base font-semibold text-surface-800">Upload flow</p>
+                    <p className="mt-1 text-sm text-surface-500">Thiết lập một lần rồi đi tuần tự từ kết nối API tới mở upload trên Roxy.</p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 self-start rounded-full border border-surface-200 bg-surface-50 px-3 py-1 text-xs font-medium text-surface-600">
+                    <Settings2 size={13} />
+                    Step {stepIndex + 1} / {STEPS.length}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {STEPS.map((item, index) => {
+                    const Icon = item.icon
+                    const isActive = item.key === step
+                    const isDone = stepIndex > index
+                    const isAvailable =
+                      item.key === 'config'
+                      || (item.key === 'profile' && workspaces.length > 0)
+                      || (item.key === 'upload' && profiles.length > 0)
+                      || (item.key === 'done' && !!successMsg)
+
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        disabled={!isAvailable}
+                        onClick={() => isAvailable && setStep(item.key)}
+                        className={cn(
+                          'rounded-2xl border p-4 text-left transition-all',
+                          isActive
+                            ? 'border-primary-300 bg-primary-50 shadow-sm'
+                            : isDone
+                              ? 'border-green-200 bg-green-50'
+                              : 'border-surface-200 bg-white hover:border-surface-300',
+                          !isAvailable && 'cursor-not-allowed opacity-60 hover:border-surface-200',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className={cn(
+                            'flex h-10 w-10 items-center justify-center rounded-xl',
+                            isActive ? 'bg-primary-500 text-white' : isDone ? 'bg-green-500 text-white' : 'bg-surface-100 text-surface-500',
+                          )}>
+                            <Icon size={18} />
+                          </div>
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                            isActive ? 'bg-primary-100 text-primary-700' : isDone ? 'bg-green-100 text-green-700' : 'bg-surface-100 text-surface-500',
+                          )}>
+                            {isDone ? 'Done' : isActive ? 'Current' : `Step ${index + 1}`}
+                          </span>
+                        </div>
+                        <p className="mt-4 text-sm font-semibold text-surface-800">{item.label}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-surface-500">{item.hint}</p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {renderStepCard()}
+            </div>
+          </div>
         </div>
-
-        {/* Error banner */}
-        {error && (
-          <div className="flex items-start gap-2 rounded-lg px-4 py-3 bg-red-50 border border-red-200 text-sm text-red-700">
-            <XCircle size={15} className="shrink-0 mt-0.5" />
-            <p className="whitespace-pre-wrap">{error}</p>
-          </div>
-        )}
-
-        {/* ── STEP 1: Config ── */}
-        {(step === 'config' || step === 'profile' || step === 'upload') && (
-          <div className="card p-4 space-y-3">
-            <p className="text-sm font-semibold text-surface-700">Roxy API</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">API Host</label>
-                <input className="input font-mono text-xs" value={apiHost}
-                  onChange={e => setApiHost(e.target.value)}
-                  disabled={step !== 'config'} />
-              </div>
-              <div>
-                <label className="label">API Token</label>
-                <input className="input font-mono text-xs" type="password"
-                  placeholder="Enter the Roxy token"
-                  value={apiToken} onChange={e => setApiToken(e.target.value)}
-                  disabled={step !== 'config'} />
-              </div>
-            </div>
-            {step === 'config' && (
-              <div className="flex justify-end">
-                <button className="btn-primary" onClick={handleConnect}
-                  disabled={loading || !apiHost.trim() || !apiToken.trim()}>
-                  {loading ? <Loader size={14} className="animate-spin" /> : <Wifi size={14} />}
-                  {loading ? 'Connecting...' : 'Connect Roxy'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── STEP 2: Workspace + Profile ── */}
-        {(step === 'profile' || step === 'upload') && (
-          <div className="card p-4 space-y-3">
-            <p className="text-sm font-semibold text-surface-700">Choose a workspace and profile</p>
-
-            <div>
-              <label className="label">Workspace</label>
-              <select className="input text-sm"
-                value={workspaceId ?? ''}
-                onChange={e => { setWorkspaceId(Number(e.target.value)); setProfiles([]); setProfileId(''); setStep('profile') }}
-                disabled={step === 'upload' && profiles.length > 0}>
-                {workspaces.map(w => (
-                  <option key={w.workspace_id} value={w.workspace_id}>
-                    {w.workspace_name || `Workspace #${w.workspace_id}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {step === 'profile' && (
-              <div className="flex justify-end gap-2">
-                <button className="btn-secondary" onClick={reset}>Back</button>
-                <button className="btn-primary" onClick={handleLoadProfiles}
-                  disabled={loading || !workspaceId}>
-                  {loading ? <Loader size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                  {loading ? 'Loading...' : 'Load Profiles'}
-                </button>
-              </div>
-            )}
-
-            {profiles.length > 0 && (
-              <div>
-                <label className="label">Profile ({profiles.length} profiles)</label>
-                <select className="input text-sm" value={profileId}
-                  onChange={e => setProfileId(e.target.value)}>
-                  {profiles.map(p => (
-                    <option key={p.dir_id} value={p.dir_id}>{p.display_name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── STEP 3: Upload ── */}
-        {step === 'upload' && profiles.length > 0 && (
-          <div className="card p-4 space-y-3">
-            <p className="text-sm font-semibold text-surface-700">Video file</p>
-
-            <div>
-              <label className="label">Video path</label>
-              <div className="flex gap-2">
-                <input className="input font-mono text-xs flex-1"
-                  placeholder="/path/to/video.mp4"
-                  value={videoPath} onChange={e => setVideoPath(e.target.value)} />
-                <button className="btn-secondary shrink-0"
-                  onClick={() => fileInputRef.current?.click()}>
-                  <FolderOpen size={14} /> Choose file
-                </button>
-                <input ref={fileInputRef} type="file"
-                  accept=".mp4,.mov,.avi,.mkv,.webm" className="hidden"
-                  onChange={handleFilePick} />
-              </div>
-            </div>
-
-            <label className="flex items-center gap-2 text-sm text-surface-700 cursor-pointer select-none">
-              <input type="checkbox" className="rounded border-surface-300"
-                checked={closeAfter} onChange={e => setCloseAfter(e.target.checked)} />
-              Close the Roxy profile after upload completes
-            </label>
-
-            <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => { setStep('profile'); setProfiles([]); setProfileId('') }}>
-                Change profile
-              </button>
-              <button className="btn-primary" onClick={handleUpload}
-                disabled={loading || !videoPath.trim() || !profileId}>
-                {loading ? <Loader size={14} className="animate-spin" /> : <Upload size={14} />}
-                {loading ? 'Uploading...' : 'Start upload'}
-              </button>
-            </div>
-
-            {loading && (
-              <p className="text-xs text-surface-400 text-center">
-                Opening the Roxy profile and navigating to YouTube Studio... (this may take 15-30s)
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* ── STEP 4: Done ── */}
-        {step === 'done' && (
-          <div className="card p-5 border-green-200 bg-green-50">
-            <div className="flex items-start gap-3">
-              <CheckCircle size={20} className="text-green-600 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-green-700 mb-1">Upload started!</p>
-                <p className="text-sm text-green-600 whitespace-pre-wrap">{successMsg}</p>
-              </div>
-            </div>
-            <div className="flex justify-end mt-4">
-              <button className="btn-secondary" onClick={reset}>
-                <RefreshCw size={14} /> Upload another video
-              </button>
-            </div>
-          </div>
-        )}
       </div>
-    </div>
+
+      <AnimatePresence>
+        {showReminder && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+            >
+              <div className="mb-3 flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                  <ShieldAlert size={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-surface-900">Bật ứng dụng Roxy</p>
+                  <p className="text-xs text-surface-500">App đang tự retry realtime để kết nối lại.</p>
+                </div>
+              </div>
+              <p className="mb-4 whitespace-pre-wrap text-sm text-surface-600">
+                {errorMessage || 'Chưa kết nối được tới local API của Roxy.'}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button className="btn-secondary" onClick={() => setShowReminder(false)}>
+                  Ẩn tạm
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => void connectRoxy({ silent: true })}
+                  disabled={!apiToken.trim() || busy}
+                >
+                  {busy ? <Loader size={14} className="animate-spin" /> : <Wifi size={14} />}
+                  Thử lại ngay
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   )
 }

@@ -82,20 +82,20 @@
   .badge-info    { @apply badge bg-blue-50 text-blue-600; }
 
   .nav-item {
-    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-surface-600
-           hover:bg-surface-100 hover:text-surface-900 transition-all duration-150 cursor-pointer select-none;
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-slate-300
+           hover:bg-white/10 hover:text-white transition-all duration-150 cursor-pointer select-none;
   }
-  .nav-item.active { @apply bg-primary-50 text-primary-700 font-semibold; }
+  .nav-item.active { @apply bg-primary-500 text-white font-semibold shadow-sm; }
 
-  .section-title { @apply text-xs font-semibold text-surface-400 uppercase tracking-wider px-3 mb-1; }
-  .divider       { @apply h-px bg-surface-200; }
+  .section-title { @apply text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 mb-1; }
+  .divider       { @apply h-px bg-white/10; }
 
   .page-title  { @apply text-xl font-semibold text-surface-900; }
   .page-sub    { @apply text-sm text-surface-500; }
 
   .stat-card {
-    @apply card p-4 flex flex-col gap-1;
+    @apply rounded-lg p-4 flex flex-col gap-1 border border-white/60;
   }
-  .stat-value { @apply text-2xl font-bold text-surface-900; }
-  .stat-label { @apply text-xs font-medium text-surface-500; }
+  .stat-value { @apply text-2xl font-bold; }
+  .stat-label { @apply text-xs font-medium opacity-75; }
 }

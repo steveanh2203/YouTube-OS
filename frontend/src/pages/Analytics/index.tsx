@@ -28,12 +28,12 @@ export default function Analytics() {
       sub: 'Loaded from disk',
     },
     {
-      label: 'Completed', value: safe(childProjects.filter(c => c.status === 'done').length),
+      label: 'Completed', value: safe(childProjects.filter(c => c.status === 'published').length),
       icon: CheckCircle, color: 'text-green-500', bg: 'bg-green-50',
-      sub: 'Child projects done',
+      sub: 'Child projects published',
     },
     {
-      label: 'Draft', value: safe(childProjects.filter(c => c.status === 'Draft').length),
+      label: 'Draft', value: safe(childProjects.filter(c => c.status === 'draft').length),
       icon: Clock, color: 'text-surface-400', bg: 'bg-surface-100',
       sub: 'Awaiting processing',
     },
@@ -111,7 +111,7 @@ export default function Analytics() {
           <div className="space-y-3">
             {parentProjects.map(p => {
               const kids = childProjects.filter(c => c.parentId === p.id)
-              const done = kids.filter(c => c.status === 'done').length
+              const done = kids.filter(c => c.status === 'published').length
               const pct  = kids.length > 0 ? Math.round((done / kids.length) * 100) : 0
               return (
                 <div key={p.id}>

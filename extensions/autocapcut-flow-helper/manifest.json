@@ -13,6 +13,9 @@
   ],
   "host_permissions": [
     "https://labs.google/*",
+    "https://sora.com/*",
+    "https://sora.chatgpt.com/*",
+    "https://chatgpt.com/*",
     "http://127.0.0.1:8765/*"
   ],
   "background": {
@@ -34,6 +37,17 @@
         "content.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://sora.com/*",
+        "https://sora.chatgpt.com/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "sora-content.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
@@ -43,6 +57,16 @@
       ],
       "matches": [
         "https://labs.google/*"
+      ]
+    },
+    {
+      "resources": [
+        "pageBridge.js"
+      ],
+      "matches": [
+        "https://sora.com/*",
+        "https://sora.chatgpt.com/*",
+        "https://chatgpt.com/*"
       ]
     }
   ]

@@ -1,0 +1,51 @@
+# Lessons
+
+- Khi user nói "tính năng mới cho dự án này", phải bám đúng context YouTube OS hiện tại trước, không brainstorm generic assistant/AI product.
+- Khi user yêu cầu chia subagent để fix bug, phải tách nhánh điều tra song song theo scope rõ ràng, tránh nhiều agent đụng cùng file.
+- Với flow YouTube nội bộ kiểu anti-detect, nếu user đã chốt `session-first` thì không được kéo UX quay lại nhập access token tay ở bản chính.
+- Khi tối ưu tốc độ cho visual render, không được hy sinh form/style parity giữa preview và file xuất. Preview đẹp kiểu nào thì render thật phải bám kiểu đó trước, rồi mới tối ưu tốc độ.
+- Với render job dài, không được precompute toàn bộ frame/state rồi mới báo progress. Phải stream dần và cho user thấy tiến độ thật từ sớm.
+- Với render pipeline có subprocess `ffmpeg`, không được để `stderr=PIPE` mà không chủ động giảm log hoặc drain stream, rất dễ treo giả trên job dài.
+- Với pipeline video có `overlay intermediate file`, phải luôn hỏi có thể stream one-pass ra final luôn không. Double-pass thường là cục chậm nhất.
+- Với visualizer realtime, không được early-return cả frame chỉ vì energy tạm thấp. Đoạn nghỉ ngắn trong lời nói phải decay mềm, không được “tắt rồi bật” như công tắc.
+- Với extension popup, không được reset state detect/session ở `init` nếu mục tiêu UX là mở lại vẫn thấy phiên trước.
+- Khi user chốt flow `desktop app tự sync comment`, không được bắt họ tự mở tay `Studio comments`; extension phải tự xử lý tab ẩn nếu có thể.
+- Với bug/UI fix đã nói là "xong", phải verify lại đúng hành vi user nhìn thấy trên màn hình, không chỉ dựa vào việc code path đã chạy hoặc toast nội bộ có vẻ đúng.
+- Khi user chỉ ra có project tham chiếu cũ cho extension flow, phải diff lại flow cũ trước rồi mới patch, nhất là các bước publish/proxy/download dễ bị mất khi refactor.
+- Với flow extension báo `job-done` bằng URL, không được coi HTTP 500 là thành công im lặng. Phải check `res.ok` và tự fallback sang upload blob nếu backend không kéo được URL.
+- Khi máy đang có nhiều extension/prototype cùng nói chuyện với một backend, phải xác định extension nào đang poll thật trước khi fix. String lỗi đặc trưng và Chrome Preferences thường cho biết đúng worker đang chạy.
+- Với Sora parallel worker, không được chỉ đổi UI slot. `max_threads` phải map ra tab `/drafts` thật, nếu không content script sẽ không có ô prompt để nhập.
+- Với popup Sora nhiều prompt trên cùng 1 tab, không được map progress bằng `tabId`. Phải map bằng `runId -> jobId`, nếu không UI sẽ đè sai card hoặc chỉ hiện prompt cuối.
+- Khi user nói bỏ `History/Clear` revert, không được tự ý bỏ luôn nút Clear nếu user vẫn cần clear UI live jobs. Hỏi lại hoặc giữ Clear độc lập với History.
+- Với Sora batch một tab nhiều prompt, UI worker không được lấy theo tab. Phải lấy theo `job.index` và `max_threads`, ví dụ prompt #2 là Worker 2.
+- Với Sora lưu video song song, không được đặt tên bằng cách scan folder ở thời điểm save nếu cần map prompt index. Phải truyền `job_index` xuống service để prompt #n ưu tiên `video_00n`.
+- Với AI Gen folder guard user yêu cầu theo video, không được hiện popup vì folder chỉ có ảnh. Chỉ hiện khi scan thấy video.
+- Khi user nói popup folder lưu video trong Sora Gen, không được fix nhầm sang AI Gen. Phải xác định đúng tool đang thao tác trước khi sửa UI.
+- Với Sora retry, retry phải theo từng job/prompt, không retry cả batch. Prompt #3 fail thì chỉ prompt #3 retry, vẫn giữ Worker 3 và `video_003`.
+- Với Sora extension, không được tự mở tab `sora.chatgpt.com/drafts` khi user không yêu cầu. Chỉ dùng tab user đã mở, thiếu thì báo cần mở Sora trước.
+- Với extension popup/state cho nhiều prompt song song, không được ghi `chrome.storage.local` kiểu read-modify-write không khóa. Phải serialize state updates, nếu không prompt cuối sẽ đè mất prompt trước.
+- Với Sora extension, đừng mở WebSocket mù khi backend còn chưa sống. Phải preflight HTTP trước, nếu không Chrome spam `ERR_CONNECTION_REFUSED` vào trang Errors.
+- Với Sora watermark flow, không được giữ fallback `__NEXT_DATA__` cũ nếu nó không còn tham gia kết quả thật. Dead fallback chỉ làm log đỏ và đánh lạc hướng debug.
+- Khi user chốt chỉ làm một vài mục trong checklist, phải khóa đúng scope đó và không đụng lại các mục user đã xác nhận xong.
+- Với page/tool mới dạng scaffold, trước khi báo user “chạy được” phải check nút action chính đã nối backend/service thật chưa. Badge `Running` hay session state không tính là xong.
+
+- Sau khi thêm route Python mới, phải restart sidecar/backend thật rồi verify bằng HTTP thật trước khi báo xong.
+- Với UI/status của Sora có cả app bundle và extension worker cùng tham gia, sau khi đổi timeline hoặc copy lỗi phải reload app + extension rồi verify lại đúng màn user chụp, không được chỉ nhìn source code đã sửa.
+- Khi thêm modal mới trong màn đã có design system rõ, phải lấy đúng scale chữ và class nhịp sẵn có từ màn đó; không tự bịa typography mới dù nhìn “cũng ổn”.
+- Với YouTube Studio upload wizard, không được detect `Visibility` chỉ bằng chữ trên stepper header. Phải dựa vào nội dung panel thật như `Save or publish` hoặc radio/private-public, nếu không bot sẽ nhảy schedule quá sớm.
+- Với YouTube Studio upload wizard, đừng click `Next` bằng text matcher chung. Phải bám đúng footer button như `#next-button`, nếu không rất dễ miss click hoặc click nhầm node trong dialog.
+- Với YouTube Studio `Visibility`, phần `Schedule` có thể là block collapse riêng. Phải bám đúng nút expand như `#second-container-expand-button` và verify scheduler hết `hidden` rồi mới điền ngày giờ.
+- Với YouTube Studio scheduler, không được dùng selector `ytcp-datetime-picker input` chung cho cả date và time. Date có thể là dropdown text, còn time là text input riêng. Nếu gom chung sẽ rất dễ nhét ngày vào ô giờ và dính `Invalid Time`.
+- Với flow schedule do frontend tính sẵn giờ local, không được serialize bằng `Date.toISOString()` nếu backend sẽ dùng giờ đó để điền thẳng lên UI. `toISOString()` đổi sang UTC và sẽ làm lệch slot đã cấu hình, ví dụ `20:30` thành `13:30Z`.
+- Với YouTube Studio scheduler, đừng gọi helper là “set date” nếu nó chỉ đọc label hiện tại. Lane date phải mutate model hoặc UI thật, nếu không sẽ luôn fail ở những case default date của YouTube khác với ngày user chọn.
+- Với YouTube Studio upload dialog, nút submit cuối `Schedule` cũng phải bám selector footer riêng như `#done-button`, không được click text matcher chung. Footer action rất dễ miss nếu chỉ dò chữ `schedule/save`.
+- Với batch upload YouTube trong cùng một profile, không nên reuse dialog/tab cũ cho video kế tiếp. Mỗi video nên có tab upload riêng, xong hoặc lỗi thì đóng tab đó rồi mới nhường slot cho video sau.
+
+- Nếu batch 2 lane dùng cùng 1 Roxy profile, không được gọi `browser/open` đồng thời cho từng lane; phải reuse session browser đã mở bằng cache + lock.
+
+- UI modal/log không được render raw error từ backend nếu có `Debug bundle`, `Stacktrace`, hoặc session info. Luôn sanitize xuống 1 câu ngắn gọn trước khi show cho user.
+- Khi user nói submenu phải nằm ở sidebar global, đừng chỉ thay switcher bên trong page. Phải chuyển state điều hướng ra store/context chung để sidebar control thật.
+- Với sidebar tối, đừng dùng active pill trắng to cho submenu lồng. Submenu con nên compact, cùng tông nền, chỉ nhấn bằng border/alpha nhẹ.
+- Với Audio Visualizer spectrum, đừng cap render layout xuống kích thước nội bộ nhỏ nếu preview đang vẽ theo full canvas. Parity giữa preview và file xuất quan trọng hơn tối ưu scale-up.
+- Với desktop app đang giữ sidecar chạy nền, sau khi sửa backend render/audio phải restart sạch port 8765 rồi mới báo user retest, nếu không file export vẫn đi qua code cũ.
+- Trước khi push code lên repo public, phải scan file local/config cho token, cookie, API key thật; nếu có thì ignore + thay bằng file mẫu sạch rồi mới stage.

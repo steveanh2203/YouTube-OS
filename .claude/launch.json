@@ -4,9 +4,9 @@
     {
       "name": "autocapcut-ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev:preview"],
       "cwd": "frontend",
-      "port": 1420
+      "port": 1421
     }
   ]
 }

@@ -14,6 +14,7 @@ from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -31,6 +32,8 @@ _SERVER_LIMIT_PER_MINUTE: int | None = None
 _SERVER_REMAINING: int | None = None
 _SERVER_RESET_AT: float | None = None
 _SERVER_LAST_SEEN_AT: float | None = None
+_PROFILE_SESSION_LOCK = threading.Lock()
+_PROFILE_SESSIONS: dict[tuple[str, int, str], "RoxyBrowserSession"] = {}
 
 
 @dataclass(slots=True)
@@ -65,6 +68,8 @@ class RoxyUploadSummary:
     video_path: Path
     debugger_address: str
     message: str
+    schedule_applied: bool = False
+    scheduled_at: str | None = None
 
 
 @dataclass(slots=True)
@@ -86,6 +91,16 @@ class RoxyRateLimitSnapshot:
     remaining: int
     source: str  # "local-estimate" or "server-header"
     reset_in_seconds: int | None = None
+
+
+@dataclass(slots=True)
+class RoxyBrowserSession:
+    """Cached open-profile connection info for reuse across concurrent uploads."""
+
+    debugger_address: str
+    driver_path: str
+    opened_at: float
+    last_used_at: float
 
 
 def _safe_int(value: object) -> int | None:
@@ -194,6 +209,26 @@ def get_roxy_rate_limit_snapshot(
         )
 
 
+def _format_roxy_connection_error(base_url: str, exc: URLError) -> str:
+    reason = getattr(exc, "reason", exc)
+    reason_text = str(reason)
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    hint = ""
+
+    if "Connection refused" in reason_text:
+        hint = "\nNo service is listening on this host/port."
+        if host in {"127.0.0.1", "localhost"}:
+            target = f"{host}:{port}" if port else host
+            hint += (
+                f"\nRoxy local API does not seem to be running at {target}."
+                "\nOpen Roxy Browser, enable/check its local API host, then retry."
+            )
+
+    return f"Could not connect to Roxy API at {base_url}: {reason_text}{hint}"
+
+
 def run_roxy_upload_preflight(
     *,
     api_host: str,
@@ -298,7 +333,7 @@ class RoxyApiClient:
             raise RoxyUploadError(f"Roxy API request failed ({exc.code}): {message}") from exc
         except URLError as exc:
             _record_rate_limit(None)
-            raise RoxyUploadError(f"Could not connect to Roxy API at {self.base_url}: {exc}") from exc
+            raise RoxyUploadError(_format_roxy_connection_error(self.base_url, exc)) from exc
 
         try:
             result = json.loads(raw) if raw else {}
@@ -405,6 +440,52 @@ def _normalize_debugger_address(raw: str) -> str:
     return address
 
 
+def _profile_session_key(api_host: str, workspace_id: int, profile_id: str) -> tuple[str, int, str]:
+    return (api_host.rstrip("/").lower(), int(workspace_id), profile_id.strip())
+
+
+def _invalidate_profile_session(key: tuple[str, int, str]) -> None:
+    with _PROFILE_SESSION_LOCK:
+        _PROFILE_SESSIONS.pop(key, None)
+
+
+def _resolve_open_profile_session(
+    *,
+    client: "RoxyApiClient",
+    workspace_id: int,
+    profile_id: str,
+    force_open: bool = True,
+) -> tuple[RoxyBrowserSession, bool, tuple[str, int, str]]:
+    key = _profile_session_key(client.base_url, workspace_id, profile_id)
+    now = time.time()
+    with _PROFILE_SESSION_LOCK:
+        existing = _PROFILE_SESSIONS.get(key)
+        if existing is not None:
+            existing.last_used_at = now
+            return existing, True, key
+
+        open_data = client.open_profile(
+            workspace_id=workspace_id,
+            profile_id=profile_id.strip(),
+            force_open=force_open,
+        )
+        debugger_address = _normalize_debugger_address(str(open_data.get("http") or ""))
+        driver_path = str(open_data.get("driver") or "").strip()
+        if not debugger_address:
+            raise RoxyUploadError("Roxy did not return a debugger address (`data.http`).")
+        if not driver_path:
+            raise RoxyUploadError("Roxy did not return a Selenium driver path (`data.driver`).")
+
+        session = RoxyBrowserSession(
+            debugger_address=debugger_address,
+            driver_path=driver_path,
+            opened_at=now,
+            last_used_at=now,
+        )
+        _PROFILE_SESSIONS[key] = session
+        return session, False, key
+
+
 def _require_selenium():
     try:
         from selenium import webdriver
@@ -417,6 +498,19 @@ def _require_selenium():
             f"Install into the app interpreter with:\n{install_cmd}"
         ) from exc
     return webdriver, Service, By
+
+
+def _attach_selenium_to_browser(
+    webdriver_module,
+    service_cls,
+    *,
+    debugger_address: str,
+    driver_path: str,
+):
+    chrome_options = webdriver_module.ChromeOptions()
+    chrome_options.add_experimental_option("debuggerAddress", debugger_address)
+    chrome_service = service_cls(driver_path)
+    return webdriver_module.Chrome(service=chrome_service, options=chrome_options)
 
 
 def _find_upload_input_in_shadow_dom(driver):
@@ -471,6 +565,723 @@ def _find_upload_input(driver, by, *, timeout_sec: float) -> object | None:
 
         time.sleep(0.35)
     return None
+
+
+def _shadow_click_text(
+    driver,
+    texts: list[str],
+    *,
+    require_enabled: bool = False,
+    require_visible: bool = False,
+) -> bool:
+    script = """
+const targets = (arguments[0] || []).map(item => String(item || '').toLowerCase()).filter(Boolean);
+const requireEnabled = Boolean(arguments[1]);
+const requireVisible = Boolean(arguments[2]);
+const queue = [document];
+while (queue.length) {
+  const root = queue.shift();
+  if (!root || !root.querySelectorAll) continue;
+  const nodes = root.querySelectorAll("button, [role='button'], tp-yt-paper-button, ytcp-button, ytcp-ve, div, span");
+  for (const node of nodes) {
+    const raw = `${node.innerText || node.textContent || ''} ${node.getAttribute?.('aria-label') || ''}`.toLowerCase().trim();
+    if (!raw) continue;
+    if (targets.some(text => raw.includes(text))) {
+      const disabled = node.disabled === true || node.getAttribute?.('disabled') !== null || `${node.getAttribute?.('aria-disabled') || ''}`.toLowerCase() === 'true';
+      if (requireEnabled && disabled) continue;
+      if (requireVisible) {
+        const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+        const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+        const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+        if (hidden) continue;
+      }
+      try { node.click(); } catch (err) {
+        try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err2) {}
+      }
+      return true;
+    }
+  }
+  const all = root.querySelectorAll("*");
+  for (const node of all) {
+    if (node.shadowRoot) queue.push(node.shadowRoot);
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script, texts, require_enabled, require_visible))
+    except Exception:
+        return False
+
+
+def _shadow_set_input_value(driver, keywords: list[str], value: str) -> bool:
+    script = """
+const keys = (arguments[0] || []).map(item => String(item || '').toLowerCase()).filter(Boolean);
+const nextValue = String(arguments[1] || '');
+const queue = [document];
+while (queue.length) {
+  const root = queue.shift();
+  if (!root || !root.querySelectorAll) continue;
+  const inputs = root.querySelectorAll("input, textarea");
+  for (const input of inputs) {
+    const meta = `${input.getAttribute?.('aria-label') || ''} ${input.getAttribute?.('placeholder') || ''} ${input.name || ''} ${input.id || ''}`.toLowerCase();
+    if (!meta) continue;
+    if (!keys.some(key => meta.includes(key))) continue;
+    input.focus();
+    input.value = nextValue;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    input.blur();
+    return true;
+  }
+  const all = root.querySelectorAll("*");
+  for (const node of all) {
+    if (node.shadowRoot) queue.push(node.shadowRoot);
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script, keywords, value))
+    except Exception:
+        return False
+
+
+def _wait_until(driver, check: Callable[[], bool], *, timeout_sec: float, interval_sec: float = 0.5) -> bool:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            if check():
+                return True
+        except Exception:
+            pass
+        time.sleep(interval_sec)
+    return False
+
+
+def _has_schedule_inputs(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]') || document;
+const selectors = [
+  '#datepicker-trigger input',
+  '#time-of-day-trigger input',
+  '.scheduled-info-container.ytcp-datetime-picker input',
+  'ytcp-datetime-picker input',
+];
+for (const selector of selectors) {
+  const nodes = dialog.querySelectorAll(selector);
+  for (const node of nodes) {
+    const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+    if (rect && rect.width > 4 && rect.height > 4) return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _is_schedule_section_expanded(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const nodes = [
+  dialog.querySelector('#publish-from-private-non-sponsor'),
+  dialog.querySelector('#publish-from-private-non-sponsor-selector'),
+];
+for (const node of nodes) {
+  if (!node) continue;
+  if (node.hidden === false) return true;
+  if (node.hasAttribute && !node.hasAttribute('hidden')) return true;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const visible = Boolean(rect && rect.width > 4 && rect.height > 4 && (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0')));
+  if (visible) return true;
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _has_upload_landing_screen(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const nodes = dialog.querySelectorAll('*');
+for (const node of nodes) {
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  if (hidden) continue;
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase();
+  if (text.includes('drag and drop video files to upload') || text.includes('select files')) {
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _has_details_step_ready(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const nodes = dialog.querySelectorAll("*");
+for (const node of nodes) {
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  if (hidden) continue;
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase();
+  if (
+    text.includes('title (required)') ||
+    text.includes('description') ||
+    text.includes('video link') ||
+    text.includes('filename')
+  ) {
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _has_visibility_step(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const nodes = dialog.querySelectorAll("*");
+for (const node of nodes) {
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  if (hidden) continue;
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase();
+  const hasVisibilityPanel =
+    text.includes('save or publish') ||
+    text.includes('make your video public, unlisted, or private') ||
+    text.includes('select a date to make your video public') ||
+    (text.includes('private') && text.includes('unlisted') && text.includes('public') && text.includes('schedule'));
+  if (hasVisibilityPanel) {
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _click_schedule_expand_button(driver, by) -> bool:
+    return _click_first_visible(
+        driver,
+        by,
+        [
+            "#second-container-expand-button",
+            "#second-container-expand-button[role='button']",
+            "#second-container .early-access-header",
+            "#second-container",
+        ],
+    )
+
+
+def _open_schedule_section(driver, *, by=None) -> bool:
+    if by is not None:
+        try:
+            if _click_schedule_expand_button(driver, by):
+                return True
+        except Exception:
+            pass
+
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]') || document;
+const scheduler = dialog.querySelector('#publish-from-private-non-sponsor-selector');
+const schedulerContainer = dialog.querySelector('#publish-from-private-non-sponsor');
+
+function isExpanded(node) {
+  if (!node) return false;
+  if (node.hidden === false) return true;
+  if (node.hasAttribute && !node.hasAttribute('hidden')) return true;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  return Boolean(rect && rect.width > 4 && rect.height > 4 && (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0')));
+}
+
+if (isExpanded(scheduler) || isExpanded(schedulerContainer)) {
+  return true;
+}
+
+const selectors = [
+  '#second-container-expand-button',
+  '#second-container-expand-button button',
+  '#second-container',
+  '#schedule-button',
+  '#schedule',
+  'tp-yt-paper-radio-button[name="SCHEDULE"]',
+];
+for (const selector of selectors) {
+  const node = dialog.querySelector(selector);
+  if (!node) continue;
+  try { node.click(); } catch (err) {
+    try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err2) {}
+  }
+  return true;
+}
+const nodes = dialog.querySelectorAll('button, [role="button"], tp-yt-paper-radio-button, div, span');
+for (const node of nodes) {
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase().trim();
+  if (!text) continue;
+  if (text.includes('schedule') && text.includes('select a date')) {
+    try { node.click(); } catch (err) {
+      try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err2) {}
+    }
+    return true;
+  }
+}
+for (const node of nodes) {
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase().trim();
+  if (!text) continue;
+  if (text === 'schedule' || text.startsWith('schedule\n') || text.startsWith('schedule ')) {
+    try { node.click(); } catch (err) {
+      try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err2) {}
+    }
+    return true;
+  }
+}
+for (const node of nodes) {
+  const text = `${node.innerText || node.textContent || ''}`.toLowerCase().trim();
+  if (!text) continue;
+  if (text.includes('schedule as public') || (text.includes('schedule') && text.includes('public'))) {
+    try { node.click(); } catch (err) {
+      try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err2) {}
+    }
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _set_schedule_fields(driver, *, date_value: str, time_value: str) -> tuple[bool, bool]:
+    script = """
+const dateValue = String(arguments[0] || '');
+const timeValue = String(arguments[1] || '');
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]') || document;
+
+function isVisible(node) {
+  if (!node) return false;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  return Boolean(rect && rect.width > 4 && rect.height > 4 && (!style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0')));
+}
+
+function setValue(node, value) {
+  if (!node) return false;
+  node.focus();
+  if (typeof node.select === 'function') {
+    try { node.select(); } catch (err) {}
+  }
+  node.value = value;
+  node.dispatchEvent(new Event('input', { bubbles: true }));
+  node.dispatchEvent(new Event('change', { bubbles: true }));
+  node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  node.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+  node.blur();
+  return true;
+}
+
+function readText(node) {
+  return `${node?.innerText || node?.textContent || ''}`.trim();
+}
+
+function parseDateLabel(value) {
+  const parts = `${value || ''}`.trim().match(/^([A-Za-z]{3})\\s+(\\d{1,2}),\\s*(\\d{4})$/);
+  if (!parts) return null;
+  const monthMap = {
+    jan: 0,
+    feb: 1,
+    mar: 2,
+    apr: 3,
+    may: 4,
+    jun: 5,
+    jul: 6,
+    aug: 7,
+    sep: 8,
+    oct: 9,
+    nov: 10,
+    dec: 11,
+  };
+  const month = monthMap[(parts[1] || '').toLowerCase()];
+  if (month === undefined) return null;
+  return {
+    year: Number(parts[3]),
+    month,
+    day: Number(parts[2]),
+  };
+}
+
+function parseTimeLabel(value) {
+  const parts = `${value || ''}`.trim().match(/^(\\d{1,2}):(\\d{2})\\s*([AP]M)$/i);
+  if (!parts) return null;
+  let hour = Number(parts[1]) % 12;
+  if ((parts[3] || '').toUpperCase() === 'PM') {
+    hour += 12;
+  }
+  return hour * 3600 + Number(parts[2]) * 60;
+}
+
+const dateLabel = dialog.querySelector('#datepicker-trigger .dropdown-trigger-text') || dialog.querySelector('#datepicker-trigger');
+const normalizedDateValue = dateValue.trim().toLowerCase();
+const scheduler = dialog.querySelector('#publish-from-private-non-sponsor-selector');
+const targetDate = parseDateLabel(dateValue);
+const targetTime = parseTimeLabel(timeValue);
+
+if (scheduler && targetDate) {
+  const currentModel = scheduler.model && typeof scheduler.model === 'object' ? scheduler.model : {};
+  const nextModel = {
+    ...currentModel,
+    date: {
+      year: targetDate.year,
+      month: targetDate.month,
+      day: targetDate.day,
+    },
+  };
+  if (typeof targetTime === 'number' && Number.isFinite(targetTime)) {
+    nextModel.selectedTimeOfDayValue = targetTime;
+  }
+  try { scheduler.model = nextModel; } catch (err) {}
+  try { scheduler.set?.('model', nextModel); } catch (err) {}
+  try { scheduler.notifyPath?.('model', nextModel); } catch (err) {}
+  try { scheduler.notifyPath?.('model.date', nextModel.date); } catch (err) {}
+  try { scheduler.notifyPath?.('model.selectedTimeOfDayValue', nextModel.selectedTimeOfDayValue); } catch (err) {}
+  try { scheduler.requestUpdate?.(); } catch (err) {}
+  try { scheduler.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (err) {}
+  try { scheduler.dispatchEvent(new Event('input', { bubbles: true, composed: true })); } catch (err) {}
+}
+
+const normalizedDateLabel = readText(dateLabel).toLowerCase();
+let dateOk = false;
+if (normalizedDateLabel && normalizedDateValue) {
+  dateOk =
+    normalizedDateLabel === normalizedDateValue ||
+    normalizedDateLabel.includes(normalizedDateValue) ||
+    normalizedDateValue.includes(normalizedDateLabel);
+}
+
+let timeInput = null;
+for (const selector of [
+  '#time-of-day-container input',
+  '#time-of-day-container tp-yt-paper-input input',
+  '#time-of-day-container tp-yt-iron-input input',
+]) {
+  for (const node of dialog.querySelectorAll(selector)) {
+    if (!isVisible(node)) continue;
+    timeInput = node;
+    break;
+  }
+  if (timeInput) break;
+}
+
+const timeOk = setValue(timeInput, timeValue);
+return [dateOk, timeOk];
+"""
+    try:
+        result = driver.execute_script(script, date_value, time_value)
+    except Exception:
+        return False, False
+    if not isinstance(result, (list, tuple)) or len(result) != 2:
+        return False, False
+    return bool(result[0]), bool(result[1])
+
+
+def _schedule_submit_button_ready(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const candidates = [
+  dialog.querySelector('ytcp-button#done-button button'),
+  dialog.querySelector('#done-button button'),
+  dialog.querySelector('ytcp-button#done-button'),
+  dialog.querySelector('#done-button'),
+];
+for (const node of candidates) {
+  if (!node) continue;
+  const host = node.closest ? (node.closest('ytcp-button') || node) : node;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  const disabled =
+    node.disabled === true ||
+    host.disabled === true ||
+    node.getAttribute?.('disabled') !== null ||
+    host.getAttribute?.('disabled') !== null ||
+    `${node.getAttribute?.('aria-disabled') || host.getAttribute?.('aria-disabled') || ''}`.toLowerCase() === 'true';
+  if (!hidden && !disabled) {
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _click_schedule_submit(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const candidates = [
+  dialog.querySelector('ytcp-button#done-button button'),
+  dialog.querySelector('#done-button button'),
+  dialog.querySelector('ytcp-button#done-button'),
+  dialog.querySelector('#done-button'),
+];
+for (const node of candidates) {
+  if (!node) continue;
+  const host = node.closest ? (node.closest('ytcp-button') || node) : node;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  const disabled =
+    node.disabled === true ||
+    host.disabled === true ||
+    node.getAttribute?.('disabled') !== null ||
+    host.getAttribute?.('disabled') !== null ||
+    `${node.getAttribute?.('aria-disabled') || host.getAttribute?.('aria-disabled') || ''}`.toLowerCase() === 'true';
+  if (hidden || disabled) continue;
+  try { node.focus?.(); } catch (err) {}
+  try { node.click(); } catch (err) {
+    try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true })); } catch (err2) {}
+  }
+  return true;
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _upload_next_button_ready(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const candidates = [
+  dialog.querySelector('ytcp-button#next-button button'),
+  dialog.querySelector('#next-button button'),
+  dialog.querySelector('ytcp-button#next-button'),
+  dialog.querySelector('#next-button'),
+];
+for (const node of candidates) {
+  if (!node) continue;
+  const host = node.closest ? (node.closest('ytcp-button') || node) : node;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  const disabled =
+    node.disabled === true ||
+    host.disabled === true ||
+    node.getAttribute?.('disabled') !== null ||
+    host.getAttribute?.('disabled') !== null ||
+    `${node.getAttribute?.('aria-disabled') || host.getAttribute?.('aria-disabled') || ''}`.toLowerCase() === 'true';
+  if (!hidden && !disabled) {
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _click_upload_next_button(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]');
+if (!dialog) return false;
+const candidates = [
+  dialog.querySelector('ytcp-button#next-button button'),
+  dialog.querySelector('#next-button button'),
+  dialog.querySelector('ytcp-button#next-button'),
+  dialog.querySelector('#next-button'),
+];
+for (const node of candidates) {
+  if (!node) continue;
+  const host = node.closest ? (node.closest('ytcp-button') || node) : node;
+  const rect = typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null;
+  const style = window.getComputedStyle ? window.getComputedStyle(node) : null;
+  const hidden = !rect || rect.width < 4 || rect.height < 4 || (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0'));
+  const disabled =
+    node.disabled === true ||
+    host.disabled === true ||
+    node.getAttribute?.('disabled') !== null ||
+    host.getAttribute?.('disabled') !== null ||
+    `${node.getAttribute?.('aria-disabled') || host.getAttribute?.('aria-disabled') || ''}`.toLowerCase() === 'true';
+  if (hidden || disabled) continue;
+  try { node.click(); } catch (err) {
+    try { host.click(); } catch (err2) {
+      try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (err3) {}
+    }
+  }
+  return true;
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _advance_to_visibility_step(driver, *, progress_cb: ProgressCallback | None) -> None:
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    emit("Waiting for upload wizard content...")
+    if not _wait_until(
+        driver,
+        lambda: _has_details_step_ready(driver) or _has_visibility_step(driver),
+        timeout_sec=180.0,
+        interval_sec=1.0,
+    ):
+        raise RoxyUploadError("Upload wizard content did not finish rendering in YouTube Studio.")
+
+    emit("Waiting for Next button to become usable...")
+    if not _wait_until(
+        driver,
+        lambda: _upload_next_button_ready(driver) or _has_visibility_step(driver),
+        timeout_sec=180.0,
+        interval_sec=1.0,
+    ):
+        raise RoxyUploadError("Upload modal did not become ready in YouTube Studio.")
+
+    if _has_visibility_step(driver):
+        emit("Visibility step detected.")
+        return
+
+    for step_index in range(3):
+        emit(f"Advancing upload wizard ({step_index + 1}/3)...")
+        if not _wait_until(
+            driver,
+            lambda: _upload_next_button_ready(driver),
+            timeout_sec=120.0,
+            interval_sec=1.0,
+        ):
+            if _has_visibility_step(driver):
+                emit("Visibility step detected.")
+                return
+            raise RoxyUploadError("Could not move to Visibility step.")
+        if not _click_upload_next_button(driver):
+            if _has_visibility_step(driver):
+                emit("Visibility step detected.")
+                return
+            raise RoxyUploadError("Could not click Next button in YouTube Studio.")
+        time.sleep(1.4)
+        if _wait_until(
+            driver,
+            lambda: _has_visibility_step(driver) or _upload_next_button_ready(driver),
+            timeout_sec=8.0,
+            interval_sec=0.5,
+        ) and _has_visibility_step(driver):
+            emit("Visibility step detected.")
+            return
+
+    if not _wait_until(driver, lambda: _has_visibility_step(driver), timeout_sec=12.0):
+        raise RoxyUploadError("Visibility step did not appear after upload wizard.")
+
+
+def _format_youtube_schedule_date(schedule_at: datetime) -> str:
+    month = schedule_at.strftime("%b")
+    return f"{month} {schedule_at.day}, {schedule_at.year}"
+
+
+def _format_youtube_schedule_time(schedule_at: datetime) -> str:
+    return schedule_at.strftime("%I:%M %p").lstrip("0")
+
+
+def _apply_schedule_to_youtube(
+    driver,
+    *,
+    schedule_at: datetime,
+    progress_cb: ProgressCallback | None,
+    by=None,
+    check_wait_seconds: int = 0,
+) -> None:
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    if not _wait_until(driver, lambda: _has_visibility_step(driver), timeout_sec=60.0, interval_sec=1.0):
+        raise RoxyUploadError("Visibility panel did not finish rendering before schedule.")
+
+    emit("Opening Schedule panel...")
+    if not _open_schedule_section(driver, by=by):
+        raise RoxyUploadError("Could not open Schedule section in YouTube Studio.")
+    if not _wait_until(driver, lambda: _is_schedule_section_expanded(driver), timeout_sec=10.0, interval_sec=0.5):
+        raise RoxyUploadError("Schedule section did not expand in YouTube Studio.")
+    if not _wait_until(driver, lambda: _has_schedule_inputs(driver), timeout_sec=20.0, interval_sec=0.5):
+        raise RoxyUploadError("Schedule inputs did not appear in YouTube Studio.")
+
+    date_value = _format_youtube_schedule_date(schedule_at)
+    time_value = _format_youtube_schedule_time(schedule_at)
+    emit(f"Setting publish date {date_value}...")
+    date_ok, time_ok = _set_schedule_fields(driver, date_value=date_value, time_value=time_value)
+    if not date_ok:
+        raise RoxyUploadError("Could not set schedule date.")
+    time.sleep(0.6)
+
+    emit(f"Setting publish time {time_value}...")
+    if not time_ok:
+        raise RoxyUploadError("Could not set schedule time.")
+    time.sleep(0.6)
+
+    _wait_for_short_content_checks(driver, timeout_sec=check_wait_seconds, progress_cb=progress_cb)
+
+    emit("Submitting scheduled publish...")
+    if not _wait_until(driver, lambda: _schedule_submit_button_ready(driver), timeout_sec=20.0, interval_sec=0.5):
+        raise RoxyUploadError("Final Schedule button did not become ready in YouTube Studio.")
+    if not _click_schedule_submit(driver):
+        raise RoxyUploadError("Could not click final Schedule/Save button in YouTube Studio.")
+    time.sleep(1.2)
+
+
+def _wait_for_uploaded_file_to_attach(driver, *, progress_cb: ProgressCallback | None) -> None:
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    emit("Waiting for YouTube Studio to accept the selected file...")
+    if not _wait_until(
+        driver,
+        lambda: (not _has_upload_landing_screen(driver)) and (_has_details_step_ready(driver) or _has_visibility_step(driver)),
+        timeout_sec=45.0,
+        interval_sec=1.0,
+    ):
+        raise RoxyUploadError("YouTube Studio did not accept the selected file. Upload dialog is still on the initial screen.")
 
 
 def _click_first_visible(driver, by, selectors: list[str]) -> bool:
@@ -686,6 +1497,140 @@ def _prepare_youtube_upload_page(
     return target
 
 
+def _open_fresh_upload_tab(driver, *, progress_cb: ProgressCallback | None) -> tuple[str | None, list[str]]:
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    existing_handles: list[str] = []
+    try:
+        existing_handles = list(driver.window_handles)
+    except Exception:
+        existing_handles = []
+
+    emit("Opening fresh YouTube upload tab...")
+    try:
+        driver.switch_to.new_window("tab")
+    except Exception:
+        before_handles = set(existing_handles)
+        driver.execute_script("window.open('about:blank', '_blank');")
+        time.sleep(0.8)
+        current_handles = list(driver.window_handles)
+        new_handles = [handle for handle in current_handles if handle not in before_handles]
+        if new_handles:
+            driver.switch_to.window(new_handles[-1])
+
+    try:
+        return driver.current_window_handle, existing_handles
+    except Exception:
+        return None, existing_handles
+
+
+def _close_upload_tab(
+    driver,
+    *,
+    upload_handle: str | None,
+    fallback_handles: list[str],
+    progress_cb: ProgressCallback | None,
+) -> None:
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    if not upload_handle:
+        return
+    try:
+        handles_before = list(driver.window_handles)
+    except Exception:
+        handles_before = []
+    if upload_handle not in handles_before:
+        return
+
+    emit("Closing completed upload tab...")
+    switch_target = next((handle for handle in fallback_handles if handle in handles_before and handle != upload_handle), None)
+    if switch_target is None:
+        remaining = [handle for handle in handles_before if handle != upload_handle]
+        switch_target = remaining[0] if remaining else None
+
+    try:
+        driver.switch_to.window(upload_handle)
+        driver.close()
+    except Exception:
+        return
+
+    if switch_target:
+        try:
+            driver.switch_to.window(switch_target)
+        except Exception:
+            return
+
+
+def _content_check_modal_visible(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]') || document;
+const text = `${dialog?.innerText || dialog?.textContent || ''}`.toLowerCase();
+return text.includes(\"we're still checking your content\") ||
+  text.includes('we’re still checking your content') ||
+  text.includes('come back before your video is published') ||
+  text.includes('visibility and monetization restricted') ||
+  text.includes('you may get a strike');
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _dismiss_content_check_modal(driver) -> bool:
+    script = """
+const dialog = document.querySelector('ytcp-uploads-dialog') || document.querySelector('[role="dialog"]') || document;
+const candidates = Array.from(dialog.querySelectorAll('button, ytcp-button button, [role="button"]'));
+for (const node of candidates) {
+  const text = `${node?.innerText || node?.textContent || ''}`.toLowerCase().trim();
+  if (!text) continue;
+  if (text === 'got it' || text === 'ok' || text === 'okay' || text === 'understood') {
+    try { node.click(); } catch (err) {
+      try { node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true })); } catch (err2) {}
+    }
+    return true;
+  }
+}
+return false;
+"""
+    try:
+        return bool(driver.execute_script(script))
+    except Exception:
+        return False
+
+
+def _wait_for_short_content_checks(
+    driver,
+    *,
+    timeout_sec: int,
+    progress_cb: ProgressCallback | None,
+) -> None:
+    if timeout_sec <= 0:
+        return
+
+    def emit(message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(message)
+
+    emit(f"Waiting {timeout_sec}s for YouTube checks before scheduling...")
+    deadline = time.time() + timeout_sec
+    warned = False
+    while time.time() < deadline:
+        if _content_check_modal_visible(driver) and not warned:
+            emit("YouTube is still checking this video. Waiting a bit before scheduling...")
+            warned = True
+        time.sleep(2.0)
+
+    if _content_check_modal_visible(driver):
+        emit("Dismissing remaining content-check warning before scheduling...")
+        _dismiss_content_check_modal(driver)
+        time.sleep(0.8)
+
+
 def upload_video_via_roxy(
     *,
     api_host: str,
@@ -693,7 +1638,10 @@ def upload_video_via_roxy(
     workspace_id: int,
     profile_id: str,
     video_path: Path,
+    schedule_at: datetime | None = None,
     close_profile_after_start: bool = False,
+    close_upload_tab_after: bool = False,
+    check_wait_seconds: int | None = None,
     progress_cb: ProgressCallback | None = None,
     debug_root: Path | None = None,
 ) -> RoxyUploadSummary:
@@ -714,41 +1662,83 @@ def upload_video_via_roxy(
 
     client = RoxyApiClient(api_host, api_token)
 
-    emit("Opening Roxy profile...")
-    open_data = client.open_profile(
+    webdriver, service_cls, by = _require_selenium()
+    session, reused_session, session_key = _resolve_open_profile_session(
+        client=client,
         workspace_id=workspace_id,
         profile_id=profile_id.strip(),
         force_open=True,
     )
-    debugger_address = _normalize_debugger_address(str(open_data.get("http") or ""))
-    driver_path = str(open_data.get("driver") or "").strip()
+    debugger_address = session.debugger_address
+    driver_path = session.driver_path
+    emit("Reusing opened Roxy profile..." if reused_session else "Opening Roxy profile...")
 
-    if not debugger_address:
-        raise RoxyUploadError("Roxy did not return a debugger address (`data.http`).")
-    if not driver_path:
-        raise RoxyUploadError("Roxy did not return a Selenium driver path (`data.driver`).")
-
-    webdriver, service_cls, by = _require_selenium()
-
-    emit("Connecting Selenium to opened Roxy browser...")
-    chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_experimental_option("debuggerAddress", debugger_address)
-    chrome_service = service_cls(driver_path)
     try:
-        driver = webdriver.Chrome(service=chrome_service, options=chrome_options)
+        emit("Connecting Selenium to opened Roxy browser...")
+        driver = _attach_selenium_to_browser(
+            webdriver,
+            service_cls,
+            debugger_address=debugger_address,
+            driver_path=driver_path,
+        )
     except Exception as exc:
-        raise RoxyUploadError(
-            "Could not attach Selenium to the opened Roxy browser. "
-            "Ensure the profile is open and the provided driver path is valid."
-        ) from exc
+        if reused_session:
+            emit("Cached Roxy browser session looks stale. Reopening profile once...")
+            _invalidate_profile_session(session_key)
+            session, _reused_session, session_key = _resolve_open_profile_session(
+                client=client,
+                workspace_id=workspace_id,
+                profile_id=profile_id.strip(),
+                force_open=True,
+            )
+            debugger_address = session.debugger_address
+            driver_path = session.driver_path
+            try:
+                emit("Reconnecting Selenium to refreshed Roxy browser...")
+                driver = _attach_selenium_to_browser(
+                    webdriver,
+                    service_cls,
+                    debugger_address=debugger_address,
+                    driver_path=driver_path,
+                )
+            except Exception as retry_exc:
+                _invalidate_profile_session(session_key)
+                raise RoxyUploadError(
+                    "Could not attach Selenium to the opened Roxy browser. "
+                    "Ensure the profile is open and the provided driver path is valid."
+                ) from retry_exc
+        else:
+            _invalidate_profile_session(session_key)
+            raise RoxyUploadError(
+                "Could not attach Selenium to the opened Roxy browser. "
+                "Ensure the profile is open and the provided driver path is valid."
+            ) from exc
 
+    upload_tab_handle: str | None = None
+    fallback_handles: list[str] = []
     try:
+        upload_tab_handle, fallback_handles = _open_fresh_upload_tab(driver, progress_cb=progress_cb)
         file_input = _prepare_youtube_upload_page(driver, by, progress_cb=progress_cb)
         resolved_path = str(video_path.resolve())
         emit(f"Selecting video file: {video_path.name}")
         file_input.send_keys(resolved_path)
         time.sleep(1.2)
+        _wait_for_uploaded_file_to_attach(driver, progress_cb=progress_cb)
         emit("Video file submitted to YouTube Studio upload dialog.")
+        schedule_applied = False
+        scheduled_at_iso: str | None = None
+        if schedule_at is not None:
+            _advance_to_visibility_step(driver, progress_cb=progress_cb)
+            _apply_schedule_to_youtube(
+                driver,
+                schedule_at=schedule_at,
+                progress_cb=progress_cb,
+                by=by,
+                check_wait_seconds=max(int(check_wait_seconds or 0), 0),
+            )
+            schedule_applied = True
+            scheduled_at_iso = schedule_at.isoformat()
+            emit(f"Schedule saved for {scheduled_at_iso}.")
     except Exception as exc:
         bundle = _capture_debug_bundle(driver, reason="youtube-upload", debug_root=debug_root)
         if bundle is not None:
@@ -756,12 +1746,32 @@ def upload_video_via_roxy(
         message = str(exc)
         if bundle is not None:
             message = f"{message}\nDebug bundle: {bundle}"
+        if close_upload_tab_after:
+            try:
+                _close_upload_tab(
+                    driver,
+                    upload_handle=upload_tab_handle,
+                    fallback_handles=fallback_handles,
+                    progress_cb=progress_cb,
+                )
+            except Exception:
+                pass
         try:
             driver.service.stop()
         except Exception:
             pass
         raise RoxyUploadError(message) from exc
     else:
+        if close_upload_tab_after:
+            try:
+                _close_upload_tab(
+                    driver,
+                    upload_handle=upload_tab_handle,
+                    fallback_handles=fallback_handles,
+                    progress_cb=progress_cb,
+                )
+            except Exception:
+                pass
         # Stop chromedriver process while keeping the browser/profile open for manual handling.
         try:
             driver.service.stop()
@@ -769,6 +1779,7 @@ def upload_video_via_roxy(
             pass
 
     if close_profile_after_start:
+        _invalidate_profile_session(session_key)
         emit("Closing Roxy profile...")
         client.close_profile(profile_id.strip())
 
@@ -776,9 +1787,13 @@ def upload_video_via_roxy(
         "Upload started: file has been pushed to YouTube Studio. "
         "If CAPTCHA/phone verification appears, complete it manually in the opened Roxy browser window."
     )
+    if schedule_applied and scheduled_at_iso:
+        message = f"Upload + schedule completed in YouTube Studio ({scheduled_at_iso})."
     return RoxyUploadSummary(
         profile_id=profile_id.strip(),
         video_path=video_path,
         debugger_address=debugger_address,
         message=message,
+        schedule_applied=schedule_applied,
+        scheduled_at=scheduled_at_iso,
     )

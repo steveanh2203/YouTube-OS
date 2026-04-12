@@ -5,7 +5,7 @@ import { usePanelContext } from '@/contexts/PanelContext'
 import {
   Film, FolderOpen, Play, Loader, CheckCircle, AlertCircle,
   Settings2, Image, ArrowDownUp,
-  Volume2, Monitor, Zap, ChevronDown, ChevronUp, Eye,
+  Volume2, Zap, ChevronDown, ChevronUp, Eye,
   Clapperboard,
 } from 'lucide-react'
 import { fastEditApi, type FastEditRenderRequest, type FastEditRenderResponse,

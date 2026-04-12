@@ -1,45 +1,35 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
+import { useExtensionSocket } from '@/hooks/useExtensionSocket'
+import { toast } from '@/store/toast.store'
 import { open as tauriOpen, save as tauriSave } from '@tauri-apps/plugin-dialog'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
   FileText, Play, Copy, Download, Loader, FolderOpen,
-  Scissors, RotateCcw, CheckCircle, AlertCircle, Hash,
+  Scissors, RotateCcw, CheckCircle, AlertCircle, Hash, Upload,
 } from 'lucide-react'
 import { srtApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
 // ─── Sentence splitter ────────────────────────────────────────────────────────
+// Strips leading list markers: "1.", "1)", "(1)", "1-", "1:" etc.
+const LEADING_LIST_MARKER_REGEX = /^\s*(?:\(?\d{1,4}\)?[.)]|(?:\d{1,4}\s*[-:]))\s+/
+
+function stripLeadingListMarker(line: string): string {
+  return line.replace(LEADING_LIST_MARKER_REGEX, '').trim()
+}
+
 function splitIntoNumberedSentences(raw: string): string {
-  const trimmed = raw.trim()
-  if (!trimmed) return raw
+  const lines = raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(stripLeadingListMarker)
+    .filter(line => line !== '')
 
-  const lines = trimmed.split('\n').filter(l => l.trim())
-
-  // Already numbered (>70% lines start with "N. " or "N) ") → keep as-is
-  const numberedCount = lines.filter(l => /^\d+[.)]\s/.test(l.trim())).length
-  if (numberedCount > lines.length * 0.7) return raw
-
-  const text = trimmed.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-
-  const candidates: string[] = []
-  for (const line of text.split('\n')) {
-    const t = line.trim()
-    if (!t) continue
-    // Sub-split very long lines (>150 chars) by sentence boundaries
-    if (t.length > 150 && /[.!?]\s+[A-Z]/.test(t)) {
-      t.split(/(?<=[.!?])\s+(?=[A-Z])/).forEach(p => {
-        const pt = p.trim()
-        if (pt) candidates.push(pt)
-      })
-    } else {
-      candidates.push(t)
-    }
-  }
-
-  if (candidates.length === 0) return raw
-  return candidates.map((s, i) => `${i + 1}. ${s}`).join('\n')
+  if (lines.length === 0) return raw
+  return lines.map((s, i) => `${i + 1}. ${s}`).join('\n')
 }
 
 function countSentences(text: string): number {
@@ -62,6 +52,17 @@ export default function SRTGen() {
   const [contentText, setContentText] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; output: string; message: string } | null>(null)
+  const [importError, setImportError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Extension bridge — nhận script từ Claude extension ───────────────────
+  useExtensionSocket('srt_gen', (msg) => {
+    setContentText(prev => {
+      const trimmed = prev.trim()
+      return trimmed ? `${trimmed}\n${msg.content}` : msg.content
+    })
+    toast.success('⚡ Nhận script từ Claude!', 'Đã fill nội dung vào ô SRT', 4000)
+  })
 
   // ── File picker — Tauri dialog (returns full OS path) ────────────────────────
   const handleFilePick = async () => {
@@ -102,6 +103,25 @@ export default function SRTGen() {
         .join('\n')
     )
   }
+
+  // ── Import file (FileReader — works in Tauri WebView without fs plugin) ──────
+  const handleImportClick = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportError('')
+    const reader = new FileReader()
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string
+      if (text) setContentText(splitIntoNumberedSentences(text))
+    }
+    reader.onerror = () => setImportError(`Cannot read "${file.name}" — make sure it is a plain-text file.`)
+    reader.readAsText(file, 'UTF-8')
+    e.target.value = '' // allow re-selecting the same file
+  }, [])
 
   // ── Generate ────────────────────────────────────────────────────────────────
   const handleGenerate = async () => {
@@ -186,10 +206,27 @@ export default function SRTGen() {
 
         {/* Content / Script */}
         <div>
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".txt,.md,.csv,.tsv,.json,.xml,.html,.htm,.srt,.vtt,.ass,.log,.rtf,.py,.js,.ts,.jsx,.tsx,.yaml,.yml,.toml,.ini,.cfg,.conf,.tex,.rst,.org,.wiki,.nfo,.sub,.sbv,.lrc"
+            onChange={handleFileChange}
+          />
+
           {/* Label row + action buttons */}
           <div className="flex items-center justify-between mb-1.5">
             <label className="label mb-0">Content / Script</label>
             <div className="flex items-center gap-2">
+              <button
+                className="btn-secondary text-xs py-1 px-2.5 h-auto"
+                onClick={handleImportClick}
+                title="Import content from a text file (.txt, .md, .srt, .vtt, and more)"
+              >
+                <Upload size={11} />
+                Import file
+              </button>
               {contentText.trim() && (
                 <button
                   className="btn-secondary text-xs py-1 px-2 h-auto"
@@ -223,6 +260,14 @@ export default function SRTGen() {
             onChange={e => setContentText(e.target.value)}
             onPaste={handlePaste}
           />
+
+          {/* Import error */}
+          {importError && (
+            <p className="flex items-center gap-1.5 text-xs text-red-600 mt-1">
+              <AlertCircle size={11} className="shrink-0" />
+              {importError}
+            </p>
+          )}
 
           {/* Status bar */}
           <div className="flex items-center justify-between mt-1.5">

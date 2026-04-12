@@ -122,8 +122,9 @@ export interface Competitor {
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
-export type MainView      = 'projects' | 'planner' | 'render' | 'analytics' | 'competitors'
-export type ProjectSubView = 'parents' | 'children' | 'resource-prep' | 'ai-gen' | 'ai-audio' | 'livestream' | 'srt-gen' | 'raw-seo' | 'roxy-upload' | 'animation' | 'fast-edit' | 'cut-automate' | 'sora-gen'
+export type MainView      = 'projects' | 'planner' | 'render' | 'automate' | 'reply-center' | 'analytics' | 'competitors' | 'settings'
+export type ProjectSubView = 'parents' | 'children' | 'resource-prep' | 'ai-gen' | 'ai-audio' | 'livestream' | 'srt-gen' | 'raw-seo' | 'roxy-upload' | 'youtube-reply' | 'animation' | 'fast-edit' | 'cut-automate' | 'sora-gen' | 'audio-visualizer'
+export type AutomateSubView = 'short' | 'long'
 export type CompetitorPurpose = 'rewrite' | 'reference' | 'trending' | 'script'
 
 // ─── Panel State ─────────────────────────────────────────────────────────────
@@ -132,6 +133,7 @@ export interface PanelState {
   id: string                         // 'left' | 'right'
   mainView: MainView
   projectSubView: ProjectSubView
+  automateSubView: AutomateSubView
   selectedParentId: string | null
   selectedChildId: string | null
   sidebarCollapsed: boolean
@@ -141,6 +143,7 @@ const DEFAULT_PANEL = (id: string): PanelState => ({
   id,
   mainView: 'projects',
   projectSubView: 'parents',
+  automateSubView: 'short',
   selectedParentId: null,
   selectedChildId: null,
   sidebarCollapsed: false,
@@ -152,6 +155,7 @@ interface AppState {
   // Navigation (legacy single-panel — kept for backward compat)
   mainView: MainView
   projectSubView: ProjectSubView
+  automateSubView: AutomateSubView
   selectedParentId: string | null
   selectedChildId: string | null
 
@@ -172,20 +176,24 @@ interface AppState {
   sidebarCollapsed: boolean
   isLoading: boolean
   loadingText: string
+  requestedParentEditorId: string | null
 
   // Navigation actions (legacy — drives single-panel / backward compat)
   setMainView: (view: MainView) => void
   setProjectSubView: (view: ProjectSubView) => void
+  setAutomateSubView: (view: AutomateSubView) => void
   selectParent: (id: string | null) => void
   selectChild: (id: string | null) => void
   setSidebarCollapsed: (v: boolean) => void
   setLoading: (v: boolean, text?: string) => void
+  requestParentEditor: (id: string | null) => void
 
   // Split View actions
   setSplitView: (v: boolean) => void
   setActivePanelId: (id: string) => void
   setPanelMainView: (panelId: string, view: MainView) => void
   setPanelSubView: (panelId: string, view: ProjectSubView) => void
+  setPanelAutomateSubView: (panelId: string, view: AutomateSubView) => void
   selectPanelParent: (panelId: string, id: string | null) => void
   selectPanelChild: (panelId: string, id: string | null) => void
   setPanelSidebarCollapsed: (panelId: string, v: boolean) => void
@@ -232,11 +240,24 @@ const MOCK_RENDER_JOBS: RenderJob[]     = []
 const MOCK_ANALYTICS: AnalyticsEntry[]  = []
 const MOCK_COMPETITORS: Competitor[]    = []
 
+function applyChildCountsToParents(parents: ParentProject[], children: ChildProject[]): ParentProject[] {
+  const counts = children.reduce<Record<string, number>>((acc, child) => {
+    acc[child.parentId] = (acc[child.parentId] ?? 0) + 1
+    return acc
+  }, {})
+
+  return parents.map((parent) => ({
+    ...parent,
+    childCount: counts[parent.id] ?? parent.childCount ?? 0,
+  }))
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 export const useAppStore = create<AppState>()(persist((set) => ({
   mainView: 'projects',
   projectSubView: 'parents',
+  automateSubView: 'short',
   selectedParentId: null,
   selectedChildId: null,
 
@@ -254,13 +275,16 @@ export const useAppStore = create<AppState>()(persist((set) => ({
   sidebarCollapsed: false,
   isLoading: false,
   loadingText: '',
+  requestedParentEditorId: null,
 
   setMainView: (view) => set({ mainView: view }),
   setProjectSubView: (view) => set({ projectSubView: view }),
+  setAutomateSubView: (view) => set({ automateSubView: view }),
   selectParent: (id) => set({ selectedParentId: id }),
   selectChild: (id) => set({ selectedChildId: id }),
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   setLoading: (v, text = '') => set({ isLoading: v, loadingText: text }),
+  requestParentEditor: (id) => set({ requestedParentEditorId: id }),
 
   // Split View actions
   setSplitView: (v) => set({ splitView: v }),
@@ -270,6 +294,9 @@ export const useAppStore = create<AppState>()(persist((set) => ({
   })),
   setPanelSubView: (panelId, view) => set((s) => ({
     panels: s.panels.map((p) => p.id === panelId ? { ...p, projectSubView: view } : p) as [PanelState, PanelState],
+  })),
+  setPanelAutomateSubView: (panelId, view) => set((s) => ({
+    panels: s.panels.map((p) => p.id === panelId ? { ...p, automateSubView: view } : p) as [PanelState, PanelState],
   })),
   selectPanelParent: (panelId, id) => set((s) => ({
     panels: s.panels.map((p) => p.id === panelId ? { ...p, selectedParentId: id } : p) as [PanelState, PanelState],
@@ -282,7 +309,9 @@ export const useAppStore = create<AppState>()(persist((set) => ({
   })),
 
   // Parent CRUD
-  setParentProjects: (projects) => set({ parentProjects: projects }),
+  setParentProjects: (projects) => set((s) => ({
+    parentProjects: applyChildCountsToParents(projects, s.childProjects),
+  })),
   addParentDirect: (p) => set((s) => ({
     parentProjects: [...s.parentProjects, p],
   })),
@@ -309,7 +338,10 @@ export const useAppStore = create<AppState>()(persist((set) => ({
   addChildDirect: (c) => set((s) => ({
     childProjects: [...s.childProjects, c],
   })),
-  setChildren: (children) => set({ childProjects: children }),
+  setChildren: (children) => set((s) => ({
+    childProjects: children,
+    parentProjects: applyChildCountsToParents(s.parentProjects, children),
+  })),
   updateChild: (id, patch) => set((s) => ({
     childProjects: s.childProjects.map((c) => c.id === id ? { ...c, ...patch } : c),
   })),

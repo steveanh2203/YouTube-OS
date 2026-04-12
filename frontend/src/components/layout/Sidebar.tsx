@@ -1,16 +1,17 @@
 import { cn } from '@/lib/utils'
-import { useAppStore, type MainView, type ProjectSubView } from '@/store/app.store'
+import { useAppStore, type AutomateSubView, type MainView, type ProjectSubView } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
   FolderOpen, LayoutDashboard, BarChart2, ChevronLeft, ChevronRight,
   Scissors, Cpu, Mic, Radio, ChevronRight as Chevron, Target,
-  FileText, Tag, Upload, Film, ClipboardList, CalendarRange, Video,
+  FileText, Tag, Upload, Film, ClipboardList, CalendarRange, Video, AudioWaveform, MessageSquareReply, Settings, WandSparkles,
 } from 'lucide-react'
 
 export default function Sidebar() {
   const {
     mainView, setMainView,
     projectSubView, setProjectSubView,
+    automateSubView, setAutomateSubView,
     sidebarCollapsed, setSidebarCollapsed,
     selectedParentId, selectParent,
     selectedChildId, selectChild,
@@ -25,8 +26,11 @@ export default function Sidebar() {
     { id: 'planner',      label: 'Planner',      icon: CalendarRange },
     { id: 'projects',     label: 'Projects',     icon: FolderOpen },
     { id: 'render',       label: 'Render',        icon: LayoutDashboard },
+    { id: 'automate',     label: 'Automate',      icon: WandSparkles },
+    { id: 'reply-center', label: 'Reply Center',  icon: MessageSquareReply },
     { id: 'analytics',    label: 'Analytics',     icon: BarChart2 },
     { id: 'competitors',  label: 'Competitors',   icon: Target },
+    { id: 'settings',     label: 'Settings',      icon: Settings },
   ] as { id: MainView; label: string; icon: React.ElementType }[]
 
   const toolNav = [
@@ -39,9 +43,15 @@ export default function Sidebar() {
     { id: 'roxy-upload', label: 'Roxy Upload', icon: Upload },
     { id: 'fast-edit',     label: 'Fast Edit',     icon: Film },
     { id: 'cut-automate', label: 'Cut Automate', icon: Scissors },
-    { id: 'sora-gen',    label: 'Sora Gen',     icon: Video },
+    { id: 'sora-gen',          label: 'Sora Gen',        icon: Video },
+    { id: 'audio-visualizer', label: 'Audio Visualizer', icon: AudioWaveform },
     // { id: 'animation', label: 'Animation', icon: Sparkles }, // hidden
   ] as { id: ProjectSubView; label: string; icon: React.ElementType }[]
+
+  const automateNav = [
+    { id: 'short', label: 'Short Video' },
+    { id: 'long', label: 'Long Video' },
+  ] as { id: AutomateSubView; label: string }[]
 
   return (
     <aside
@@ -87,17 +97,70 @@ export default function Sidebar() {
 
       {/* Main Nav */}
       <nav className={cn('flex flex-col gap-0.5 p-2 flex-1 overflow-y-auto overflow-x-hidden', compact && 'p-1.5')}>
-        {mainNav.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', mainView === id && 'active')}
-            onClick={() => setMainView(id)}
-            title={collapsed ? label : undefined}
-          >
-            <Icon size={16} className="shrink-0" />
-            {!collapsed && <span>{label}</span>}
-          </button>
-        ))}
+        {mainNav.map(({ id, label, icon: Icon }) => {
+          if (id === 'automate') {
+            const automateOpen = mainView === 'automate' && !collapsed
+
+            return (
+              <div key={id}>
+                <button
+                  className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', mainView === id && 'active')}
+                  onClick={() => setMainView('automate')}
+                  title={collapsed ? label : undefined}
+                >
+                  <Icon size={16} className="shrink-0" />
+                  {!collapsed && (
+                    <>
+                      <span className="flex-1 text-left">{label}</span>
+                      <Chevron size={14} className={cn('transition-transform', automateOpen && 'rotate-90')} />
+                    </>
+                  )}
+                </button>
+
+                {automateOpen && (
+                  <div className="mt-2 space-y-1 pl-7">
+                    {automateNav.map((item) => (
+                      <button
+                        key={item.id}
+                        className={cn(
+                          'group flex w-full items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors',
+                          automateSubView === item.id
+                            ? 'border-white/10 bg-white/8 text-white'
+                            : 'text-slate-400 hover:border-white/5 hover:bg-white/5 hover:text-slate-200',
+                          compact && 'px-2.5 py-1.5 text-[13px]',
+                        )}
+                        onClick={() => {
+                          setMainView('automate')
+                          setAutomateSubView(item.id)
+                        }}
+                      >
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 rounded-full transition-colors',
+                            automateSubView === item.id ? 'bg-primary-300' : 'bg-slate-600 group-hover:bg-slate-400',
+                          )}
+                        />
+                        <span className="flex-1">{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          }
+
+          return (
+            <button
+              key={id}
+              className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', mainView === id && 'active')}
+              onClick={() => setMainView(id)}
+              title={collapsed ? label : undefined}
+            >
+              <Icon size={16} className="shrink-0" />
+              {!collapsed && <span>{label}</span>}
+            </button>
+          )
+        })}
 
         {/* Projects sub-nav — only when on projects view and not collapsed */}
         {mainView === 'projects' && !collapsed && (

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -234,20 +236,12 @@ def apply_raw_seo(
     total = len(targets)
     results: list[RawSEOResult] = []
 
-    for index, path in enumerate(targets, 1):
-        if progress_callback is not None:
-            progress_callback(index - 1, total, path)
-
+    def _process_file(index_path: tuple[int, Path]) -> RawSEOResult:
+        index, path = index_path
         if not path.exists():
-            results.append(RawSEOResult(file=path, success=False, message="File does not exist"))
-            if progress_callback is not None:
-                progress_callback(index, total, path)
-            continue
+            return RawSEOResult(file=path, success=False, message="File does not exist")
         if not path.is_file():
-            results.append(RawSEOResult(file=path, success=False, message="Path is not a file"))
-            if progress_callback is not None:
-                progress_callback(index, total, path)
-            continue
+            return RawSEOResult(file=path, success=False, message="Path is not a file")
 
         cmd = [executable, "-overwrite_original", "-m"]
         if cleaned_title:
@@ -300,20 +294,14 @@ def apply_raw_seo(
                 timeout=60,
             )
         except subprocess.TimeoutExpired:
-            results.append(RawSEOResult(file=path, success=False, message="ExifTool timed out"))
             logger.warning("ExifTool timeout for {}", path)
-            if progress_callback is not None:
-                progress_callback(index, total, path)
-            continue
+            return RawSEOResult(file=path, success=False, message="ExifTool timed out")
         except subprocess.CalledProcessError as exc:
             details = (exc.stderr or exc.stdout or str(exc)).strip()
             if not details:
                 details = "ExifTool failed"
-            results.append(RawSEOResult(file=path, success=False, message=details))
             logger.warning("ExifTool failed for {}: {}", path, details)
-            if progress_callback is not None:
-                progress_callback(index, total, path)
-            continue
+            return RawSEOResult(file=path, success=False, message=details)
 
         final_path = path
         message = (completed.stdout or "Metadata updated").strip()
@@ -323,15 +311,9 @@ def apply_raw_seo(
                 if final_path != path:
                     message = f"{message} | renamed to {final_path.name}"
             except OSError as exc:
-                results.append(RawSEOResult(file=path, success=False, message=f"Rename failed: {exc}"))
-                if progress_callback is not None:
-                    progress_callback(index, total, path)
-                continue
+                return RawSEOResult(file=path, success=False, message=f"Rename failed: {exc}")
             except RawSEOError as exc:
-                results.append(RawSEOResult(file=path, success=False, message=str(exc)))
-                if progress_callback is not None:
-                    progress_callback(index, total, path)
-                continue
+                return RawSEOResult(file=path, success=False, message=str(exc))
 
         if strict_verify:
             try:
@@ -341,10 +323,7 @@ def apply_raw_seo(
                     additional_tags=list(cleaned_extra_tags.keys()),
                 )
             except RawSEOError as exc:
-                results.append(RawSEOResult(file=final_path, success=False, message=f"Strict verify failed: {exc}"))
-                if progress_callback is not None:
-                    progress_callback(index, total, final_path)
-                continue
+                return RawSEOResult(file=final_path, success=False, message=f"Strict verify failed: {exc}")
 
             issues = _verify_raw_seo_fields(
                 metadata,
@@ -354,21 +333,37 @@ def apply_raw_seo(
                 expected_extra_tags=cleaned_extra_tags,
             )
             if issues:
-                results.append(
-                    RawSEOResult(
-                        file=final_path,
-                        success=False,
-                        message="Strict verify failed: " + " | ".join(issues),
-                    )
+                return RawSEOResult(
+                    file=final_path,
+                    success=False,
+                    message="Strict verify failed: " + " | ".join(issues),
                 )
-                if progress_callback is not None:
-                    progress_callback(index, total, final_path)
-                continue
             message = f"{message} | strict verify: PASS"
 
-        results.append(RawSEOResult(file=final_path, success=True, message=message))
-        if progress_callback is not None:
-            progress_callback(index, total, final_path)
+        return RawSEOResult(file=final_path, success=True, message=message)
+
+    # Determine worker count: ExifTool is subprocess-bound (not GIL-bound),
+    # so parallel execution yields significant speedup.
+    max_workers = min(8, max(1, (os.cpu_count() or 4)))
+
+    if progress_callback is not None:
+        progress_callback(0, total, None)
+
+    # Submit all files in parallel; collect results preserving submission order
+    indexed = list(enumerate(targets, 1))
+    futures_map: dict = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for item in indexed:
+            fut = executor.submit(_process_file, item)
+            futures_map[fut] = item
+
+        completed_count = 0
+        for future in as_completed(futures_map):
+            result = future.result()
+            results.append(result)
+            completed_count += 1
+            if progress_callback is not None:
+                progress_callback(completed_count, total, result.file)
 
     succeeded = sum(1 for item in results if item.success)
     failed = len(results) - succeeded

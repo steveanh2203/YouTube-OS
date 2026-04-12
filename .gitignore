@@ -29,7 +29,8 @@ MANIFEST
 venv/
 env/
 .venv/
-.env/
+.env
+.env.*
 
 # IDE / Editor specific
 .idea/
@@ -41,6 +42,11 @@ env/
 # Runtime logs & debug
 logs/
 .waylog/
+.DS_Store
+.claude/settings.json
+frontend/.env
+autocapcut/configs/config.json
 
 # Rust build artifacts
 rust/**/target/
+.gstack/
