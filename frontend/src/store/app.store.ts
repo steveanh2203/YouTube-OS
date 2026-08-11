@@ -3,10 +3,7 @@ import { persist } from 'zustand/middleware'
 
 // ─── Enums (mirrors Python backend) ────────────────────────────────────────
 
-export type ProjectSource = 'local' | 'cloud_cache'
-export type ProjectStatus = 'pending' | 'processing' | 'done' | 'failed'
 export type ChildStatus   = 'draft' | 'resource_prep' | 'editing' | 'published'
-export type RenderStatus  = 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
 export type PlannerStage = 'backlog' | 'ready' | 'editing' | 'published'
 export type PlannerPriority = 'low' | 'medium' | 'high' | 'urgent'
 
@@ -55,45 +52,6 @@ export interface ChildProject {
   createdAt: string
 }
 
-/** mirrors ProjectItem in models.py (a CapCut draft project) */
-export interface CapcutProject {
-  id: string
-  name: string
-  path: string             // absolute path to draft folder
-  source: ProjectSource    // 'local' | 'cloud_cache'
-  status: ProjectStatus
-  notes: string
-  assignedProjectId: string | null   // linked ChildProject id
-  isSelected: boolean
-  selectionOrder: number | null
-  metadata: ProjectMetadata
-}
-
-/** metadata extracted by project_loader.py / inspect_project() */
-export interface ProjectMetadata {
-  durationS: number        // duration in seconds
-  fps: number
-  width: number
-  height: number
-  videoSegments: number
-  trackCount: number
-  ffmpegReady: boolean
-  modifiedAt: string       // ISO date string
-}
-
-/** one item in the render queue — maps to AutomationController run */
-export interface RenderJob {
-  id: string
-  capcutProjectId: string
-  projectName: string
-  status: RenderStatus
-  progress: number         // 0–100
-  startedAt: string | null
-  completedAt: string | null
-  exportPath: string | null
-  errorMessage: string | null
-}
-
 /** per-project analytics snapshot */
 export interface AnalyticsEntry {
   id: string
@@ -126,7 +84,7 @@ export interface Competitor {
 // ─── Navigation ─────────────────────────────────────────────────────────────
 
 export type MainView      = 'projects' | 'planner' | 'render' | 'automate' | 'reply-center' | 'analytics' | 'competitors' | 'settings'
-export type ProjectSubView = 'parents' | 'children' | 'resource-prep' | 'ai-gen' | 'ai-audio' | 'livestream' | 'srt-gen' | 'raw-seo' | 'roxy-upload' | 'youtube-reply' | 'animation' | 'fast-edit' | 'cut-automate' | 'sora-gen' | 'audio-visualizer'
+export type ProjectSubView = 'parents' | 'children' | 'resource-prep' | 'ai-gen' | 'ai-audio' | 'livestream' | 'srt-gen' | 'raw-seo' | 'roxy-upload' | 'youtube-reply' | 'fast-edit' | 'cut-automate' | 'sora-gen' | 'audio-visualizer'
 export type AutomateSubView = 'short' | 'long'
 export type CompetitorPurpose = 'rewrite' | 'reference' | 'trending' | 'script'
 
@@ -170,8 +128,6 @@ interface AppState {
   // Data — mock, will be replaced by FastAPI calls
   parentProjects: ParentProject[]
   childProjects: ChildProject[]
-  capcutProjects: CapcutProject[]
-  renderJobs: RenderJob[]
   analyticsEntries: AnalyticsEntry[]
   competitors: Competitor[]
 
@@ -215,17 +171,6 @@ interface AppState {
   updateChild: (id: string, patch: Partial<ChildProject>) => void
   deleteChild: (id: string) => void
 
-  // CapCut project actions
-  setCapcutProjects: (projects: CapcutProject[]) => void
-  setCapcutStatus: (id: string, status: ProjectStatus) => void
-  assignCapcutToChild: (capcutId: string, childId: string | null) => void
-  toggleCapcutSelection: (id: string) => void
-
-  // Render actions
-  addRenderJob: (capcutProjectId: string) => void
-  updateRenderJob: (id: string, patch: Partial<RenderJob>) => void
-  cancelRenderJob: (id: string) => void
-
   // Competitor actions
   setCompetitors: (items: Competitor[]) => void
   addCompetitor: (c: Omit<Competitor, 'id' | 'addedAt'>) => { ok: boolean; duplicate?: Competitor }
@@ -238,8 +183,6 @@ interface AppState {
 // No demo data — all data will come from FastAPI backend
 const MOCK_PARENTS: ParentProject[]     = []
 const MOCK_CHILDREN: ChildProject[]     = []
-const MOCK_CAPCUT: CapcutProject[]      = []
-const MOCK_RENDER_JOBS: RenderJob[]     = []
 const MOCK_ANALYTICS: AnalyticsEntry[]  = []
 const MOCK_COMPETITORS: Competitor[]    = []
 
@@ -271,8 +214,6 @@ export const useAppStore = create<AppState>()(persist((set) => ({
 
   parentProjects: MOCK_PARENTS,
   childProjects: MOCK_CHILDREN,
-  capcutProjects: MOCK_CAPCUT,
-  renderJobs: MOCK_RENDER_JOBS,
   analyticsEntries: MOCK_ANALYTICS,
   competitors: MOCK_COMPETITORS,
   sidebarCollapsed: false,
@@ -358,58 +299,6 @@ export const useAppStore = create<AppState>()(persist((set) => ({
     }
   }),
 
-  // CapCut project actions
-  setCapcutProjects: (projects) => set({ capcutProjects: projects }),
-  setCapcutStatus: (id, status) => set((s) => ({
-    capcutProjects: s.capcutProjects.map((c) => c.id === id ? { ...c, status } : c),
-  })),
-  assignCapcutToChild: (capcutId, childId) => set((s) => ({
-    capcutProjects: s.capcutProjects.map((c) =>
-      c.id === capcutId ? { ...c, assignedProjectId: childId } : c
-    ),
-  })),
-  toggleCapcutSelection: (id) => set((s) => {
-    const proj = s.capcutProjects.find((c) => c.id === id)
-    if (!proj) return {}
-    const selectedCount = s.capcutProjects.filter((c) => c.isSelected).length
-    return {
-      capcutProjects: s.capcutProjects.map((c) =>
-        c.id === id
-          ? { ...c, isSelected: !c.isSelected, selectionOrder: !c.isSelected ? selectedCount + 1 : null }
-          : c
-      ),
-    }
-  }),
-
-  // Render actions
-  addRenderJob: (capcutProjectId) => set((s) => {
-    const proj = s.capcutProjects.find((c) => c.id === capcutProjectId)
-    if (!proj) return {}
-    return {
-      renderJobs: [...s.renderJobs, {
-        id: `rj${Date.now()}`,
-        capcutProjectId,
-        projectName: proj.name,
-        status: 'queued',
-        progress: 0,
-        startedAt: null,
-        completedAt: null,
-        exportPath: null,
-        errorMessage: null,
-      }],
-    }
-  }),
-  updateRenderJob: (id, patch) => set((s) => ({
-    renderJobs: s.renderJobs.map((j) => j.id === id ? { ...j, ...patch } : j),
-  })),
-  cancelRenderJob: (id) => set((s) => ({
-    renderJobs: s.renderJobs.map((j) =>
-      j.id === id && (j.status === 'queued' || j.status === 'running')
-        ? { ...j, status: 'cancelled' }
-        : j
-    ),
-  })),
-
   // Competitor actions
   setCompetitors: (items) => set({ competitors: items }),
   addCompetitor: (c) => {
@@ -439,7 +328,6 @@ export const useAppStore = create<AppState>()(persist((set) => ({
   name: 'autocapcut-store',
   // Only persist data that should survive app restarts
   partialize: (s) => ({
-    capcutProjects:  s.capcutProjects,
     parentProjects:  s.parentProjects,
     childProjects:   s.childProjects,
     competitors:     s.competitors,

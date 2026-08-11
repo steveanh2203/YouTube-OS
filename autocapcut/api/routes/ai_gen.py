@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from autocapcut.services.upscale_engine import upscale_image_file
+from autocapcut.services.media_workspace import resolve_workspace_or_local
 
 # WhiskForge-Pro proven generation engine
 from autocapcut.services.wf_generator import (
@@ -189,9 +190,9 @@ class OutputFolderInitRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _normalize_output_folder(folder: str) -> str:
-    value = os.path.abspath(os.path.expanduser(folder.strip()))
-    if not value:
+    if not folder.strip():
         raise HTTPException(status_code=400, detail="Output folder is required.")
+    value = str(resolve_workspace_or_local(folder))
     if os.path.exists(value) and not os.path.isdir(value):
         raise HTTPException(status_code=400, detail="Output path must be a folder.")
     return value

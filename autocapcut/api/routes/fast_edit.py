@@ -21,6 +21,7 @@ from autocapcut.services.fast_edit import (
     AnimationSettings,
     TransitionSettings,
 )
+from autocapcut.services.media_workspace import resolve_workspace_or_local, workspace_file_reference
 
 _log = logging.getLogger("autocapcut.api.fast_edit")
 
@@ -30,6 +31,16 @@ router = APIRouter()
 _composer: VideoComposer | None = None
 _renamer: BatchRenamer | None = None
 _subtitle_gen: SubtitleGenerator | None = None
+
+
+def _output_reference(output_directory: str, output_path: str) -> str:
+    if output_directory.startswith("workspace:"):
+        return workspace_file_reference(output_directory, output_path)
+    return output_path
+
+
+def _file_label(path: str | None) -> str | None:
+    return Path(path).name if path else None
 
 
 def _get_composer() -> VideoComposer:
@@ -291,6 +302,7 @@ async def render_project(req: RenderRequest) -> RenderResponse:
     if req.transition:
         trans = TransitionSettings(type=req.transition.type, duration=req.transition.duration)
 
+    background_music_directory = str(resolve_workspace_or_local(req.background_music_directory)) if req.background_music_directory else None
     options = RenderOptions(
         frame_rate=req.frame_rate,
         resolution=(req.resolution_width, req.resolution_height),
@@ -307,7 +319,7 @@ async def render_project(req: RenderRequest) -> RenderResponse:
         video_filters=req.video_filters,
         audio_filters=req.audio_filters,
         sync_mode=req.sync_mode,
-        background_music_directory=req.background_music_directory,
+        background_music_directory=background_music_directory,
         logo_file=req.logo_file,
         logo_enabled=req.logo_enabled,
         logo_size=req.logo_size,
@@ -321,10 +333,10 @@ async def render_project(req: RenderRequest) -> RenderResponse:
         batch = await loop.run_in_executor(
             None,
             lambda: composer.render_project(
-                audio_directory=req.audio_directory,
-                image_directory=req.image_directory,
-                output_directory=req.output_directory,
-                subtitle_directory=req.subtitle_directory,
+                audio_directory=str(resolve_workspace_or_local(req.audio_directory)),
+                image_directory=str(resolve_workspace_or_local(req.image_directory)),
+                output_directory=str(resolve_workspace_or_local(req.output_directory)),
+                subtitle_directory=str(resolve_workspace_or_local(req.subtitle_directory)) if req.subtitle_directory else None,
                 options=options,
                 create_individual=req.create_individual,
                 create_combined=req.create_combined,
@@ -339,10 +351,10 @@ async def render_project(req: RenderRequest) -> RenderResponse:
     scenes = [
         RenderSceneResult(
             index=s.index,
-            audio_path=s.audio_path,
-            image_path=s.image_path,
-            subtitle_path=s.subtitle_path,
-            output_path=s.output_path,
+            audio_path=_file_label(s.audio_path) or "",
+            image_path=_file_label(s.image_path) or "",
+            subtitle_path=_file_label(s.subtitle_path),
+            output_path=_output_reference(req.output_directory, s.output_path),
             duration=s.duration,
             success=s.success,
             error=s.error,
@@ -355,10 +367,10 @@ async def render_project(req: RenderRequest) -> RenderResponse:
         c = batch.combined
         combined = RenderSceneResult(
             index=c.index,
-            audio_path=c.audio_path,
-            image_path=c.image_path,
-            subtitle_path=c.subtitle_path,
-            output_path=c.output_path,
+            audio_path=_file_label(c.audio_path) or "",
+            image_path=_file_label(c.image_path) or "",
+            subtitle_path=_file_label(c.subtitle_path),
+            output_path=_output_reference(req.output_directory, c.output_path),
             duration=c.duration,
             success=c.success,
             error=c.error,
@@ -384,7 +396,7 @@ async def batch_rename(req: BatchRenameRequest) -> BatchRenameResponse:
     results = await loop.run_in_executor(
         None,
         lambda: renamer.rename_files(
-            directory=req.directory,
+            directory=str(resolve_workspace_or_local(req.directory)),
             asset_type=req.asset_type,
             prefix=req.prefix,
             start_index=req.start_index,
@@ -419,7 +431,7 @@ async def batch_rename(req: BatchRenameRequest) -> BatchRenameResponse:
 @router.post("/file-count", response_model=FileCountResponse)
 async def file_count(req: FileCountRequest) -> FileCountResponse:
     renamer = _get_renamer()
-    info = renamer.get_file_count(req.directory, req.asset_type)
+    info = renamer.get_file_count(str(resolve_workspace_or_local(req.directory)), req.asset_type)
     return FileCountResponse(total=info["total"], error=info.get("error"))
 
 
@@ -455,8 +467,8 @@ async def generate_subtitles(req: SubtitleGenRequest) -> SubtitleGenResponse:
         results = await loop.run_in_executor(
             None,
             lambda: gen.generate_subtitles_batch(
-                audio_directory=req.audio_directory,
-                subtitle_directory=req.subtitle_directory,
+                audio_directory=str(resolve_workspace_or_local(req.audio_directory)),
+                subtitle_directory=str(resolve_workspace_or_local(req.subtitle_directory)),
                 model_id=req.model_id,
                 language=req.language,
                 translate_to_english=req.translate_to_english,

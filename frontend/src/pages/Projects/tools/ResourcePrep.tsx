@@ -8,11 +8,11 @@ import {
   ChevronRight, Pencil, Plus, XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 import { toast } from '@/store/toast.store'
 import { resolveYoutubeMetadata } from '@/pages/Competitors/utils'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 // ---------------------------------------------------------------------------
 // Helper: map API response → ChildProject
@@ -533,7 +533,7 @@ export default function ResourcePrep() {
   // ---------------------------------------------------------------------------
 
   const handlePickFolder = async () => {
-    const result = await open({ directory: true, multiple: false })
+    const result = await pickWorkspaceDirectory(child?.name ?? 'Video workspace')
     if (result && typeof result === 'string') {
       setFolderPath(result)
       await saveField({ base_folder_path: result })

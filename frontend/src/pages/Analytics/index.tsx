@@ -1,13 +1,13 @@
 import { motion } from 'framer-motion'
 import { useAppStore } from '@/store/app.store'
-import { FolderOpen, FileVideo, Film, CheckCircle, Clock, AlertCircle } from 'lucide-react'
+import { FolderOpen, FileVideo, HardDrive, CheckCircle, Clock, Clapperboard } from 'lucide-react'
 
 export default function Analytics() {
-  const { parentProjects, childProjects, capcutProjects, renderJobs } = useAppStore()
+  const { parentProjects, childProjects } = useAppStore()
 
-  const renderDone   = renderJobs.filter(j => j.status === 'done').length
-  const renderTotal  = renderJobs.length
-  const renderPct    = renderTotal > 0 ? Math.round((renderDone / renderTotal) * 100) : 0
+  const completed = childProjects.filter(project => project.status === 'published').length
+  const total = childProjects.length
+  const completionPct = total > 0 ? Math.round((completed / total) * 100) : 0
 
   const safe = (n: number) => (isNaN(n) || !isFinite(n) ? 0 : n)
 
@@ -23,9 +23,9 @@ export default function Analytics() {
       sub: `Across ${safe(parentProjects.length)} parent projects`,
     },
     {
-      label: 'CapCut Projects', value: safe(capcutProjects.length),
-      icon: Film, color: 'text-amber-500', bg: 'bg-amber-50',
-      sub: 'Loaded from disk',
+      label: 'Workspace Linked', value: safe(childProjects.filter(project => !!project.folderPath).length),
+      icon: HardDrive, color: 'text-amber-500', bg: 'bg-amber-50',
+      sub: 'Managed server workspaces',
     },
     {
       label: 'Completed', value: safe(childProjects.filter(c => c.status === 'published').length),
@@ -38,9 +38,9 @@ export default function Analytics() {
       sub: 'Awaiting processing',
     },
     {
-      label: 'Render Failed', value: safe(renderJobs.filter(j => j.status === 'failed').length),
-      icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-50',
-      sub: 'Render errors',
+      label: 'Editing', value: safe(childProjects.filter(project => project.status === 'editing').length),
+      icon: Clapperboard, color: 'text-blue-500', bg: 'bg-blue-50',
+      sub: 'Active video production',
     },
   ]
 
@@ -83,20 +83,20 @@ export default function Analytics() {
           className="card p-5 mb-4"
         >
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-surface-800">Overall Render Progress</h2>
-            <span className="text-sm font-bold text-primary-600">{renderPct}%</span>
+            <h2 className="text-sm font-semibold text-surface-800">Overall Project Progress</h2>
+            <span className="text-sm font-bold text-primary-600">{completionPct}%</span>
           </div>
           <div className="h-2 bg-surface-200 rounded-full overflow-hidden">
             <motion.div
               className="h-full bg-primary-500 rounded-full"
               initial={{ width: 0 }}
-              animate={{ width: `${renderPct}%` }}
+              animate={{ width: `${completionPct}%` }}
               transition={{ duration: 0.8, ease: 'easeOut', delay: 0.5 }}
             />
           </div>
           <div className="flex justify-between mt-1.5">
-            <span className="text-xs text-surface-400">{renderDone} / {renderTotal} jobs</span>
-            <span className="text-xs text-surface-400">{renderTotal - renderDone} remaining</span>
+            <span className="text-xs text-surface-400">{completed} / {total} projects</span>
+            <span className="text-xs text-surface-400">{total - completed} remaining</span>
           </div>
         </motion.div>
 

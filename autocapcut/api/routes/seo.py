@@ -6,10 +6,14 @@ import os
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from autocapcut.api.routes.media import resolve_media_reference
+from autocapcut.database.connection import get_session
 from autocapcut.services.raw_seo import apply_raw_seo, parse_keywords, RawSEOError
+from autocapcut.services.media_workspace import resolve_workspace_file_reference, resolve_workspace_or_local
 
 router = APIRouter()
 
@@ -17,7 +21,8 @@ VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 
 
 class SEORequest(BaseModel):
-    folder_path: str
+    folder_path: str | None = None
+    video_path: str | None = None
     title: str
     description: str
     keywords_raw: str        # comma/newline separated
@@ -49,12 +54,22 @@ def _collect_video_files(folder: Path) -> List[Path]:
 
 
 @router.post("/apply", response_model=SEOResponse)
-async def apply_seo(req: SEORequest) -> SEOResponse:
-    folder = Path(req.folder_path)
-    if not folder.exists():
-        raise HTTPException(status_code=404, detail=f"Folder not found: {req.folder_path}")
-
-    files = _collect_video_files(folder)
+async def apply_seo(req: SEORequest, session: AsyncSession = Depends(get_session)) -> SEOResponse:
+    if req.video_path:
+        if req.video_path.startswith("media:"):
+            video_path = await resolve_media_reference(req.video_path, session)
+        elif req.video_path.startswith("workspace-file:"):
+            video_path = resolve_workspace_file_reference(req.video_path)
+        else:
+            video_path = Path(req.video_path).expanduser().resolve()
+        files = [video_path] if video_path.is_file() and video_path.suffix.lower() in VIDEO_EXTENSIONS else []
+    elif req.folder_path:
+        folder = resolve_workspace_or_local(req.folder_path)
+        if not folder.exists():
+            raise HTTPException(status_code=404, detail=f"Folder not found: {req.folder_path}")
+        files = _collect_video_files(folder)
+    else:
+        raise HTTPException(status_code=422, detail="A video or workspace folder is required.")
     if not files:
         raise HTTPException(status_code=422, detail="No video files found in folder")
 

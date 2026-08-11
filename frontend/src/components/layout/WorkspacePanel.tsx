@@ -1,36 +1,35 @@
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { PanelContext, usePanelContextValue, usePanelContext } from '@/contexts/PanelContext'
 import { useAppStore } from '@/store/app.store'
 import Sidebar from '@/components/layout/Sidebar'
 import PanelTopBar from '@/components/layout/PanelTopBar'
 
-// Pages
-import ParentProjects from '@/pages/Projects/ParentProjects'
-import ChildProjects from '@/pages/Projects/ChildProjects'
-import AIGen from '@/pages/Projects/tools/AIGen'
-import AIAudio from '@/pages/Projects/tools/AIAudio'
-import Livestream from '@/pages/Projects/tools/Livestream'
-import SRTGen from '@/pages/Projects/tools/SRTGen'
-import RawSEO from '@/pages/Projects/tools/RawSEO'
-import RoxyUpload from '@/pages/Projects/tools/RoxyUpload'
-import AnimationTool from '@/pages/Projects/tools/Animation'
-import FastEdit from '@/pages/Projects/tools/FastEdit'
-import CutAutomate from '@/pages/Projects/tools/CutAutomate'
-import ResourcePrep from '@/pages/Projects/tools/ResourcePrep'
-import SoraGen from '@/pages/Projects/tools/SoraGen'
-import AudioVisualizer from '@/pages/Projects/tools/AudioVisualizer'
-import RenderDashboard from '@/pages/RenderDashboard'
-import AutomatePage from '@/pages/Automate'
-import Analytics from '@/pages/Analytics'
-import CompetitorsPage from '@/pages/Competitors'
-import ProductionPlanner from '@/pages/ProductionPlanner'
-import ReplyCenter from '@/pages/ReplyCenter'
-import SettingsPage from '@/pages/Settings'
+// Route-level code splitting keeps optional production tools out of the initial bundle.
+const ParentProjects = lazy(() => import('@/pages/Projects/ParentProjects'))
+const ChildProjects = lazy(() => import('@/pages/Projects/ChildProjects'))
+const AIGen = lazy(() => import('@/pages/Projects/tools/AIGen'))
+const AIAudio = lazy(() => import('@/pages/Projects/tools/AIAudio'))
+const Livestream = lazy(() => import('@/pages/Projects/tools/Livestream'))
+const SRTGen = lazy(() => import('@/pages/Projects/tools/SRTGen'))
+const RawSEO = lazy(() => import('@/pages/Projects/tools/RawSEO'))
+const RoxyUpload = lazy(() => import('@/pages/Projects/tools/RoxyUpload'))
+const FastEdit = lazy(() => import('@/pages/Projects/tools/FastEdit'))
+const CutAutomate = lazy(() => import('@/pages/Projects/tools/CutAutomate'))
+const ResourcePrep = lazy(() => import('@/pages/Projects/tools/ResourcePrep'))
+const SoraGen = lazy(() => import('@/pages/Projects/tools/SoraGen'))
+const AudioVisualizer = lazy(() => import('@/pages/Projects/tools/AudioVisualizer'))
+const RenderDashboard = lazy(() => import('@/pages/RenderDashboard'))
+const AutomatePage = lazy(() => import('@/pages/Automate'))
+const Analytics = lazy(() => import('@/pages/Analytics'))
+const CompetitorsPage = lazy(() => import('@/pages/Competitors'))
+const ProductionPlanner = lazy(() => import('@/pages/ProductionPlanner'))
+const ReplyCenter = lazy(() => import('@/pages/ReplyCenter'))
+const SettingsPage = lazy(() => import('@/pages/Settings'))
 
 // ─── Keep-alive tool views ────────────────────────────────────────────────────
 
-const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'animation', 'fast-edit', 'cut-automate', 'sora-gen', 'audio-visualizer'] as const
+const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'fast-edit', 'cut-automate', 'sora-gen', 'audio-visualizer'] as const
 type ToolView = typeof TOOL_VIEWS[number]
 
 function isToolView(v: string): v is ToolView {
@@ -87,6 +86,7 @@ function PanelInner() {
         <PanelTopBar />
 
         <main className="flex-1 overflow-hidden relative">
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-surface-400">Loading workspace…</div>}>
 
           {/* Non-tool pages (animated) */}
           <AnimatePresence mode="wait">
@@ -114,12 +114,12 @@ function PanelInner() {
             {mountedTools.has('srt-gen')     && <div className={projectSubView === 'srt-gen'     ? 'h-full' : 'hidden'}><SRTGen /></div>}
             {mountedTools.has('raw-seo')     && <div className={projectSubView === 'raw-seo'     ? 'h-full' : 'hidden'}><RawSEO /></div>}
             {mountedTools.has('roxy-upload') && <div className={projectSubView === 'roxy-upload' ? 'h-full' : 'hidden'}><RoxyUpload /></div>}
-            {mountedTools.has('animation')   && <div className={projectSubView === 'animation'   ? 'h-full' : 'hidden'}><AnimationTool /></div>}
             {mountedTools.has('fast-edit')     && <div className={projectSubView === 'fast-edit'     ? 'h-full' : 'hidden'}><FastEdit /></div>}
             {mountedTools.has('cut-automate') && <div className={projectSubView === 'cut-automate' ? 'h-full' : 'hidden'}><CutAutomate /></div>}
             {mountedTools.has('sora-gen')          && <div className={projectSubView === 'sora-gen'          ? 'h-full' : 'hidden'}><SoraGen /></div>}
             {mountedTools.has('audio-visualizer') && <div className={projectSubView === 'audio-visualizer' ? 'h-full' : 'hidden'}><AudioVisualizer /></div>}
           </div>
+          </Suspense>
 
         </main>
       </div>

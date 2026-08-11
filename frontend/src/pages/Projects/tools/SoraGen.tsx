@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { usePanelContext } from '@/contexts/PanelContext'
 import { useAppStore } from '@/store/app.store'
-import { toast } from '@/store/toast.store'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { motion, AnimatePresence } from 'framer-motion'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
+import { wsUrl } from '@/lib/api'
 import {
   Wifi, WifiOff, Copy, Check,
   FolderOpen, Play, CheckCircle2, XCircle,
@@ -16,10 +16,10 @@ import {
 import { cn } from '@/lib/utils'
 import SoraJobLogPopup from './SoraJobLogPopup'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 const POLL_INTERVAL = 3000
 const FALLBACK_CONNECTION_POLL_MS = 15000
-const SORA_WS_URL = 'ws://127.0.0.1:8765/api/sora/ws?client=desktop'
+const SORA_WS_URL = () => wsUrl('/api/sora/ws?client=web')
 const WS_RECONNECT_DELAY_MS = 1500
 const WS_PING_MS = 12000
 
@@ -406,7 +406,7 @@ export default function SoraGen() {
       if (!mounted) return
 
       try {
-        const ws = new WebSocket(SORA_WS_URL)
+        const ws = new WebSocket(SORA_WS_URL())
         wsRef.current = ws
 
         ws.onopen = () => {
@@ -489,7 +489,7 @@ export default function SoraGen() {
   // ── Folder picker ────────────────────────────────────────────────────────
   const handlePickFolder = async () => {
     try {
-      const result = await openDialog({ directory: true, multiple: false })
+      const result = await pickWorkspaceDirectory(child?.name ?? 'Sora videos')
       if (!result || typeof result !== 'string') return
       setFolderPath(result)
       await fetch(`${API}/api/child-projects/${selectedChildId}`, {
@@ -500,26 +500,6 @@ export default function SoraGen() {
       updateChild(selectedChildId!, { base_folder_path: result, folderPath: result })
     } catch (e) { console.error('Folder pick failed:', e) }
   }
-
-  const handleOpenFolder = useCallback(async () => {
-    const target = folderPath.trim()
-    if (!target) {
-      toast.warning('No folder selected', 'Chọn folder lưu video trước đã.')
-      return
-    }
-    try {
-      const res = await fetch(`${API}/api/sora/output-folder/open`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: target }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.detail ?? 'Cannot open output folder')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Cannot open output folder'
-      toast.error('Open folder failed', message)
-    }
-  }, [folderPath])
 
   // ── Auto-number on blur ──────────────────────────────────────────────────
   const handleBlur = () => {
@@ -785,22 +765,6 @@ export default function SoraGen() {
                       title="Browse folder"
                     >
                       <FolderSearch size={14} />
-                    </button>
-                  </div>
-                  <div className="mt-2">
-                    <button
-                      onClick={handleOpenFolder}
-                      disabled={!folderPath.trim()}
-                      className={cn(
-                        'w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-[11px] font-semibold transition-all cursor-pointer',
-                        folderPath.trim()
-                          ? 'border-teal-200 bg-teal-50 text-teal-700 hover:border-teal-300 hover:bg-teal-100'
-                          : 'border-surface-200 bg-surface-50 text-surface-400 cursor-not-allowed opacity-60'
-                      )}
-                      title="Open output folder"
-                    >
-                      <FolderOpen size={12} />
-                      Open Folder
                     </button>
                   </div>
                   {folderPath ? (

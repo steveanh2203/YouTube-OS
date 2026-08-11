@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
@@ -10,17 +10,13 @@ import {
 } from 'lucide-react'
 import { cutAutomateApi, type CutAutomateTaskResponse, type CutAutonateScanResult, type CutAutomateInitResult, type CutAutomateJobData, type CutAutomateJobResponse } from '@/lib/api'
 import { PathBreadcrumb } from '@/components/ui/PathBreadcrumb'
-import { cn } from '@/lib/utils'
+import { cn, unknownErrorMessage } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 async function pickDirectory(): Promise<string | null> {
-  try {
-    const selected = await tauriOpen({ directory: true, multiple: false })
-    if (selected && typeof selected === 'string') return selected
-  } catch { /* Tauri not available */ }
-  return null
+  return pickWorkspaceDirectory('Cut Automate')
 }
 
 /** Build absolute subfolder path from project root */
@@ -148,8 +144,8 @@ function ProjectSetupPanel({
         setScanResult(res.data)
         onProjectReady(projectDir)
       }
-    } catch (e: any) {
-      setScanMsg({ ok: false, text: e?.message ?? 'Unknown error' })
+    } catch (error: unknown) {
+      setScanMsg({ ok: false, text: unknownErrorMessage(error, 'Unknown error') })
     } finally {
       setScanning(false)
     }
@@ -170,8 +166,8 @@ function ProjectSetupPanel({
         if (scan.ok && scan.data) setScanResult(scan.data)
         onProjectReady(projectDir)
       }
-    } catch (e: any) {
-      setInitMsg({ ok: false, text: e?.message ?? 'Unknown error' })
+    } catch (error: unknown) {
+      setInitMsg({ ok: false, text: unknownErrorMessage(error, 'Unknown error') })
     } finally {
       setIniting(false)
     }
@@ -772,8 +768,8 @@ export default function CutAutomate() {
       }
 
       setRunningJobs(prev => ({ ...prev, [started.data!.job_id]: binding }))
-    } catch (e: any) {
-      const errRes = { ok: false, message: e?.message ?? 'Unknown error', data: null }
+    } catch (error: unknown) {
+      const errRes = { ok: false, message: unknownErrorMessage(error, 'Unknown error'), data: null }
       setResults(prev => ({ ...prev, [key]: errRes }))
       setRunning(prev => ({ ...prev, [key]: false }))
     }
@@ -819,13 +815,14 @@ export default function CutAutomate() {
             delete next[jobId]
             return next
           })
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const message = unknownErrorMessage(error, 'Failed to fetch job status')
           setResults(prev => ({
             ...prev,
-            [binding.stepKey]: { ok: false, message: error?.message ?? 'Failed to fetch job status', data: null },
+            [binding.stepKey]: { ok: false, message, data: null },
           }))
           setRunning(prev => ({ ...prev, [binding.stepKey]: false }))
-          taskStore.complete(binding.taskId, 'error', error?.message ?? 'Failed to fetch job status')
+          taskStore.complete(binding.taskId, 'error', message)
           setRunningJobs(prev => {
             const next = { ...prev }
             delete next[jobId]

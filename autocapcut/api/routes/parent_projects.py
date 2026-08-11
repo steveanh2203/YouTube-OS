@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import mimetypes
-import os
 import shutil
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -364,67 +362,12 @@ async def delete_doc(project_id: int, doc_id: int, session: SessionDep):
     await session.commit()
 
 
-class UploadByPathRequest(BaseModel):
-    paths: list[str]
-    folder_id: int | None = None
-
-
-@router.post("/{project_id}/docs/upload-by-path", status_code=201, response_model=list[ParentDocOut])
-async def upload_docs_by_path(
-    project_id: int,
-    data: UploadByPathRequest,
-    session: SessionDep,
-):
-    """Accept local file paths (e.g. from Tauri drag-and-drop) and copy them into doc storage."""
-    project = await session.get(ParentProject, project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    dest_dir = _docs_dir(project_id, data.folder_id)
-    results: list[ParentDoc] = []
-
-    for src in data.paths:
-        src_path = Path(src)
-        if not src_path.is_file():
-            continue  # Skip directories or non-existent paths
-
-        ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
-        safe_name = f"{ts}_{src_path.name}"
-        dest_path = dest_dir / safe_name
-
-        shutil.copy2(str(src_path), str(dest_path))
-        file_size = dest_path.stat().st_size
-        mime = mimetypes.guess_type(src_path.name)[0] or "application/octet-stream"
-
-        doc = ParentDoc(
-            parent_project_id=project_id,
-            folder_id=data.folder_id,
-            file_name=src_path.name,
-            file_path=str(dest_path),
-            file_size=file_size,
-            mime_type=mime,
-        )
-        session.add(doc)
-        await session.flush()
-        await session.refresh(doc)
-        results.append(doc)
-
-    await session.commit()
-    return results
-
-
-@router.get("/{project_id}/docs/{doc_id}/open")
-async def open_doc(project_id: int, doc_id: int, session: SessionDep):
+@router.get("/{project_id}/docs/{doc_id}/download", response_class=FileResponse)
+async def download_doc(project_id: int, doc_id: int, session: SessionDep) -> FileResponse:
     doc = await session.get(ParentDoc, doc_id)
     if not doc or doc.parent_project_id != project_id:
         raise HTTPException(status_code=404, detail="Document not found")
     path = Path(doc.file_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="File no longer exists on disk")
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
-    elif sys.platform == "win32":
-        os.startfile(str(path))
-    else:
-        subprocess.Popen(["xdg-open", str(path)])
-    return {"message": "Opening file"}
+    return FileResponse(path, filename=doc.file_name, media_type=doc.mime_type or None)

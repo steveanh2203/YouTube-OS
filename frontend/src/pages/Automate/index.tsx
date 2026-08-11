@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickMediaFile, pickWorkspaceDirectory } from '@/lib/browserPickers'
 import { roxyApi } from '@/lib/api'
 import { loadRoxyConfig, normalizeRoxyHost } from '@/lib/roxy'
 import { useAppStore } from '@/store/app.store'
@@ -520,17 +520,14 @@ export default function AutomatePage() {
 
   const pickFolder = async () => {
     if (!activeSession) return
-    const picked = await open({ directory: true, multiple: false })
+    const picked = await pickWorkspaceDirectory(activeSession.name || 'Automate videos')
     if (picked && typeof picked === 'string') patchSession(activeSession.id, { folderPath: picked })
   }
 
   const pickMapping = async () => {
     if (!activeSession) return
-    const picked = await open({
-      multiple: false,
-      filters: [{ name: 'Spreadsheet', extensions: ['xlsx', 'xls', 'csv'] }],
-    })
-    if (picked && typeof picked === 'string') patchSession(activeSession.id, { mappingPath: picked })
+    const picked = await pickMediaFile('.xlsx,.xls,.csv')
+    if (picked) patchSession(activeSession.id, { mappingPath: picked.reference })
   }
 
   const runSession = async () => {

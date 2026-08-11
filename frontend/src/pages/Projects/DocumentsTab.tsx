@@ -5,9 +5,8 @@ import {
   ChevronRight, ChevronDown, Plus, X, Loader, CheckSquare, Square, Minus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,49 +89,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
     { type: 'folder'; item: DocFolder } | { type: 'doc'; item: Doc } | { type: 'bulk'; ids: number[] } | null
   >(null)
 
-  // Refs to track latest values for the Tauri listener (avoids stale closure)
-  const activeFolderRef = useRef(activeFolderId)
-  useEffect(() => { activeFolderRef.current = activeFolderId }, [activeFolderId])
-
-  const numericParentIdRef = useRef(numericParentId)
-  useEffect(() => { numericParentIdRef.current = numericParentId }, [numericParentId])
-
-  // ---------------------------------------------------------------------------
-  // Upload handlers (defined before Tauri listener so ref can capture them)
-  // ---------------------------------------------------------------------------
-
-  /** Upload via Tauri file paths (drag from Finder) */
-  const handleDropPaths = useCallback(async (paths: string[]) => {
-    const pid = numericParentIdRef.current
-    const folderId = activeFolderRef.current !== 'root' ? activeFolderRef.current : null
-    setUploading(true)
-    try {
-      const res = await fetch(
-        `${API}/api/parent-projects/${pid}/docs/upload-by-path`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ paths, folder_id: folderId }),
-        },
-      )
-      if (res.ok) {
-        const uploaded: Doc[] = await res.json()
-        setDocs(prev => [...prev, ...uploaded])
-      } else {
-        console.error('upload-by-path failed:', res.status, await res.text())
-      }
-    } catch (err) {
-      console.error('upload-by-path error:', err)
-    } finally {
-      setUploading(false)
-    }
-  }, [])
-
-  // Keep a ref to the latest handleDropPaths so the Tauri listener never goes stale
-  const handleDropPathsRef = useRef(handleDropPaths)
-  useEffect(() => { handleDropPathsRef.current = handleDropPaths }, [handleDropPaths])
-
-  /** Upload via browser File objects (click-to-browse) */
+  /** Upload via browser File objects (picker or drag and drop). */
   const handleUploadFiles = async (files: File[]) => {
     setUploading(true)
     try {
@@ -174,54 +131,6 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
   }, [numericParentId])
 
   useEffect(() => { fetchAll() }, [fetchAll])
-
-  // ---------------------------------------------------------------------------
-  // Tauri native drag & drop listener
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null
-    let mounted = true
-
-    const setup = async () => {
-      try {
-        const webview = getCurrentWebview()
-        const unlistenFn = await webview.onDragDropEvent((event) => {
-          if (!mounted) return
-          const payload = event.payload
-          if (payload.type === 'enter') {
-            setDragHover(true)
-          } else if (payload.type === 'over') {
-            // keep overlay visible
-          } else if (payload.type === 'drop') {
-            setDragHover(false)
-            const paths = payload.paths
-            if (paths && paths.length > 0) {
-              // Use ref to always call the latest version of the handler
-              handleDropPathsRef.current(paths)
-            }
-          } else if (payload.type === 'leave') {
-            setDragHover(false)
-          }
-        })
-        if (mounted) {
-          unlisten = unlistenFn
-        } else {
-          unlistenFn()
-        }
-      } catch (err) {
-        // Not running in Tauri (e.g. browser dev), ignore
-        console.debug('Tauri drag-drop not available:', err)
-      }
-    }
-
-    setup()
-
-    return () => {
-      mounted = false
-      if (unlisten) unlisten()
-    }
-  }, []) // No deps — listener is set up once, uses refs for latest values
 
   // ---------------------------------------------------------------------------
   // Folder actions
@@ -269,8 +178,12 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
     setConfirmDelete(null)
   }
 
-  const handleOpenDoc = async (doc: Doc) => {
-    await fetch(`${API}/api/parent-projects/${numericParentId}/docs/${doc.id}/open`)
+  const handleOpenDoc = (doc: Doc) => {
+    window.open(
+      `${API}/api/parent-projects/${numericParentId}/docs/${doc.id}/download`,
+      '_blank',
+      'noopener,noreferrer',
+    )
   }
 
   const handleBulkDelete = async (ids: number[]) => {
@@ -288,7 +201,8 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
@@ -407,11 +321,11 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
                     'group flex items-center gap-1 px-2 py-1.5 text-xs cursor-pointer transition-colors duration-100 select-none',
                     active ? 'bg-primary-50 text-primary-700 font-semibold' : 'text-surface-600 hover:bg-surface-100',
                   )}
-                  onClick={() => { setActiveFolderId(folder.id); setExpandedFolders(prev => { const n = new Set(prev); n.has(folder.id) ? n.delete(folder.id) : n.add(folder.id); return n }) }}
+                  onClick={() => { setActiveFolderId(folder.id); setExpandedFolders(prev => { const n = new Set(prev); if (n.has(folder.id)) n.delete(folder.id); else n.add(folder.id); return n }) }}
                 >
                   <button
                     className="shrink-0 text-surface-400 hover:text-surface-600 p-0.5"
-                    onClick={e => { e.stopPropagation(); setExpandedFolders(prev => { const n = new Set(prev); n.has(folder.id) ? n.delete(folder.id) : n.add(folder.id); return n }) }}
+                    onClick={e => { e.stopPropagation(); setExpandedFolders(prev => { const n = new Set(prev); if (n.has(folder.id)) n.delete(folder.id); else n.add(folder.id); return n }) }}
                   >
                     {expandedFolders.has(folder.id) ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                   </button>
@@ -439,7 +353,19 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
       {/* ------------------------------------------------------------------ */}
       {/* Main content                                                        */}
       {/* ------------------------------------------------------------------ */}
-      <div className="relative flex-1 flex flex-col overflow-hidden">
+      <div
+        className="relative flex-1 flex flex-col overflow-hidden"
+        onDragEnter={(event) => { event.preventDefault(); setDragHover(true) }}
+        onDragOver={(event) => { event.preventDefault(); setDragHover(true) }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragHover(false)
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDragHover(false)
+          void handleUploadFiles(Array.from(event.dataTransfer.files))
+        }}
+      >
         {/* Drag hover overlay — only covers the main content, not the sidebar */}
         <AnimatePresence>
           {dragHover && (

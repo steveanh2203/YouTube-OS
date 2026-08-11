@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useExtensionSocket } from '@/hooks/useExtensionSocket'
-import { save as tauriSave } from '@tauri-apps/plugin-dialog'
 import { toast } from '@/store/toast.store'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
@@ -12,7 +11,7 @@ import {
 import { cn } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 import {
-  listVoices, listSharedVoices, listModels, generateTtsAudio, createDialogueAudio, getHealth, saveAudioZipFile,
+  listVoices, listSharedVoices, listModels, generateTtsAudio, createDialogueAudio, getHealth, createAudioZipFile,
   type AudioProvider, type VoiceOption, type ModelOption, type ELVoiceSettings,
   type MiniMaxVoiceSettings, type DialogueItem, type HealthStatus,
 } from '@/lib/audioService'
@@ -1280,13 +1279,6 @@ export default function AIAudio() {
     if (done.length === 0) return
 
     try {
-      const savePath = await tauriSave({
-        defaultPath: archiveFileName(child?.title || child?.name),
-        filters: [{ name: 'ZIP files', extensions: ['zip'] }],
-      })
-
-      if (!savePath || typeof savePath !== 'string') return
-
       const taskId = taskStore.add({
         toolId: 'ai-audio',
         toolLabel: 'AI Audio',
@@ -1305,10 +1297,13 @@ export default function AIAudio() {
         }
       }))
 
-      const saveRes = await saveAudioZipFile(savePath, files)
-      if (!saveRes.ok) {
-        throw new Error(saveRes.message)
-      }
+      const zip = await createAudioZipFile(files)
+      const href = URL.createObjectURL(zip)
+      const anchor = document.createElement('a')
+      anchor.href = href
+      anchor.download = archiveFileName(child?.title || child?.name)
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(href), 1000)
 
       taskStore.complete(taskId, 'done', `Saved zip for ${done.length} segments`)
       toast.success('Download xong', `Đã gom ${done.length} file vào zip.`)

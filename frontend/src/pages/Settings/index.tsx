@@ -589,7 +589,7 @@ export default function SettingsPage() {
                 <div className="space-y-5 p-5">
                   <div>
                     <label className="label">Bridge URL</label>
-                    <input className="input mt-2 h-11 font-mono text-xs" readOnly value={bridge?.bridge_url ?? 'http://127.0.0.1:8765'} />
+                    <input className="input mt-2 h-11 font-mono text-xs" readOnly value={bridge?.bridge_url ?? window.location.origin} />
                   </div>
 
                   <div>

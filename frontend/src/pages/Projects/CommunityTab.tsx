@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickMediaFile } from '@/lib/browserPickers'
 import type { ChildProject } from '@/store/app.store'
 import { communityApi, type CommunityLogEntry, type CommunityPostItem } from '@/lib/api'
 import { loadRoxyConfig } from '@/lib/roxy'
@@ -294,12 +294,9 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
   }
 
   const handlePickImage = async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-    })
-    if (selected && typeof selected === 'string') {
-      setForm((prev) => ({ ...prev, imagePath: selected }))
+    const selected = await pickMediaFile('image/*,.png,.jpg,.jpeg,.webp')
+    if (selected) {
+      setForm((prev) => ({ ...prev, imagePath: selected.reference }))
     }
   }
 
@@ -448,9 +445,9 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
                 <div className="flex gap-2">
                   <input
                     className="input flex-1 font-mono text-xs"
-                    placeholder="/path/to/community-image.png"
+                    placeholder="Choose an image from Media Library"
                     value={form.imagePath}
-                    onChange={(event) => setForm((prev) => ({ ...prev, imagePath: event.target.value }))}
+                    readOnly
                   />
                   <button className="btn-secondary h-10 px-3 text-xs" onClick={handlePickImage} type="button">
                     <ImagePlus size={14} />

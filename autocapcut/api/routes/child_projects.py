@@ -19,6 +19,7 @@ from autocapcut.database.models import (
     FolderTemplate,
     ParentProject,
 )
+from autocapcut.services.media_workspace import resolve_workspace_or_local
 
 router = APIRouter()
 
@@ -112,7 +113,7 @@ async def create_folders_on_disk(data: CreateFoldersRequest):
     loop = asyncio.get_event_loop()
 
     def _do_create():
-        base = Path(data.base_path)
+        base = resolve_workspace_or_local(data.base_path)
         if not base.exists():
             raise HTTPException(status_code=400, detail=f"Base path does not exist: {data.base_path}")
         created = []
@@ -141,7 +142,7 @@ async def scan_folder(parent_id: int, data: ScanFolderRequest, session: SessionD
     if not parent:
         raise HTTPException(status_code=404, detail="Parent project not found")
 
-    scan_path = Path(data.parent_folder_path)
+    scan_path = resolve_workspace_or_local(data.parent_folder_path)
     if not scan_path.exists():
         raise HTTPException(status_code=400, detail="Path does not exist")
 
@@ -155,7 +156,7 @@ async def scan_folder(parent_id: int, data: ScanFolderRequest, session: SessionD
         select(ChildProject).where(ChildProject.parent_project_id == parent_id)
     )).scalars().all()
     mapped_paths = {
-        Path(c.base_folder_path).name
+        resolve_workspace_or_local(c.base_folder_path).name
         for c in existing_children
         if c.base_folder_path
     }
@@ -317,7 +318,7 @@ async def _create_folders_from_template(child: ChildProject, session: AsyncSessi
         .order_by(FolderTemplate.sort_order)
     )).scalars().all()
 
-    base = Path(child.base_folder_path)
+    base = resolve_workspace_or_local(child.base_folder_path)
     created: list[str] = []
 
     for tpl in templates:

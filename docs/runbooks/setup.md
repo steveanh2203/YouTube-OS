@@ -1,93 +1,83 @@
-# Runbook: First-Time Setup
+# Runbook: First-Time Web Setup
 
 ## Prerequisites
 
-Cài trước khi bắt đầu:
+- macOS
+- Python 3.11+
+- Node.js 20+
+- FFmpeg and ffprobe in `PATH`
+- Rust toolchain only for optional native engines
 
 ```bash
-# Kiểm tra
-python3 --version    # cần 3.11+
-node --version       # cần 20+
-cargo --version      # Rust toolchain
-ffmpeg -version      # FFmpeg
-ffprobe -version     # ffprobe (thường đi kèm FFmpeg)
+python3 --version
+node --version
+ffmpeg -version
+ffprobe -version
 ```
 
-Cài FFmpeg nếu chưa có:
+Install FFmpeg with Homebrew if needed:
+
 ```bash
 brew install ffmpeg
 ```
 
-Cài Rust nếu chưa có:
+## One-command setup and start
+
+From the repository root:
+
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+./scripts/run_web.sh
 ```
 
-## Setup Steps
+The script creates `.venv` when needed, installs missing project dependencies,
+builds the React frontend, and starts FastAPI. Open
+`http://127.0.0.1:8765` after the build completes.
+
+The default localhost binding is deliberate: this single-user version has no
+authentication and must not be exposed directly to the public internet.
+
+## Manual setup
 
 ```bash
-# 1. Clone / mở project
-cd AutoCapCut
-
-# 2. Tạo Python virtual environment
 python3.11 -m venv .venv
-
-# 3. Cài Python dependencies
 .venv/bin/pip install -r requirements.txt
-
-# 4. Cài Node dependencies
 cd frontend && npm install && cd ..
+```
 
-# 5. (Optional) Build Rust SRT engine
+Optional Rust SRT engine:
+
+```bash
 ./scripts/build_rust_engine.sh
 ```
 
-## Chạy App
+## Development
+
+Terminal 1:
 
 ```bash
-# Full app (Tauri + FastAPI) — dùng hàng ngày
-./scripts/run_app.sh
-
-# API only — khi dev backend
 ./scripts/run_api.sh --port 8765
-
-# Frontend dev với HMR — khi dev UI
-cd frontend && npm run dev:api
 ```
 
-## Kiểm Tra Setup OK
+Terminal 2:
 
 ```bash
-# Kiểm tra API chạy
-curl http://127.0.0.1:8765/api/projects
-
-# Kiểm tra DB được tạo
-ls ~/.autocapcut/autocapcut.db
+cd frontend
+npm run dev
 ```
 
-## Cài Thêm Package Python
+Open `http://127.0.0.1:1420`. Vite proxies API and media requests to FastAPI.
+
+## Verification
 
 ```bash
-# LUÔN dùng .venv — không dùng pip trực tiếp
-.venv/bin/pip install <package>
-
-# Sau đó update requirements.txt
-.venv/bin/pip freeze > requirements.txt
+curl http://127.0.0.1:8765/api/health
+.venv/bin/python -m pytest tests/
+cd frontend
+npm run lint
+npm run test:web
+npm run build
 ```
 
-## Troubleshooting
-
-**Lỗi `port 8765 already in use`:**
-```bash
-lsof -ti:8765 | xargs kill -9
-```
-
-**Lỗi `.venv not found`:**
-```bash
-python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
-```
-
-**Lỗi `node_modules not found`:**
-```bash
-cd frontend && npm install
-```
+Runtime data is stored under `~/.autocapcut/` for compatibility with existing
+installations. Managed media defaults to `~/.autocapcut/workspace` and can be
+relocated with `AUTOCAPCUT_WORKSPACE_DIR`.

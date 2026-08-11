@@ -458,25 +458,27 @@
 - [x] Update lessons if needed
 
 ## Self-hosted Web App — Milestone 1
-- [ ] Serve the production React SPA from FastAPI
-- [ ] Centralize same-origin API/WebSocket URLs and add Vite proxying
-- [ ] Add a safe managed media workspace and media records
-- [ ] Add media upload/library/preview/download/delete APIs
-- [ ] Build the browser Media Picker
-- [ ] Adapt Audio Visualizer backend to media IDs and workspace outputs
-- [ ] Replace Audio Visualizer Tauri dialogs with browser media selection
-- [ ] Add one-command web startup and self-host documentation
+- [x] Serve the production React SPA from FastAPI
+- [x] Centralize same-origin API/WebSocket URLs and add Vite proxying
+- [x] Add a safe managed media workspace and media records
+- [x] Add media upload/library/preview/download/delete APIs
+- [x] Build the browser Media Picker
+- [x] Adapt Audio Visualizer backend to media IDs and workspace outputs
+- [x] Replace Audio Visualizer desktop dialogs with browser media selection
+- [x] Add one-command web startup and self-host documentation
 - [ ] Verify upload → FFmpeg render → preview/download end to end
 
 ## Self-hosted Web App — Full Migration
-- [ ] Migrate every remaining Tauri file dialog to Media Library/browser upload
-- [ ] Replace every hard-coded frontend HTTP/WebSocket localhost URL
-- [ ] Remove CapCut-only navigation, routers, services, and default dependencies
-- [ ] Make extension bridge URLs configurable for the self-hosted origin
+- [x] Migrate remaining desktop file dialogs to Media Library/browser upload
+- [x] Replace hard-coded frontend HTTP/WebSocket localhost URLs
+- [x] Remove desktop automation navigation, routers, services, and default dependencies
+- [x] Make extension bridge URLs configurable for the self-hosted origin
 - [ ] Verify every retained page and tool in the browser
-- [ ] Verify a clean production build and one-command self-host startup
-- [ ] Run public-repository secret and generated-media scan
+- [x] Verify a clean production build and one-command self-host startup
+- [x] Run public-repository secret and generated-media scan
 
 ## Self-hosted Web App — Review
-- Implementation pending. The task is complete only after both the vertical slice and full migration checklists pass. Design: `docs/superpowers/specs/2026-08-11-self-hosted-web-app-design.md`.
+- Implemented the browser + FastAPI runtime, managed media/workspace references, browser upload/download flows, and FFmpeg Studio UI. Desktop shell and GUI automation code were removed; FFmpeg remains.
+- Verification: backend pytest, frontend lint, frontend runtime tests, production build, route/import scans, and same-origin HTTP smoke. Full visual browser QA and a real FFmpeg render remain environment-blocked because this test host has no browser runner or FFmpeg binary.
+- Design: `docs/superpowers/specs/2026-08-11-self-hosted-web-app-design.md`.
 - Milestone plan: `docs/superpowers/plans/2026-08-11-web-foundation-audio-visualizer.md`.

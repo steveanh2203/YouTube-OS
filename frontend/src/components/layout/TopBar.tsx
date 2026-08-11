@@ -6,12 +6,8 @@ export default function TopBar() {
   const { splitView, setSplitView, isLoading, loadingText } = useAppStore()
 
   return (
-    <header
-      className="flex items-center h-10 px-4 border-b border-surface-200 bg-white shrink-0 gap-3"
-      data-tauri-drag-region
-    >
-      {/* App title / drag region */}
-      <div className="flex-1 text-xs text-surface-400 select-none" data-tauri-drag-region>
+    <header className="flex items-center h-10 px-4 border-b border-surface-200 bg-white shrink-0 gap-3">
+      <div className="flex-1 text-xs text-surface-400 select-none">
         MasterOS
       </div>
 

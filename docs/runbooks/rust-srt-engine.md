@@ -6,7 +6,7 @@ SRT matching engine viết bằng Rust — nhanh hơn Python ~10x cho video dài
 ## Build
 
 ```bash
-cd AutoCapCut
+cd YouTube-OS
 ./scripts/build_rust_engine.sh
 ```
 

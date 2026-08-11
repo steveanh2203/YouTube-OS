@@ -58,12 +58,6 @@ interface MiniMaxVoiceResponse {
   voice_type: string
 }
 
-interface AudioSaveResponse {
-  ok: boolean
-  path?: string | null
-  message: string
-}
-
 const ELEVENLABS_MODELS: ModelOption[] = [
   {
     model_id: 'eleven_multilingual_v2',
@@ -184,29 +178,28 @@ export async function getHealth(): Promise<{ elevenlabs: HealthStatus; minimax: 
   return { elevenlabs, minimax }
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] ?? '')
-    reader.onerror = () => reject(reader.error ?? new Error('Cannot read audio file'))
-    reader.readAsDataURL(blob)
-  })
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768))
+  }
+  return btoa(binary)
 }
 
-export async function saveAudioZipFile(
-  savePath: string,
-  files: Array<{ filename: string; blob: Blob }>,
-): Promise<AudioSaveResponse> {
-  const payload = {
-    save_path: savePath,
-    files: await Promise.all(files.map(async (file) => ({
-      filename: file.filename,
-      content_base64: await blobToBase64(file.blob),
-    }))),
-  }
-  return fetchJson<AudioSaveResponse>('/api/audio/save-zip', {
+async function zipPayload(files: Array<{ filename: string; blob: Blob }>) {
+  return Promise.all(files.map(async (file) => ({
+    filename: file.filename,
+    content_base64: await blobToBase64(file.blob),
+  })))
+}
+
+export async function createAudioZipFile(files: Array<{ filename: string; blob: Blob }>): Promise<Blob> {
+  const response = await apiFetch('/api/audio/zip', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(await zipPayload(files)),
   })
+  if (!response.ok) throw await responseError(response)
+  return response.blob()
 }

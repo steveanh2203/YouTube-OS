@@ -10,11 +10,11 @@ import {
   RefreshCw, XCircle, CheckCircle2, Clock, AlertCircle,
   Square, CheckSquare, FolderOpen, X, Copy, Check, CircleHelp,
 } from 'lucide-react'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 import { cn } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 const LS = (k: string) => `ai_gen_${k}`
 
 const STYLES = [
@@ -1144,7 +1144,7 @@ export default function AIGen() {
                     <button
                       onClick={async () => {
                         try {
-                          const selected = await tauriOpen({ directory: true, multiple: false })
+                          const selected = await pickWorkspaceDirectory('AI images')
                           if (selected && typeof selected === 'string') {
                             applyOutputFolder(selected)
                           }

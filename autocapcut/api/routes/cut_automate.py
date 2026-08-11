@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading as th
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from uuid import uuid4
 
 from autocapcut.services import cut_automate as svc
+from autocapcut.services.media_workspace import resolve_workspace_or_local, workspace_file_reference
 
 router = APIRouter()
 
@@ -93,6 +95,7 @@ class CutAutomateJob:
     id: str
     step: str
     payload: dict[str, Any]
+    workspace_directories: dict[str, str] = field(default_factory=dict)
     status: str = "running"
     message: str = "Running..."
     result: Any = None
@@ -105,6 +108,52 @@ class CutAutomateJob:
 
 _JOBS: dict[str, CutAutomateJob] = {}
 _JOBS_LOCK = th.Lock()
+
+
+_DIRECTORY_PAYLOAD_KEYS = {"input_dir", "output_dir", "project_dir", "image_dir"}
+
+
+def _directory(value: str) -> str:
+    return str(resolve_workspace_or_local(value))
+
+
+def _resolve_directory_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    resolved = dict(payload)
+    for key in _DIRECTORY_PAYLOAD_KEYS:
+        value = resolved.get(key)
+        if isinstance(value, str) and value.strip():
+            resolved[key] = _directory(value)
+    return resolved
+
+
+def _workspace_directory_map(payload: dict[str, Any]) -> dict[str, str]:
+    references: dict[str, str] = {}
+    for key in _DIRECTORY_PAYLOAD_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.startswith("workspace:"):
+            references[str(resolve_workspace_or_local(value))] = value
+    return references
+
+
+def _opaque_result(value: Any, workspace_directories: dict[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _opaque_result(item, workspace_directories) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_opaque_result(item, workspace_directories) for item in value]
+    if not isinstance(value, str) or "://" in value:
+        return value
+
+    try:
+        candidate = Path(value).expanduser().resolve()
+    except (OSError, ValueError):
+        return value
+    for directory_path, reference in workspace_directories.items():
+        directory = Path(directory_path)
+        if candidate == directory:
+            return reference
+        if candidate.is_relative_to(directory):
+            return workspace_file_reference(reference, candidate)
+    return value
 
 
 def _serialize_job(job: CutAutomateJob) -> dict[str, Any]:
@@ -214,7 +263,11 @@ def _run_job(job_id: str, runner) -> None:
             else:
                 job.status = "done"
                 job.message = "Completed successfully."
-                job.result = {"ok": True, "message": "Completed successfully.", "data": result}
+                job.result = {
+                    "ok": True,
+                    "message": "Completed successfully.",
+                    "data": _opaque_result(result, job.workspace_directories),
+                }
     except svc.CutAutomateStopped as exc:
         with job.lock:
             job.status = "cancelled"
@@ -238,8 +291,15 @@ def status() -> dict:
 
 @router.post("/jobs/start", response_model=JobResponse)
 def start_job(req: StartJobRequest) -> JobResponse:
-    runner = _resolve_job_runner(req.step, req.payload)
-    job = CutAutomateJob(id=uuid4().hex[:12], step=req.step, payload=req.payload)
+    workspace_directories = _workspace_directory_map(req.payload)
+    payload = _resolve_directory_payload(req.payload)
+    runner = _resolve_job_runner(req.step, payload)
+    job = CutAutomateJob(
+        id=uuid4().hex[:12],
+        step=req.step,
+        payload=req.payload,
+        workspace_directories=workspace_directories,
+    )
     with _JOBS_LOCK:
         _JOBS[job.id] = job
     thread = th.Thread(target=_run_job, args=(job.id, runner), daemon=True)
@@ -273,7 +333,7 @@ def stop_job(job_id: str) -> JobResponse:
 @router.post("/catstock", response_model=TaskResponse)
 def catstock(req: CatStockRequest) -> TaskResponse:
     try:
-        results = svc.catstock(req.input_dir, req.output_dir, req.segment_time)
+        results = svc.catstock(_directory(req.input_dir), _directory(req.output_dir), req.segment_time)
         return TaskResponse(ok=True, message=f"Cut into {len(results)} segment(s).", data=results)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -282,7 +342,7 @@ def catstock(req: CatStockRequest) -> TaskResponse:
 @router.post("/edit", response_model=TaskResponse)
 def edit_video(req: EditRequest) -> TaskResponse:
     try:
-        results = svc.edit_video(req.input_dir, req.output_dir, req.bg_wav)
+        results = svc.edit_video(_directory(req.input_dir), _directory(req.output_dir), req.bg_wav)
         return TaskResponse(ok=True, message=f"Rendered {len(results)} video(s).", data=results)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -291,7 +351,7 @@ def edit_video(req: EditRequest) -> TaskResponse:
 @router.post("/tachanh", response_model=TaskResponse)
 def tachanh(req: TaChangRequest) -> TaskResponse:
     try:
-        results = svc.tachanh(req.input_dir, req.output_dir, req.fps_fraction)
+        results = svc.tachanh(_directory(req.input_dir), _directory(req.output_dir), req.fps_fraction)
         return TaskResponse(ok=True, message=f"Extracted {len(results)} frame(s).", data=results)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -300,7 +360,7 @@ def tachanh(req: TaChangRequest) -> TaskResponse:
 @router.post("/tachmp3", response_model=TaskResponse)
 def tachmp3(req: TachMp3Request) -> TaskResponse:
     try:
-        results = svc.tachmp3(req.input_dir, req.output_dir)
+        results = svc.tachmp3(_directory(req.input_dir), _directory(req.output_dir))
         return TaskResponse(ok=True, message=f"Extracted {len(results)} MP3 file(s).", data=results)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -309,7 +369,7 @@ def tachmp3(req: TachMp3Request) -> TaskResponse:
 @router.post("/gop-le", response_model=TaskResponse)
 def gop_le(req: GopLeRequest) -> TaskResponse:
     try:
-        out = svc.gop_le(req.input_dir, req.output_dir, req.output_name)
+        out = svc.gop_le(_directory(req.input_dir), _directory(req.output_dir), req.output_name)
         return TaskResponse(ok=True, message="Odd-numbered clips merged successfully.", data=out)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -318,7 +378,7 @@ def gop_le(req: GopLeRequest) -> TaskResponse:
 @router.post("/gop-chan", response_model=TaskResponse)
 def gop_chan(req: GopChanRequest) -> TaskResponse:
     try:
-        out = svc.gop_chan(req.input_dir, req.output_dir, req.output_name)
+        out = svc.gop_chan(_directory(req.input_dir), _directory(req.output_dir), req.output_name)
         return TaskResponse(ok=True, message="Even-numbered clips merged successfully.", data=out)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -327,7 +387,7 @@ def gop_chan(req: GopChanRequest) -> TaskResponse:
 @router.post("/reset", response_model=TaskResponse)
 def reset(req: ResetRequest) -> TaskResponse:
     try:
-        deleted = svc.reset(req.project_dir, req.dirs)
+        deleted = svc.reset(_directory(req.project_dir), req.dirs)
         return TaskResponse(ok=True, message=f"Reset complete. Deleted {len(deleted)} file(s).", data=deleted)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -336,7 +396,7 @@ def reset(req: ResetRequest) -> TaskResponse:
 @router.post("/xoa-photo-le", response_model=TaskResponse)
 def xoa_photo_le(req: XoaPhotoRequest) -> TaskResponse:
     try:
-        affected = svc.xoa_photo_le(req.image_dir, req.dry_run)
+        affected = svc.xoa_photo_le(_directory(req.image_dir), req.dry_run)
         verb = "Previewed" if req.dry_run else "Deleted"
         return TaskResponse(ok=True, message=f"{verb} {len(affected)} odd-numbered image(s).", data=affected)
     except Exception as e:
@@ -346,7 +406,7 @@ def xoa_photo_le(req: XoaPhotoRequest) -> TaskResponse:
 @router.post("/xoa-photo-chan", response_model=TaskResponse)
 def xoa_photo_chan(req: XoaPhotoRequest) -> TaskResponse:
     try:
-        affected = svc.xoa_photo_chan(req.image_dir, req.dry_run)
+        affected = svc.xoa_photo_chan(_directory(req.image_dir), req.dry_run)
         verb = "Previewed" if req.dry_run else "Deleted"
         return TaskResponse(ok=True, message=f"{verb} {len(affected)} even-numbered image(s).", data=affected)
     except Exception as e:
@@ -356,7 +416,7 @@ def xoa_photo_chan(req: XoaPhotoRequest) -> TaskResponse:
 @router.post("/gop-photo-random", response_model=TaskResponse)
 def gop_photo_random(req: GopPhotoRandomRequest) -> TaskResponse:
     try:
-        out = svc.gop_photo_random(req.image_dir, req.output_dir, req.fps, req.output_name)
+        out = svc.gop_photo_random(_directory(req.image_dir), _directory(req.output_dir), req.fps, req.output_name)
         return TaskResponse(ok=True, message="Image-to-video merge completed.", data=out)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -365,7 +425,7 @@ def gop_photo_random(req: GopPhotoRandomRequest) -> TaskResponse:
 @router.post("/gop-video-stock-random", response_model=TaskResponse)
 def gop_video_stock_random(req: GopVideoStockRandomRequest) -> TaskResponse:
     try:
-        out = svc.gop_video_stock_random(req.input_dir, req.output_dir, req.output_name)
+        out = svc.gop_video_stock_random(_directory(req.input_dir), _directory(req.output_dir), req.output_name)
         return TaskResponse(ok=True, message="Stock video merge completed.", data=out)
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
@@ -374,9 +434,13 @@ def gop_video_stock_random(req: GopVideoStockRandomRequest) -> TaskResponse:
 @router.post("/scan-project", response_model=TaskResponse)
 def scan_project(req: ScanProjectRequest) -> TaskResponse:
     try:
-        result = svc.scan_project(req.project_dir)
+        result = svc.scan_project(_directory(req.project_dir))
         status = "complete" if result["is_complete"] else f"missing {len(result['missing'])} folders"
-        return TaskResponse(ok=True, message=f"Scan complete — structure is {status}.", data=result)
+        return TaskResponse(
+            ok=True,
+            message=f"Scan complete — structure is {status}.",
+            data=_opaque_result(result, _workspace_directory_map({"project_dir": req.project_dir})),
+        )
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))
 
@@ -384,10 +448,14 @@ def scan_project(req: ScanProjectRequest) -> TaskResponse:
 @router.post("/init-project", response_model=TaskResponse)
 def init_project(req: InitProjectRequest) -> TaskResponse:
     try:
-        result = svc.init_project(req.project_dir, req.create_if_missing)
+        result = svc.init_project(_directory(req.project_dir), req.create_if_missing)
         created = len(result["created"])
         existed = len(result["already_existed"])
         msg = f"Initialization complete — created {created} folder(s), {existed} already existed."
-        return TaskResponse(ok=True, message=msg, data=result)
+        return TaskResponse(
+            ok=True,
+            message=msg,
+            data=_opaque_result(result, _workspace_directory_map({"project_dir": req.project_dir})),
+        )
     except Exception as e:
         return TaskResponse(ok=False, message=str(e))

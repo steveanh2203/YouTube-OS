@@ -4,10 +4,11 @@
  * Mỗi tool component (AIGen, AIAudio, SRTGen...) gọi hook này với feature ID
  * tương ứng. Khi extension gửi data, chỉ component đúng feature mới nhận được.
  *
- * URL WebSocket: ws://127.0.0.1:8765/api/extension/ws
+ * WebSocket URL follows the current self-hosted origin.
  */
 
 import { useCallback, useEffect, useRef } from 'react'
+import { wsUrl } from '@/lib/api'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ export type ExtensionMessageHandler = (msg: ExtensionPushMessage) => void
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const WS_URL = 'ws://127.0.0.1:8765/api/extension/ws'
+const WS_URL = () => wsUrl('/api/extension/ws')
 const RECONNECT_DELAY_MS = 3000
 
 // ── Hook ───────────────────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ export function useExtensionSocket(
     if (!mountedRef.current) return
 
     try {
-      const ws = new WebSocket(WS_URL)
+      const ws = new WebSocket(WS_URL())
       wsRef.current = ws
 
       ws.onopen = () => {

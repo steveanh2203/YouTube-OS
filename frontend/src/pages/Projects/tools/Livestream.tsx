@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 import {
   Radio, Play, Square, Plus, ChevronDown, ChevronUp, Trash2,
   FolderOpen, RefreshCw, X, CheckCircle, AlertTriangle, Loader,
@@ -8,7 +8,7 @@ import {
 import { cn } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,7 +69,6 @@ function StatusBadge({ status }: { status: string }) {
 function ChannelCard({
   ch,
   stats,
-  logs: _logs,
   onUpdate,
   onDelete,
   onStart,
@@ -94,7 +93,7 @@ function ChannelCard({
 
   const handleAddFolder = async () => {
     try {
-      const selected = await open({ directory: true, multiple: false })
+      const selected = await pickWorkspaceDirectory(`${ch.name} videos`)
       if (selected && typeof selected === 'string') {
         onUpdate(ch.id, { video_dirs: [...ch.video_dirs, selected] })
       }
@@ -163,7 +162,7 @@ function ChannelCard({
               ? 'bg-red-500 text-white hover:bg-red-600'
               : 'bg-green-500 text-white hover:bg-green-600',
           )}
-          onClick={e => { e.stopPropagation(); isStreaming ? onStop(ch.id) : onStart(ch.id) }}
+          onClick={e => { e.stopPropagation(); if (isStreaming) onStop(ch.id); else onStart(ch.id) }}
         >
           {isStreaming ? <><Square size={11} /> Stop</> : <><Play size={11} /> Go Live</>}
         </button>
@@ -342,9 +341,9 @@ export default function Livestream() {
     try {
       const data = await apiFetch('/api/livestream')
       setChannels(data)
-      if (data.length > 0 && !selectedId) setSelectedId(data[0].id)
+      if (data.length > 0) setSelectedId(current => current ?? data[0].id)
     } catch { /* backend not running yet */ }
-  }, [selectedId])
+  }, [])
 
   // ── Poll status for all channels ───────────────────────────────────────────
   const pollStatus = useCallback(async () => {
@@ -362,7 +361,7 @@ export default function Livestream() {
     apiFetch('/api/livestream/ffmpeg-check')
       .then(d => setFfmpeg({ status: d.installed ? 'installed' : 'missing', version: d.version ?? undefined }))
       .catch(() => setFfmpeg({ status: 'missing' }))
-  }, [])
+  }, [fetchChannels])
 
   useEffect(() => {
     if (channels.length === 0) return

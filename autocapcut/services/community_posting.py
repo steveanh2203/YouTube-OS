@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections import defaultdict
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from autocapcut.database.models import CommunityPost
+from autocapcut.services.media_workspace import resolve_managed_path, resolve_workspace_file_reference
 from autocapcut.services.community_dom_publisher import (
     CommunityDomPublishError,
     publish_community_post_via_roxy,
@@ -119,13 +121,36 @@ def apply_post_payload(
     return post
 
 
+def resolve_community_image_path(reference: str) -> Path:
+    """Resolve a persisted opaque image reference only when the publisher needs it."""
+    value = reference.strip()
+    if value.startswith("workspace-file:"):
+        return resolve_workspace_file_reference(value)
+    if value.startswith("media:"):
+        asset_id = value.removeprefix("media:").strip()
+        if not asset_id:
+            raise CommunityPostingError("Invalid media image reference.")
+        try:
+            with closing(_connect_sqlite()) as connection:
+                row = connection.execute(
+                    "SELECT stored_path FROM media_assets WHERE id = ?",
+                    (asset_id,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise CommunityPostingError("Could not resolve the media image reference.") from exc
+        if row is None:
+            raise CommunityPostingError("Community image is missing from Media Library.")
+        return resolve_managed_path(str(row["stored_path"]))
+    return Path(value).expanduser()
+
+
 def ensure_post_publishable(post: CommunityPost) -> None:
     if not normalize_post_body(post.body):
         raise CommunityPostingError("Post body is required before queueing.")
     if not post.channel_url:
         raise CommunityPostingError("Channel URL is required before queueing.")
     if post.image_path:
-        image_path = Path(post.image_path)
+        image_path = resolve_community_image_path(post.image_path)
         if not image_path.exists() or not image_path.is_file():
             raise CommunityPostingError(f"Image file does not exist: {post.image_path}")
     post.post_mode = normalize_post_mode(post.post_mode)
@@ -178,7 +203,7 @@ def _connect_sqlite() -> sqlite3.Connection:
 def publish_queued_post(post_id: int, runtime: PublishRuntimeInput) -> dict[str, Any]:
     append_post_log(post_id, "info", "Publish requested", {"mode": "dom"})
 
-    with _connect_sqlite() as conn:
+    with closing(_connect_sqlite()) as conn:
         row = conn.execute(
             """
             SELECT cp.*, p.roxy_workspace_id, p.roxy_profile_id, p.roxy_profile_name
@@ -244,11 +269,15 @@ def publish_queued_post(post_id: int, runtime: PublishRuntimeInput) -> dict[str,
             profile_id=profile_id,
             channel_url=str(row["channel_url"] or ""),
             body=str(row["body"] or ""),
-            image_path=str(row["image_path"] or "").strip() or None,
+            image_path=(
+                str(resolve_community_image_path(str(row["image_path"])))
+                if str(row["image_path"] or "").strip()
+                else None
+            ),
         )
     except (CommunityDomPublishError, CommunityPostingError, RuntimeError) as exc:
         error_message = clip_error_message(str(exc))
-        with _connect_sqlite() as conn:
+        with closing(_connect_sqlite()) as conn:
             conn.execute(
                 """
                 UPDATE community_posts
@@ -265,7 +294,7 @@ def publish_queued_post(post_id: int, runtime: PublishRuntimeInput) -> dict[str,
         raise
 
     published_at = utcnow().isoformat(sep=" ", timespec="seconds")
-    with _connect_sqlite() as conn:
+    with closing(_connect_sqlite()) as conn:
         conn.execute(
             """
             UPDATE community_posts

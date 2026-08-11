@@ -1,15 +1,18 @@
-"""FastAPI sidecar server — bridge between Tauri UI and Python services."""
+"""Single-user self-hosted FastAPI server for the MasterOS web app."""
 from __future__ import annotations
 
 import argparse
 import logging
 import sys
 import threading
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from autocapcut.api.routes import projects, sync, srt, seo, animation, roxy, competitors, audio
+from autocapcut.api.routes import srt, seo, roxy, competitors, audio
 from autocapcut.api.routes import parent_projects, child_projects
 from autocapcut.api.routes import ai_gen
 from autocapcut.api.routes import livestream
@@ -44,19 +47,16 @@ def _prewarm_upscale() -> None:
     except Exception as exc:
         _log.warning("Real-ESRGAN pre-warm failed (upscale will still work on first call): %s", exc)
 
-# Allow Tauri WebView (null origin) + Vite dev server
+# Production is same-origin; only the local Vite development server needs CORS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://127.0.0.1:1420", "http://localhost:1420"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(projects.router,         prefix="/api/projects",         tags=["projects"])
-app.include_router(sync.router,             prefix="/api/sync",             tags=["sync"])
 app.include_router(srt.router,             prefix="/api/srt",              tags=["srt"])
 app.include_router(seo.router,             prefix="/api/seo",              tags=["seo"])
-app.include_router(animation.router,       prefix="/api/animation",        tags=["animation"])
 app.include_router(competitors.router,     prefix="/api/competitors",      tags=["competitors"])
 app.include_router(audio.router,           prefix="/api/audio",            tags=["audio"])
 app.include_router(roxy.router,            prefix="/api/roxy",             tags=["roxy"])
@@ -78,6 +78,33 @@ app.include_router(media.router,           prefix="/api/media",              tag
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "masteros-api"}
+
+
+def mount_spa(target_app: FastAPI, dist_dir: Path) -> bool:
+    """Mount a built Vite app and preserve JSON 404s below ``/api``."""
+    dist = dist_dir.resolve()
+    index = dist / "index.html"
+    if not index.is_file():
+        return False
+
+    assets = dist / "assets"
+    if assets.is_dir():
+        target_app.mount("/assets", StaticFiles(directory=assets), name="frontend-assets")
+
+    @target_app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found.")
+
+        requested = (dist / full_path).resolve()
+        if requested.is_relative_to(dist) and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(index)
+
+    return True
+
+
+mount_spa(app, Path(__file__).resolve().parents[2] / "frontend" / "dist")
 
 
 def main() -> None:

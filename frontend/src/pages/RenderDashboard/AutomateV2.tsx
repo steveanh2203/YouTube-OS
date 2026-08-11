@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { open } from '@tauri-apps/plugin-dialog'
+import { pickMediaFile } from '@/lib/browserPickers'
 import { useAppStore } from '@/store/app.store'
 import { seoApi, roxyApi } from '@/lib/api'
 import { loadRoxyConfig, normalizeRoxyHost, saveRoxyConfig, type RoxyConfig } from '@/lib/roxy'
@@ -7,7 +7,7 @@ import {
   Zap, Plus, Play, Loader, CheckCircle, XCircle,
   ChevronDown, ChevronUp, Settings, Film, Trash2,
 } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn, unknownErrorMessage } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,11 +39,6 @@ function AddVideoDialog({
   const kids = childProjects.filter(c => c.parentId === parentId)
   const [childId, setChildId] = useState(kids[0]?.id ?? '')
 
-  useEffect(() => {
-    const list = childProjects.filter(c => c.parentId === parentId)
-    setChildId(list[0]?.id ?? '')
-  }, [parentId, childProjects])
-
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div className="bg-white rounded-2xl shadow-2xl w-[440px] p-6 space-y-4">
@@ -59,7 +54,11 @@ function AddVideoDialog({
         <div>
           <label className="label mb-1">Parent project</label>
           <select className="input text-sm w-full" value={parentId}
-            onChange={e => setParentId(e.target.value)}>
+            onChange={e => {
+              const nextParentId = e.target.value
+              setParentId(nextParentId)
+              setChildId(childProjects.find(child => child.parentId === nextParentId)?.id ?? '')
+            }}>
             {parentProjects.length === 0 && <option value="">- No parent projects yet -</option>}
             {parentProjects.map(p => (
               <option key={p.id} value={p.id}>{p.name}</option>
@@ -143,11 +142,8 @@ export default function AutomateV2() {
 
   const handleAddVideo = async () => {
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] }],
-      })
-      if (selected && typeof selected === 'string') setPendingPath(selected)
+      const selected = await pickMediaFile('video/*,.mp4,.mov,.avi,.mkv,.webm')
+      if (selected) setPendingPath(selected.reference)
     } catch { /* cancelled */ }
   }
 
@@ -176,16 +172,15 @@ export default function AutomateV2() {
     // ── Step 1: Raw SEO ──────────────────────────────────────────────────────
     updateJob(job.id, { status: 'seo', errorMsg: undefined })
     try {
-      const folderPath = job.videoPath.split('/').slice(0, -1).join('/')
       await seoApi.apply({
-        folder_path: folderPath,
+        video_path: job.videoPath,
         title: child.title,
         description: child.description,
         keywords_raw: parent.keywordsRaw,
         rename_to_title: false,
       })
-    } catch (e: any) {
-      updateJob(job.id, { status: 'error', errorMsg: `SEO: ${e?.message ?? 'unknown'}` })
+    } catch (error: unknown) {
+      updateJob(job.id, { status: 'error', errorMsg: `SEO: ${unknownErrorMessage(error, 'unknown')}` })
       return
     }
 
@@ -210,8 +205,8 @@ export default function AutomateV2() {
       } else {
         updateJob(job.id, { status: 'error', errorMsg: res.message })
       }
-    } catch (e: any) {
-      updateJob(job.id, { status: 'error', errorMsg: `Upload: ${e?.message ?? 'unknown'}` })
+    } catch (error: unknown) {
+      updateJob(job.id, { status: 'error', errorMsg: `Upload: ${unknownErrorMessage(error, 'unknown')}` })
     }
   }
 

@@ -36,10 +36,6 @@
   ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 99px; }
   ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
 
-  [data-tauri-drag-region] { -webkit-app-region: drag; }
-  [data-tauri-drag-region] button,
-  [data-tauri-drag-region] a,
-  [data-tauri-drag-region] input { -webkit-app-region: no-drag; }
 }
 
 @layer components {

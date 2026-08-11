@@ -170,14 +170,13 @@ class SoraRouteTests(unittest.TestCase):
         self.assertEqual(result["job"]["status"], "failed")
         self.assertEqual(result["job"]["error_msg"], "Stopped by user.")
 
-    def test_open_output_folder_uses_mac_open(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with patch.object(sora.sys, "platform", "darwin"):
-                with patch.object(sora.subprocess, "Popen") as mock_popen:
-                    result = sora.asyncio.run(
-                        sora.open_output_folder(sora.OutputFolderOpenRequest(folder=temp_dir))
-                    )
+    def test_open_output_folder_is_disabled_in_web_runtime(self) -> None:
+        from fastapi import HTTPException
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["folder"], temp_dir)
-        mock_popen.assert_called_once_with(["open", temp_dir])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(HTTPException) as raised:
+                sora.asyncio.run(
+                    sora.open_output_folder(sora.OutputFolderOpenRequest(folder=temp_dir))
+                )
+
+        self.assertEqual(raised.exception.status_code, 410)

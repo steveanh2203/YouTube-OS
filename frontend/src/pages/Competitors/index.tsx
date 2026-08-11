@@ -8,7 +8,7 @@ import { toast } from '@/store/toast.store'
 import { resolveYoutubeMetadata } from './utils'
 import { cn } from '@/lib/utils'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 function mapStoreCompetitor(raw: Record<string, unknown>) {
   return {

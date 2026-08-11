@@ -10,7 +10,7 @@ import { youtubeReplyApi, type YouTubeConfigMapResponse } from '@/lib/api'
 import { fromApiYouTubeConfig, sanitizeYouTubeReplyConfig, toApiYouTubeConfig, type YouTubeReplyConfig } from '@/lib/youtubeReply'
 import { toast } from '@/store/toast.store'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 interface FormState {
   name: string; author: string; publisher: string; copyright: string; keywordsRaw: string

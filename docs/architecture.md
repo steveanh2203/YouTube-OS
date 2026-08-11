@@ -1,114 +1,87 @@
-# Architecture — AutoCapCut / MasterOS
+# Architecture — MasterOS Web
 
 ## Overview
 
-MasterOS là desktop app macOS-only, kết hợp 3 layers:
+MasterOS is a single-user, self-hosted web application. The browser UI talks to a
+FastAPI server over same-origin HTTP and WebSocket endpoints. The server owns the
+SQLite database, managed media workspace, and FFmpeg processes.
 
-```
-┌─────────────────────────────────────────────┐
-│              Tauri Shell (Rust)              │  ← Desktop window, file dialogs, OS integration
-├─────────────────────────────────────────────┤
-│           React UI  (port 1420 dev)          │  ← Frontend, Vite, Tailwind, Radix UI
-├─────────────────────────────────────────────┤
-│       FastAPI Sidecar  (port 8765)           │  ← HTTP API bridge
-├─────────────────────────────────────────────┤
-│          autocapcut/ Python package          │
-│  ┌──────────┬───────────┬─────────────────┐ │
-│  │ services │ automation│   render_v2     │ │
-│  │ (logic)  │ (CapCut   │   (FFmpeg)      │ │
-│  │          │  GUI ctrl)│                 │ │
-│  └──────────┴───────────┴─────────────────┘ │
-├─────────────────────────────────────────────┤
-│      SQLite  (~/.autocapcut/autocapcut.db)   │  ← Local DB, no server needed
-└─────────────────────────────────────────────┘
+```text
+Browser
+  └── React + Vite UI
+        ↕ /api, /media, WebSocket
+FastAPI (127.0.0.1:8765)
+  ├── serves frontend/dist as an SPA
+  ├── API routes and background jobs
+  ├── SQLite
+  ├── managed media workspace
+  └── FFmpeg / ffprobe / optional Rust engines
 ```
 
-## Layer Chi Tiết
+There is no desktop shell or GUI automation layer. File input uses browser
+uploads and managed workspace references; output is previewed or downloaded by
+the browser.
 
-### 1. Tauri Shell (Rust)
-- File: `frontend/src-tauri/`
-- Config: `frontend/src-tauri/tauri.conf.json`
-- Vai trò: Desktop window, native OS dialogs (`@tauri-apps/plugin-dialog`)
-- **Không chứa business logic** — chỉ là shell
+## Frontend
 
-### 2. React Frontend
-- Stack: React 19 + TypeScript + Vite 8 + Tailwind CSS 3
-- State: Zustand (`store/app.store.ts`, `store/task.store.ts`, `store/toast.store.ts`)
-- Navigation: Không có React Router — dùng `setMainView()` / `setPanelMainView()` trong Zustand
-- UI Primitives: Radix UI (Dialog, Dropdown, Tabs, Select, Switch, Tooltip...)
-- Animation: Framer Motion
-- **Gọi API trực tiếp** qua `fetch('http://127.0.0.1:8765/api/...')`
+- React 19, TypeScript, Vite, Tailwind CSS, Radix UI, Zustand.
+- Development server: `http://127.0.0.1:1420` with proxies for `/api` and
+  `/media`.
+- Production: FastAPI serves the built `frontend/dist` directory.
+- Navigation uses the existing Zustand view state rather than React Router.
+- Feature pages are lazy-loaded to keep the initial bundle small.
+- API and WebSocket helpers derive their origin from the current page.
 
-### 3. FastAPI Sidecar
-- Entry: `main.py` → `autocapcut/api/server.py`
-- Port: `8765`
-- CORS: allow all origins (Tauri WebView dùng null origin)
-- Startup: tự init DB + pre-warm Real-ESRGAN binary
+## Backend
 
-### 4. Python Package (`autocapcut/`)
+- Entry point: `main.py` → `autocapcut/api/server.py`.
+- Default address: `127.0.0.1:8765`.
+- API routers live in `autocapcut/api/routes/`.
+- Business logic lives in `autocapcut/services/`.
+- FFmpeg pipelines live in `autocapcut/render_v2/` and media services.
+- CORS permits the local Vite development origins; production is same-origin.
 
-```
-autocapcut/
-├── api/routes/      — FastAPI routers, 1 file per domain
-├── services/        — Business logic (không depend FastAPI)
-├── automation/      — CapCut GUI control via AtomAcos + PyAutoGUI
-├── database/        — SQLModel + aiosqlite
-├── render_v2/       — FFmpeg pipeline
-├── configs/         — API credentials (KHÔNG commit)
-└── config.py        — CapCutConfig (paths, timeouts)
-```
+## Managed files
 
-### 5. Database
-- Engine: SQLite via SQLModel + aiosqlite
-- Path: `~/.autocapcut/autocapcut.db`
-- Migration: manual ALTER TABLE trong `_ensure_sqlite_columns()` (idempotent)
-- Schema: xem `autocapcut/database/models.py`
+Browser clients never send arbitrary server file paths for normal workflows.
+The API returns opaque references:
 
-## Data Model
+- `media:<id>` for Media Library assets.
+- `workspace:<id>` for managed directories.
+- `workspace-file:<directory-id>:<relative-path>` for files inside them.
 
-```
-ParentProject (kênh / series)
-    └── ChildProject (từng video)
-            ├── Caption (SRT versions)
-            ├── SeoMetadata
-            ├── RenderHistory
-            ├── Thumbnail
-            ├── ChildFolder (thư mục trên disk)
-            └── CompetitorVideo
-```
+The default root is `~/.autocapcut/workspace`. Override it with
+`AUTOCAPCUT_WORKSPACE_DIR`.
 
-## Optional Components
+## Database
 
-### Rust SRT Engine
-- Path: `rust/srt_engine/`
-- Kiểm soát: env var `AUTOCAPCUT_SRT_ENGINE=auto|rust|python`
-- Mặc định `auto`: ưu tiên Rust, fallback Python nếu chưa build
-- Build: `./scripts/build_rust_engine.sh`
+- SQLite via SQLModel and aiosqlite.
+- Default path: `~/.autocapcut/autocapcut.db`.
+- Schema: `autocapcut/database/models.py`.
+- Idempotent compatibility migrations: `_ensure_sqlite_columns()` in
+  `autocapcut/database/connection.py`.
 
-### Real-ESRGAN Upscaling
-- Service: `autocapcut/services/upscale_engine.py`
-- Pre-warmed lúc startup để lần đầu gọi không bị chậm
-- Binary được cache trong memory sau lần đầu
+## Media processing
 
-## Flow Điển Hình: Export Video
+FFmpeg and ffprobe remain first-class runtime dependencies. They power fast
+editing, cut/batch jobs, silence removal, audio visualization, metadata work,
+and media inspection. Real-ESRGAN and the Rust SRT/audio engines remain optional.
 
-```
-User click "Export" trong UI
-    → fetch POST /api/srt/generate
-    → srt_generator.py đọc CapCut draft JSON
-    → (optional) Rust engine match SRT segments
-    → trả về SRT content
-    → fetch POST /api/sync/captions
-    → sync_captions.py điều chỉnh image durations
-    → fetch POST /api/render
-    → ffmpeg_render.py batch render
-    → UI poll status qua task.store.ts
+## Runtime flows
+
+```text
+Upload/import in browser
+  → Media Library or managed workspace
+  → submit API job using an opaque reference
+  → server resolves the reference inside the managed roots
+  → FFmpeg/service writes managed output
+  → browser previews or downloads the result
 ```
 
-## Ports & Processes
+## Processes
 
-| Process | Port | Khởi động bằng |
-|---|---|---|
-| Python FastAPI | 8765 | `./scripts/run_api.sh` |
-| Vite dev server | 1420 | `npm run dev` (trong frontend/) |
-| Tauri shell | — | `npm run tauri:dev` |
+| Process | Port | Command |
+|---|---:|---|
+| Production web app | 8765 | `./scripts/run_web.sh` |
+| Backend development | 8765 | `./scripts/run_api.sh --port 8765` |
+| Frontend development | 1420 | `npm run dev` in `frontend/` |

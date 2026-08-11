@@ -10,7 +10,7 @@ import { useAppStore, type ChildProject, type ChildStatus, type ParentProject, t
 import { usePanelContext } from '@/contexts/PanelContext'
 import { cn } from '@/lib/utils'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 type DeadlineFilter = 'all' | 'overdue' | 'today' | 'this-week' | 'none'
 type ViewMode = 'kanban' | 'timeline'
@@ -276,7 +276,7 @@ function PlannerCard({
   const dueToday = isDueToday(child, today)
 
   // Pointer-event-based drag — replaces HTML5 drag API which is unreliable
-  // in WKWebView (Tauri on macOS). Pointer events work in all WebKit versions.
+  // Pointer events keep drag behavior consistent across modern browsers.
   return (
     <motion.div
       onPointerDown={(e) => {

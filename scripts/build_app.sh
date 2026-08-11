@@ -8,6 +8,5 @@ if [ ! -d "node_modules" ]; then
   npm install
 fi
 
-echo "[MasterOS] Building Tauri desktop shell..."
-echo "[MasterOS] Note: the packaged app still expects the Python FastAPI backend on localhost:8765."
-exec npm run tauri:build
+echo "[MasterOS] Building browser application..."
+exec npm run build

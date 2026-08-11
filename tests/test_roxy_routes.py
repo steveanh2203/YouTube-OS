@@ -10,6 +10,26 @@ from autocapcut.services.roxy_upload import RoxyUploadSummary
 
 
 class RoxyRouteTests(unittest.TestCase):
+    def test_workspace_folder_videos_return_opaque_file_references(self) -> None:
+        from autocapcut.services.media_workspace import create_workspace_directory, resolve_workspace_reference
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.dict(
+            "os.environ", {"AUTOCAPCUT_WORKSPACE_DIR": temp_dir}
+        ):
+            directory = create_workspace_directory("Roxy batch")
+            folder = resolve_workspace_reference(directory.reference)
+            (folder / "clip.mp4").write_bytes(b"video")
+
+            result = roxy.asyncio.run(
+                roxy.list_folder_videos(roxy.RoxyFolderVideosRequest(folder_path=directory.reference))
+            )
+
+            self.assertTrue(result.ok)
+            self.assertEqual(result.folder_path, directory.reference)
+            self.assertEqual(len(result.videos), 1)
+            self.assertTrue(result.videos[0].startswith("workspace-file:"))
+            self.assertNotIn(str(folder), result.videos[0])
+
     def test_list_folder_videos_returns_sorted_supported_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             folder = Path(temp_dir)

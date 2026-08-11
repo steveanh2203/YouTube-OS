@@ -48,29 +48,37 @@ export default function AddCompetitorModal({ open, onClose, childProjectId, pare
   // Auto-detect clipboard on open
   useEffect(() => {
     if (!open) return
-    setUrl(''); setMeta(null); setDupWarning(null); setError(null); setFetchState('idle')
-    navigator.clipboard.readText().then(text => {
-      if (text && (text.includes('youtube.com') || text.includes('youtu.be'))) {
-        setUrl(text.trim())
-      }
-    }).catch(() => {/* clipboard not granted */})
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setUrl(''); setMeta(null); setDupWarning(null); setError(null); setFetchState('idle')
+      navigator.clipboard.readText().then(text => {
+        if (!cancelled && text && (text.includes('youtube.com') || text.includes('youtu.be'))) {
+          setUrl(text.trim())
+        }
+      }).catch(() => {/* clipboard not granted */})
+    }, 0)
+    return () => { cancelled = true; window.clearTimeout(timer) }
   }, [open])
 
   // Fetch oEmbed when URL changes (debounced)
   useEffect(() => {
-    setMeta(null); setDupWarning(null); setError(null)
     const videoId = extractVideoId(url)
-    if (!videoId) { setFetchState('idle'); return }
+    const resetTimer = window.setTimeout(() => {
+      setMeta(null); setDupWarning(null); setError(null)
+      setFetchState(videoId ? 'loading' : 'idle')
+    }, 0)
+    if (!videoId) return () => window.clearTimeout(resetTimer)
 
     // Check duplicate first
     const dup = competitors.find(c => c.videoId === videoId)
     if (dup) {
-      setDupWarning(`This link already exists: "${dup.title}"`)
-      setFetchState('idle')
-      return
+      const duplicateTimer = window.setTimeout(() => {
+        setDupWarning(`This link already exists: "${dup.title}"`)
+        setFetchState('idle')
+      }, 0)
+      return () => { window.clearTimeout(resetTimer); window.clearTimeout(duplicateTimer) }
     }
 
-    setFetchState('loading')
     const t = setTimeout(async () => {
       try {
         const result = await fetchOEmbed(url)
@@ -81,8 +89,8 @@ export default function AddCompetitorModal({ open, onClose, childProjectId, pare
         setFetchState('error')
       }
     }, 600)
-    return () => clearTimeout(t)
-  }, [url])
+    return () => { window.clearTimeout(resetTimer); clearTimeout(t) }
+  }, [url, competitors])
 
   const handleSubmit = () => {
     if (!meta || fetchState !== 'ok') return

@@ -1,4 +1,4 @@
-"""Generate a merged SRT file by aligning content items to CapCut SRT segments."""
+"""Generate a merged SRT file by aligning content items to transcript segments."""
 from __future__ import annotations
 
 import os
@@ -26,7 +26,7 @@ _WORD_TO_NUM: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
-# Strict matching config (CapCut timestamp is source of truth)
+# Strict matching config (source transcript timestamps are authoritative)
 # ---------------------------------------------------------------------------
 _STRICT_START_SCAN_SEGMENTS = 22
 _STRICT_MAX_LOOKAHEAD_SEGMENTS = 48
@@ -265,9 +265,9 @@ def match_content_to_srt(
     strict_review_cb: StrictMatchReviewCallback | None = None,
 ) -> List[OutputEntry]:
     """
-    Strictly match each content item to CapCut SRT segments.
+    Strictly match each content item to source SRT segments.
 
-    CapCut timestamps are treated as source of truth. We choose segment ranges
+    Source timestamps are treated as authoritative. We choose segment ranges
     by fuzzy scoring, but keep strict monotonic ordering and confidence guards
     so timestamps stay aligned to the source transcript.
     """
@@ -531,12 +531,12 @@ def generate_merged_srt(
     strict_review_cb: StrictMatchReviewCallback | None = None,
 ) -> str:
     """
-    Read *srt_path* (CapCut SRT) and *content_text* (raw content string),
+    Read *srt_path* (source SRT) and *content_text* (raw content string),
     return the merged SRT as a string.
 
     Raises SRTGeneratorError on any failure.
     """
-    _emit_progress(progress_cb, 6, "Reading CapCut SRT file...")
+    _emit_progress(progress_cb, 6, "Reading source SRT file...")
 
     # --- Parse SRT ---
     try:
@@ -544,7 +544,7 @@ def generate_merged_srt(
     except OSError as exc:
         raise SRTGeneratorError(f"Could not read SRT file: {exc}") from exc
 
-    _emit_progress(progress_cb, 18, "Parsing CapCut SRT segments...")
+    _emit_progress(progress_cb, 18, "Parsing source SRT segments...")
     srt_segments = parse_srt(srt_raw)
     if not srt_segments:
         raise SRTGeneratorError("The SRT file contains no valid segments.")
@@ -564,7 +564,7 @@ def generate_merged_srt(
     )
 
     # --- Match ---
-    _emit_progress(progress_cb, 45, "Aligning content lines to CapCut timestamps...")
+    _emit_progress(progress_cb, 45, "Aligning content lines to source timestamps...")
     entries: List[OutputEntry] | None = None
     engine_mode = _resolve_engine_mode()
 

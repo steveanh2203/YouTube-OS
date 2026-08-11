@@ -60,34 +60,6 @@ function postEmpty<TResponse>(path: string): Promise<TResponse> {
   return requestJson<TResponse>(path, { method: 'POST' })
 }
 
-export interface ApiProjectMetadata {
-  duration_s: number
-  fps: number
-  width: number | null
-  height: number | null
-  video_segments: number
-  track_count: number
-  ffmpeg_ready: boolean
-  modified_at: string | null
-}
-
-export interface ApiCapcutProject {
-  id: string
-  name: string
-  path: string
-  source: 'local' | 'cloud_cache'
-  status: 'pending' | 'processing' | 'done' | 'failed'
-  notes: string
-  assigned_project_id: string | null
-  is_selected: boolean
-  selection_order: number | null
-  metadata: ApiProjectMetadata
-}
-
-export const projectsApi = {
-  discover: (): Promise<ApiCapcutProject[]> => requestJson('/api/projects/discover'),
-}
-
 export interface RoxyWorkspaceInfo {
   workspace_id: number
   workspace_name: string
@@ -163,29 +135,6 @@ export interface RoxyFolderVideosResponse {
   message: string
 }
 
-export interface SyncResult {
-  project_path: string
-  ok: boolean
-  message: string
-}
-
-export interface SyncResponse {
-  total: number
-  success: number
-  failed: number
-  results: SyncResult[]
-}
-
-const syncProjects = (kind: 'audio' | 'images' | 'captions', projectPaths: string[]): Promise<SyncResponse> => (
-  postJson(`/api/sync/${kind}`, { project_paths: projectPaths })
-)
-
-export const syncApi = {
-  audio: (projectPaths: string[]): Promise<SyncResponse> => syncProjects('audio', projectPaths),
-  images: (projectPaths: string[]): Promise<SyncResponse> => syncProjects('images', projectPaths),
-  captions: (projectPaths: string[]): Promise<SyncResponse> => syncProjects('captions', projectPaths),
-}
-
 export interface SEOFileResult {
   file: string
   ok: boolean
@@ -201,31 +150,13 @@ export interface SEOResponse {
 
 export const seoApi = {
   apply: (body: {
-    folder_path: string
+    folder_path?: string
+    video_path?: string
     title: string
     description: string
     keywords_raw: string
     rename_to_title: boolean
   }): Promise<SEOResponse> => postJson('/api/seo/apply', body),
-}
-
-export interface AnimationPresetInfo {
-  key: string
-  name: string
-  category: string
-}
-
-export interface AnimationResponse {
-  ok: boolean
-  message: string
-  modified_count?: number
-}
-
-export const animationApi = {
-  presets: (): Promise<AnimationPresetInfo[]> => requestJson('/api/animation/presets'),
-  apply: (body: { project_path: string; action: string; preset_key?: string }): Promise<AnimationResponse> => (
-    postJson('/api/animation/apply', body)
-  ),
 }
 
 export interface FastEditSystemStatus {
@@ -369,9 +300,6 @@ export const cutAutomateApi = {
 export const srtApi = {
   generate: (srtPath: string, contentText: string): Promise<{ ok: boolean; srt_output: string; message: string }> => (
     postJson('/api/srt/generate', { srt_path: srtPath, content_text: contentText })
-  ),
-  save: (savePath: string, content: string): Promise<{ ok: boolean; message: string }> => (
-    postJson('/api/srt/save', { save_path: savePath, content })
   ),
 }
 

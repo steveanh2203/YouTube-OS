@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from autocapcut.services.media_workspace import resolve_workspace_or_local
 
 router = APIRouter()
 
@@ -58,7 +59,7 @@ class ChannelUpdate(BaseModel):
 def _gather_videos(ch: dict) -> List[Path]:
     files: set[Path] = set()
     for d in ch.get("video_dirs", []):
-        p = Path(d)
+        p = resolve_workspace_or_local(d)
         if not p.exists():
             continue
         it = p.rglob("*") if ch.get("recursive") else p.glob("*")

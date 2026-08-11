@@ -25,7 +25,7 @@ export default function Sidebar() {
   const mainNav = [
     { id: 'planner',      label: 'Planner',      icon: CalendarRange },
     { id: 'projects',     label: 'Projects',     icon: FolderOpen },
-    { id: 'render',       label: 'Render',        icon: LayoutDashboard },
+    { id: 'render',       label: 'FFmpeg Studio', icon: LayoutDashboard },
     { id: 'automate',     label: 'Automate',      icon: WandSparkles },
     { id: 'reply-center', label: 'Reply Center',  icon: MessageSquareReply },
     { id: 'analytics',    label: 'Analytics',     icon: BarChart2 },
@@ -75,10 +75,7 @@ export default function Sidebar() {
           </button>
         </div>
       ) : (
-        <div
-          className="flex items-center gap-2.5 px-3 py-3 border-b border-white/10"
-          data-tauri-drag-region
-        >
+        <div className="flex items-center gap-2.5 px-3 py-3 border-b border-white/10">
           <div className="shrink-0 w-7 h-7 rounded-md bg-primary-500 flex items-center justify-center shadow-sm">
             <Scissors size={15} color="white" strokeWidth={2.5} />
           </div>

@@ -12,7 +12,6 @@ const SUB_LABELS: Record<string, string> = {
   'raw-seo':    'Raw SEO',
   'roxy-upload':'Roxy Upload',
   'youtube-reply': 'YouTube Reply',
-  'animation':  'Animation',
   'fast-edit':  'Fast Edit',
   'cut-automate': 'Cut Automate',
 }
@@ -37,7 +36,6 @@ const BACK_MAP: Partial<Record<ProjectSubView, ProjectSubView>> = {
   'raw-seo':    'children',
   'roxy-upload':'children',
   'youtube-reply': 'children',
-  'animation':  'children',
   'fast-edit':  'children',
   'cut-automate': 'children',
 }
@@ -55,10 +53,7 @@ export default function PanelTopBar() {
   const backTarget = mainView === 'projects' ? BACK_MAP[projectSubView] : undefined
 
   return (
-    <header
-      className="flex items-center h-11 px-4 border-b border-surface-200 bg-white shrink-0 gap-3"
-      data-tauri-drag-region
-    >
+    <header className="flex items-center h-11 px-4 border-b border-surface-200 bg-white shrink-0 gap-3">
       {/* Back button */}
       {backTarget && (
         <button
@@ -71,7 +66,7 @@ export default function PanelTopBar() {
       )}
 
       {/* Breadcrumb */}
-      <div className="flex items-center gap-1.5 flex-1" data-tauri-drag-region>
+      <div className="flex items-center gap-1.5 flex-1">
         {backTarget ? (
           <button
             className="text-sm text-surface-400 hover:text-primary-600 transition-colors"

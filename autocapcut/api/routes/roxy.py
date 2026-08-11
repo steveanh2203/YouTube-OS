@@ -6,9 +6,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from autocapcut.api.routes.media import resolve_media_reference
+from autocapcut.database.connection import get_session
+from autocapcut.services.media_workspace import (
+    MediaWorkspaceError,
+    resolve_workspace_file_reference,
+    resolve_workspace_or_local,
+    workspace_file_reference,
+)
 from autocapcut.services.roxy_upload import (
     RoxyApiClient,
     RoxyUploadError,
@@ -136,8 +145,19 @@ async def list_profiles(req: RoxyProfilesRequest) -> RoxyProfilesResponse:
 
 
 @router.post("/upload", response_model=RoxyUploadResponse)
-async def start_upload(req: RoxyUploadRequest) -> RoxyUploadResponse:
-    video_path = Path(req.video_path)
+async def start_upload(
+    req: RoxyUploadRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RoxyUploadResponse:
+    try:
+        if req.video_path.startswith("media:"):
+            video_path = await resolve_media_reference(req.video_path, session)
+        elif req.video_path.startswith("workspace-file:"):
+            video_path = resolve_workspace_file_reference(req.video_path)
+        else:
+            video_path = Path(req.video_path).expanduser()
+    except (MediaWorkspaceError, ValueError) as exc:
+        return RoxyUploadResponse(ok=False, message=str(exc))
     if not video_path.exists():
         return RoxyUploadResponse(ok=False, message=f"Video file not found: {req.video_path}")
 
@@ -179,33 +199,36 @@ async def start_upload(req: RoxyUploadRequest) -> RoxyUploadResponse:
 
 @router.post("/folder-videos", response_model=RoxyFolderVideosResponse)
 async def list_folder_videos(req: RoxyFolderVideosRequest) -> RoxyFolderVideosResponse:
-    folder = Path(req.folder_path).expanduser()
+    try:
+        folder = resolve_workspace_or_local(req.folder_path)
+    except MediaWorkspaceError as exc:
+        return RoxyFolderVideosResponse(ok=False, folder_path=req.folder_path, videos=[], message=str(exc))
     if not folder.exists():
         return RoxyFolderVideosResponse(
             ok=False,
-            folder_path=str(folder),
+            folder_path=req.folder_path,
             videos=[],
             message="Folder không tồn tại.",
         )
     if not folder.is_dir():
         return RoxyFolderVideosResponse(
             ok=False,
-            folder_path=str(folder),
+            folder_path=req.folder_path,
             videos=[],
             message="Đường dẫn đã chọn không phải folder.",
         )
 
-    videos = sorted(
-        [
-            str(item)
-            for item in folder.iterdir()
-            if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS
-        ],
-        key=lambda item: Path(item).name.lower(),
+    video_paths = sorted(
+        [item for item in folder.iterdir() if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS],
+        key=lambda item: item.name.lower(),
     )
+    videos = [
+        workspace_file_reference(req.folder_path, item) if req.folder_path.startswith("workspace:") else str(item)
+        for item in video_paths
+    ]
     return RoxyFolderVideosResponse(
         ok=True,
-        folder_path=str(folder),
+        folder_path=req.folder_path,
         videos=videos,
         message=f"Tìm thấy {len(videos)} video.",
     )

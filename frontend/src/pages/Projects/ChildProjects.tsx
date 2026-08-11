@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import DocumentsTab from './DocumentsTab'
 import CommunityTab from './CommunityTab'
 
-const API = 'http://127.0.0.1:8765'
+const API = ''
 
 // ---------------------------------------------------------------------------
 // Status config — colors & labels

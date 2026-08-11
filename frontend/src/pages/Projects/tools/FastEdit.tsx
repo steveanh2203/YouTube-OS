@@ -1,20 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
   Film, FolderOpen, Play, Loader, CheckCircle, AlertCircle,
   Settings2, Image, ArrowDownUp,
   Volume2, Zap, ChevronDown, ChevronUp, Eye,
-  Clapperboard,
+  Clapperboard, Download,
 } from 'lucide-react'
 import { fastEditApi, type FastEditRenderRequest, type FastEditRenderResponse,
   type FastEditBatchRenameResponse,
   type FastEditSystemStatus,
 } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, unknownErrorMessage } from '@/lib/utils'
 import { PathBreadcrumb } from '@/components/ui/PathBreadcrumb'
 import { taskStore } from '@/store/task.store'
+import { workspaceFileDownloadUrl } from '@/lib/media'
 
 // ─── Tab type ─────────────────────────────────────────────────────────────────
 
@@ -28,11 +29,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 // ─── Directory picker helpers ────────────────────────────────────────────────
 
 async function pickDirectory(): Promise<string | null> {
-  try {
-    const selected = await tauriOpen({ directory: true, multiple: false })
-    if (selected && typeof selected === 'string') return selected
-  } catch { /* Tauri not available */ }
-  return null
+  return pickWorkspaceDirectory('Fast Edit')
 }
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
@@ -184,9 +181,10 @@ function ComposeTab() {
       const res = await fastEditApi.render(req)
       setRenderResult(res)
       taskStore.complete(taskId, res.ok ? 'done' : 'error', res.message)
-    } catch (err: any) {
-      setRenderResult({ ok: false, message: err?.message ?? 'Render failed', scenes: [], combined: null, total_duration: 0 })
-      taskStore.complete(taskId, 'error', err?.message ?? 'Render failed')
+    } catch (err: unknown) {
+      const message = unknownErrorMessage(err, 'Render failed')
+      setRenderResult({ ok: false, message, scenes: [], combined: null, total_duration: 0 })
+      taskStore.complete(taskId, 'error', message)
     } finally {
       setRendering(false)
     }
@@ -371,6 +369,15 @@ function ComposeTab() {
                   <span className="font-mono w-5 text-right shrink-0 opacity-60">{s.index + 1}</span>
                   <span className="flex-1 truncate font-mono">{s.output_path.split('/').pop()}</span>
                   <span className="shrink-0 opacity-70">{s.duration.toFixed(1)}s</span>
+                  {s.success && s.output_path.startsWith('workspace-file:') && (
+                    <a
+                      className="inline-flex shrink-0 items-center gap-1 font-semibold hover:underline"
+                      href={workspaceFileDownloadUrl(s.output_path)}
+                      download
+                    >
+                      <Download size={12} /> Download
+                    </a>
+                  )}
                   {s.error && (
                     <span className="text-red-600 truncate max-w-[200px]" title={s.error}>{s.error}</span>
                   )}
@@ -429,9 +436,10 @@ function RenameTab() {
       })
       setResult(res)
       taskStore.complete(taskId, res.ok ? 'done' : 'error', res.message)
-    } catch (err: any) {
-      setResult({ ok: false, message: err?.message ?? 'Rename failed', results: [], total: 0, succeeded: 0, failed: 0 })
-      taskStore.complete(taskId, 'error', err?.message ?? 'Rename failed')
+    } catch (err: unknown) {
+      const message = unknownErrorMessage(err, 'Rename failed')
+      setResult({ ok: false, message, results: [], total: 0, succeeded: 0, failed: 0 })
+      taskStore.complete(taskId, 'error', message)
     } finally {
       setRunning(false)
     }

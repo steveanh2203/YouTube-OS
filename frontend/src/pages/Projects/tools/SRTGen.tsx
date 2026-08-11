@@ -1,15 +1,16 @@
 import { useState, useCallback, useRef } from 'react'
 import { useExtensionSocket } from '@/hooks/useExtensionSocket'
 import { toast } from '@/store/toast.store'
-import { open as tauriOpen, save as tauriSave } from '@tauri-apps/plugin-dialog'
+import { MediaPicker } from '@/components/media/MediaPicker'
+import type { MediaAsset } from '@/lib/media'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
-  FileText, Play, Copy, Download, Loader, FolderOpen,
+  FileText, Play, Copy, Download, Loader,
   Scissors, RotateCcw, CheckCircle, AlertCircle, Hash, Upload,
 } from 'lucide-react'
 import { srtApi } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, unknownErrorMessage } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
 
 // ─── Sentence splitter ────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ export default function SRTGen() {
   const child = childProjects.find(c => c.id === selectedChildId)
 
   const [srtPath, setSrtPath] = useState('')
+  const [srtAssetName, setSrtAssetName] = useState('')
   const [contentText, setContentText] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; output: string; message: string } | null>(null)
@@ -64,23 +66,13 @@ export default function SRTGen() {
     toast.success('⚡ Nhận script từ Claude!', 'Đã fill nội dung vào ô SRT', 4000)
   })
 
-  // ── File picker — Tauri dialog (returns full OS path) ────────────────────────
-  const handleFilePick = async () => {
-    try {
-      const selected = await tauriOpen({
-        multiple: false,
-        filters: [{ name: 'SRT files', extensions: ['srt'] }],
-      })
-      if (selected && typeof selected === 'string') {
-        setSrtPath(selected)
-      }
-    } catch {
-      // Tauri not available (browser dev mode) — fallback to nothing
-    }
+  const selectSrt = (asset: MediaAsset) => {
+    setSrtPath(asset.reference)
+    setSrtAssetName(asset.original_name)
   }
 
   // ── Auto-split on paste ──────────────────────────────────────────────────────
-  const handlePaste = useCallback((_e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = useCallback(() => {
     // Let React update state first, then process
     setTimeout(() => {
       setContentText(prev => splitIntoNumberedSentences(prev))
@@ -104,7 +96,7 @@ export default function SRTGen() {
     )
   }
 
-  // ── Import file (FileReader — works in Tauri WebView without fs plugin) ──────
+  // ── Import script text with the browser FileReader API ──────────────────────
   const handleImportClick = useCallback(() => {
     fileInputRef.current?.click()
   }, [])
@@ -133,8 +125,8 @@ export default function SRTGen() {
       const res = await srtApi.generate(srtPath.trim(), contentText)
       setResult({ ok: res.ok, output: res.srt_output, message: res.message })
       taskStore.complete(taskId, res.ok ? 'done' : 'error', res.message)
-    } catch (err: any) {
-      const msg = err?.message ?? 'API error'
+    } catch (err: unknown) {
+      const msg = unknownErrorMessage(err, 'API error')
       setResult({ ok: false, output: '', message: msg })
       taskStore.complete(taskId, 'error', msg)
     } finally {
@@ -148,18 +140,12 @@ export default function SRTGen() {
 
   const handleDownload = async () => {
     if (!result?.output) return
-    try {
-      const savePath = await tauriSave({
-        defaultPath: `${child?.name ?? 'output'}.srt`,
-        filters: [{ name: 'SRT files', extensions: ['srt'] }],
-      })
-      if (!savePath) return
-      const res = await srtApi.save(savePath, result.output)
-      if (!res.ok) alert(`File save error: ${res.message}`)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      alert(`Error: ${msg}`)
-    }
+    const url = URL.createObjectURL(new Blob([result.output], { type: 'application/x-subrip;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${child?.name ?? 'output'}.srt`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   const sentenceCount = countSentences(contentText)
@@ -175,32 +161,32 @@ export default function SRTGen() {
         </div>
         <div>
           <h1 className="page-title">SRT Generator</h1>
-          <p className="page-sub">{child?.name ?? 'No child selected'} · Merge script content into a CapCut SRT</p>
+          <p className="page-sub">{child?.name ?? 'No child selected'} · Merge script content into a source SRT</p>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-5">
         {/* SRT File */}
         <div>
-          <label className="label">SRT file (CapCut export)</label>
+          <label className="label">Source SRT file</label>
           <div className="flex gap-2">
             <input
               className="input font-mono text-xs flex-1"
-              placeholder="/path/to/capcut_export.srt"
-              value={srtPath}
-              onChange={e => setSrtPath(e.target.value)}
+              placeholder="Choose an SRT from Media Library"
+              value={srtAssetName}
+              readOnly
             />
-            <button
-              className="btn-secondary shrink-0"
-              onClick={handleFilePick}
-              title="Choose SRT file"
-            >
-              <FolderOpen size={14} />
-              Choose file
-            </button>
+            <MediaPicker
+              kind="subtitle"
+              accept=".srt,.vtt"
+              label="SRT File"
+              selectedName={srtAssetName}
+              className="shrink-0"
+              onSelect={selectSrt}
+            />
           </div>
           <p className="text-xs text-surface-400 mt-1">
-            The SRT file should be exported from CapCut (File → Export → SRT)
+            Upload any standard SRT file; the generated result downloads through your browser.
           </p>
         </div>
 

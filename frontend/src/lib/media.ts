@@ -15,6 +15,22 @@ export interface MediaAsset {
   download_url: string
 }
 
+export interface WorkspaceDirectory {
+  reference: string
+  name: string
+  created_at: number
+}
+
+export interface WorkspaceImportFile {
+  file: File
+  relativePath: string
+}
+
+export interface WorkspaceImportResult {
+  imported: number
+  files: Array<{ reference: string; name: string; relative_path: string; size_bytes: number }>
+}
+
 async function mediaJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(path, init)
   const body = await response.json().catch(() => null) as { detail?: unknown } | T | null
@@ -43,7 +59,29 @@ export const mediaApi = {
   },
 }
 
+export const workspaceApi = {
+  list: (): Promise<WorkspaceDirectory[]> => mediaJson('/api/media/directories'),
+  create: (name: string): Promise<WorkspaceDirectory> => mediaJson('/api/media/directories', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }),
+  importFiles: (reference: string, files: WorkspaceImportFile[]): Promise<WorkspaceImportResult> => {
+    const directoryId = reference.startsWith('workspace:') ? reference.slice('workspace:'.length) : reference
+    const body = new FormData()
+    for (const item of files) {
+      body.append('files', item.file)
+      body.append('relative_paths', item.relativePath)
+    }
+    return mediaJson(`/api/media/directories/${encodeURIComponent(directoryId)}/files`, { method: 'POST', body })
+  },
+}
+
 export function mediaContentUrl(reference: string): string {
   const assetId = reference.startsWith('media:') ? reference.slice('media:'.length) : reference
   return `/api/media/assets/${encodeURIComponent(assetId)}/content`
+}
+
+export function workspaceFileDownloadUrl(reference: string): string {
+  return `/api/media/files/download?reference=${encodeURIComponent(reference)}`
 }

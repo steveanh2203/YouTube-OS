@@ -42,8 +42,8 @@ cat logs/<file-moi-nhat>.log
 
 **Render timeout (> 900 giây):**
 - Video quá dài hoặc resolution quá cao
-- Tăng `render_timeout_sec` trong `autocapcut/config.py`
-- Hoặc chia nhỏ batch
+- Chia nhỏ batch hoặc giảm độ phân giải đầu ra
+- Kiểm tra timeout của service đang chạy job tương ứng
 
 **Output video bị corrupt / không mở được:**
 - Kiểm tra disk space: `df -h ~`

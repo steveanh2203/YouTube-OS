@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
-import sys
 import tempfile
 import time
 from datetime import datetime
@@ -19,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from autocapcut.database.connection import get_session
 from autocapcut.database.models import ChildProject, SoraJob
+from autocapcut.services.media_workspace import projects_root, resolve_workspace_or_local
 from autocapcut.services.sora_service import (
     clear_managed_videos,
     download_video,
@@ -405,7 +403,7 @@ async def download_job_file(job_id: int, session: SessionDep) -> FileResponse:
 
 @router.post("/output-folder/inspect")
 async def inspect_output_folder(body: "OutputFolderInspectRequest") -> dict:
-    folder = Path(body.folder).expanduser()
+    folder = resolve_workspace_or_local(body.folder)
     video_paths = list_video_files(folder)
     return {
         "folder": str(folder),
@@ -417,7 +415,7 @@ async def inspect_output_folder(body: "OutputFolderInspectRequest") -> dict:
 
 @router.post("/output-folder/init")
 async def init_output_folder(body: "OutputFolderInitRequest") -> dict:
-    folder = Path(body.folder).expanduser()
+    folder = resolve_workspace_or_local(body.folder)
     folder.mkdir(parents=True, exist_ok=True)
     mode = (body.conflict_mode or "keep_both").strip().lower()
     if mode not in {"keep_both", "replace_all"}:
@@ -433,18 +431,10 @@ async def init_output_folder(body: "OutputFolderInitRequest") -> dict:
 
 @router.post("/output-folder/open")
 async def open_output_folder(body: "OutputFolderOpenRequest") -> dict:
-    folder = Path(body.folder).expanduser()
+    folder = resolve_workspace_or_local(body.folder)
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=404, detail="Output folder not found on disk.")
-
-    if sys.platform == "darwin":
-        subprocess.Popen(["open", str(folder)])
-    elif sys.platform == "win32":
-        os.startfile(str(folder))
-    else:
-        subprocess.Popen(["xdg-open", str(folder)])
-
-    return {"ok": True, "folder": str(folder)}
+    raise HTTPException(status_code=410, detail="Desktop folder opening is not available in the web app.")
 
 
 # Legacy endpoint — kept for backward compat
@@ -580,9 +570,9 @@ async def job_done(body: "JobDoneRequest", session: SessionDep) -> dict:
 
     # Xác định folder lưu video
     if child and child.base_folder_path:
-        dest_folder = Path(child.base_folder_path)
+        dest_folder = resolve_workspace_or_local(child.base_folder_path)
     else:
-        dest_folder = Path.home() / "Downloads" / "sora-videos"
+        dest_folder = projects_root() / "sora-videos"
 
     # Download video
     try:
@@ -648,7 +638,7 @@ async def job_upload(
         raise HTTPException(status_code=404, detail="Sora job not found.")
 
     child = await session.get(ChildProject, job.child_project_id)
-    dest_folder = Path(child.base_folder_path) if child and child.base_folder_path else Path.home() / "Downloads" / "sora-videos"
+    dest_folder = resolve_workspace_or_local(child.base_folder_path) if child and child.base_folder_path else projects_root() / "sora-videos"
 
     try:
         content = await file.read()

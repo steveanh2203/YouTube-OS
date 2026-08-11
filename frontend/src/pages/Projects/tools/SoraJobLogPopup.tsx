@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const API    = 'http://127.0.0.1:8765'
+const API    = ''
 const POLL_MS = 1500
 
 type LogLevel  = 'info' | 'success' | 'warn' | 'error'

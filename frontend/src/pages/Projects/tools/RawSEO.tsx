@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
-import { Tag, Play, Loader, CheckCircle, XCircle } from 'lucide-react'
+import { Tag, Play, Loader, CheckCircle, XCircle, FolderOpen } from 'lucide-react'
 import { seoApi, type SEOFileResult } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { cn, unknownErrorMessage } from '@/lib/utils'
 import { taskStore } from '@/store/task.store'
+import { pickWorkspaceDirectory } from '@/lib/browserPickers'
 
 export default function RawSEO() {
   const { childProjects, parentProjects } = useAppStore()
@@ -32,8 +33,8 @@ export default function RawSEO() {
       })
       setResult({ ok: res.ok, message: res.message, results: res.results })
       taskStore.complete(taskId, res.ok ? 'done' : 'error', res.message)
-    } catch (err: any) {
-      const msg = err?.message ?? 'API error'
+    } catch (err: unknown) {
+      const msg = unknownErrorMessage(err, 'API error')
       setResult({ ok: false, message: msg, results: [] })
       taskStore.complete(taskId, 'error', msg)
     } finally {
@@ -56,8 +57,20 @@ export default function RawSEO() {
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
         <div>
           <label className="label">Video folder</label>
-          <input className="input font-mono text-xs" placeholder="/path/to/video/folder"
-            value={folderPath} onChange={e => setFolderPath(e.target.value)} />
+          <div className="flex gap-2">
+            <input className="input flex-1 font-mono text-xs" placeholder="Choose a server workspace"
+              value={folderPath} readOnly />
+            <button
+              className="btn-secondary shrink-0"
+              type="button"
+              onClick={async () => {
+                const selected = await pickWorkspaceDirectory('SEO videos')
+                if (selected) setFolderPath(selected)
+              }}
+            >
+              <FolderOpen size={14} /> Choose
+            </button>
+          </div>
         </div>
 
         <div>

@@ -51,31 +51,6 @@ test('Vite proxies browser API and media requests to FastAPI', async () => {
   assert.equal(config.server.proxy['/media'].target, 'http://127.0.0.1:8765')
 })
 
-test('projectsApi discovers projects through the same-origin API', async () => {
-  const api = await import(new URL('../src/lib/api.ts', import.meta.url))
-  const previousFetch = globalThis.fetch
-  let requestUrl = ''
-  let requestInit
-  globalThis.fetch = async (url, init) => {
-    requestUrl = String(url)
-    requestInit = init
-    return new Response(JSON.stringify([{ id: 'draft-1', name: 'Draft 1' }]), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })
-  }
-
-  try {
-    assert.equal(typeof api.projectsApi?.discover, 'function')
-    const projects = await api.projectsApi.discover()
-    assert.deepEqual(projects, [{ id: 'draft-1', name: 'Draft 1' }])
-    assert.equal(requestUrl, '/api/projects/discover')
-    assert.equal(requestInit, undefined)
-  } finally {
-    globalThis.fetch = previousFetch
-  }
-})
-
 test('roxyApi sends workspace credentials as JSON', async () => {
   const api = await import(new URL('../src/lib/api.ts', import.meta.url))
   const previousFetch = globalThis.fetch
@@ -252,6 +227,80 @@ test('mediaApi uploads browser files and keeps paths opaque', async () => {
     assert.equal(requestInit.method, 'POST')
     assert.equal(requestInit.body instanceof FormData, true)
     assert.equal(requestInit.body.get('file'), file)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('audio service requests a browser-downloadable zip without a desktop save path', async () => {
+  const audio = await loadOptionalModule('../src/lib/audioService.ts')
+  const previousFetch = globalThis.fetch
+  let requestUrl = ''
+  let requestInit
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url)
+    requestInit = init
+    return new Response(new Uint8Array([80, 75]), { status: 200, headers: { 'content-type': 'application/zip' } })
+  }
+
+  try {
+    assert.equal(typeof audio?.createAudioZipFile, 'function')
+    const zip = await audio.createAudioZipFile([{ filename: 'clip.mp3', blob: new Blob(['clip']) }])
+    assert.equal(zip.type, 'application/zip')
+    assert.equal(requestUrl, '/api/audio/zip')
+    assert.equal(requestInit.method, 'POST')
+    const payload = JSON.parse(requestInit.body)
+    assert.deepEqual(payload, [{ filename: 'clip.mp3', content_base64: 'Y2xpcA==' }])
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('workspaceApi creates opaque server directories', async () => {
+  const media = await loadOptionalModule('../src/lib/media.ts')
+  const previousFetch = globalThis.fetch
+  let requestInit
+  globalThis.fetch = async (_url, init) => {
+    requestInit = init
+    return new Response(JSON.stringify({ reference: 'workspace:video-01-abcd1234', name: 'Video 01', created_at: 1 }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  try {
+    assert.equal(typeof media?.workspaceApi?.create, 'function')
+    const directory = await media.workspaceApi.create('Video 01')
+    assert.equal(directory.reference, 'workspace:video-01-abcd1234')
+    assert.deepEqual(JSON.parse(requestInit.body), { name: 'Video 01' })
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})
+
+test('workspaceApi imports a browser-selected folder with relative paths', async () => {
+  const media = await loadOptionalModule('../src/lib/media.ts')
+  const previousFetch = globalThis.fetch
+  let requestUrl = ''
+  let requestInit
+  globalThis.fetch = async (url, init) => {
+    requestUrl = String(url)
+    requestInit = init
+    return new Response(JSON.stringify({ imported: 1, files: [] }), {
+      status: 201,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+
+  try {
+    const file = new File(['audio'], 'voice.mp3', { type: 'audio/mpeg' })
+    const result = await media.workspaceApi.importFiles('workspace:batch-abcd1234', [
+      { file, relativePath: 'audio/voice.mp3' },
+    ])
+    assert.equal(result.imported, 1)
+    assert.equal(requestUrl, '/api/media/directories/batch-abcd1234/files')
+    assert.equal(requestInit.body.get('files'), file)
+    assert.equal(requestInit.body.get('relative_paths'), 'audio/voice.mp3')
   } finally {
     globalThis.fetch = previousFetch
   }

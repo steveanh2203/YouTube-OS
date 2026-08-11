@@ -16,7 +16,7 @@ from typing import Callable, List, Sequence, Tuple
 from loguru import logger
 
 from autocapcut.services.ffmpeg_utils import FFprobeError, probe_duration_microseconds
-from autocapcut.services.sync_audio import AUDIO_EXTENSIONS
+AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".webm"}
 
 DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 DEFAULT_ANALYSIS_SAMPLE_RATE = 16000

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
 import zipfile
@@ -44,39 +45,9 @@ class MiniMaxTtsRequest(BaseModel):
     emotion: str | None = Field(default=None, max_length=64)
 
 
-class AudioSaveRequest(BaseModel):
-    save_path: str = Field(min_length=1)
-    content_base64: str = Field(min_length=1)
-
-
 class AudioZipItem(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1)
-
-
-class AudioZipSaveRequest(BaseModel):
-    save_path: str = Field(min_length=1)
-    files: list[AudioZipItem] = Field(min_length=1, max_length=500)
-
-
-class AudioSaveResponse(BaseModel):
-    ok: bool
-    path: str | None = None
-    message: str
-
-
-def _dedupe_output_path(path: Path) -> Path:
-    if not path.exists():
-        return path
-
-    stem = path.stem
-    suffix = path.suffix
-    index = 2
-    while True:
-        candidate = path.with_name(f"{stem}_{index}{suffix}")
-        if not candidate.exists():
-            return candidate
-        index += 1
 
 
 def _decode_audio_payload(content_base64: str) -> bytes:
@@ -110,12 +81,14 @@ def _dedupe_archive_name(filename: str, used_names: set[str]) -> str:
         index += 1
 
 
-def _build_zip_archive(zip_path: Path, items: list[AudioZipItem]) -> None:
+def _build_zip_bytes(items: list[AudioZipItem]) -> bytes:
+    output = BytesIO()
     used_names: set[str] = set()
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for item in items:
             archive_name = _dedupe_archive_name(_sanitize_archive_name(item.filename), used_names)
             archive.writestr(archive_name, _decode_audio_payload(item.content_base64))
+    return output.getvalue()
 
 
 @router.get("/minimax/health", response_model=MiniMaxHealthOut)
@@ -162,35 +135,14 @@ async def post_minimax_tts(
     )
 
 
-@router.post("/save", response_model=AudioSaveResponse)
-async def save_audio(payload: AudioSaveRequest) -> AudioSaveResponse:
+@router.post("/zip")
+async def create_audio_zip(files: list[AudioZipItem]) -> Response:
     try:
-        audio_bytes = _decode_audio_payload(payload.content_base64)
+        archive = await asyncio.to_thread(_build_zip_bytes, files)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    try:
-        path = _dedupe_output_path(Path(payload.save_path).expanduser())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: path.write_bytes(audio_bytes))
-        return AudioSaveResponse(ok=True, path=str(path), message=f"Saved to {path.name}")
-    except Exception as exc:
-        return AudioSaveResponse(ok=False, message=f"File write error: {exc}")
-
-
-@router.post("/save-zip", response_model=AudioSaveResponse)
-async def save_audio_zip(payload: AudioZipSaveRequest) -> AudioSaveResponse:
-    try:
-        save_path = Path(payload.save_path).expanduser()
-        if save_path.suffix.lower() != ".zip":
-            save_path = save_path.with_suffix(".zip")
-        path = _dedupe_output_path(save_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: _build_zip_archive(path, payload.files))
-        return AudioSaveResponse(ok=True, path=str(path), message=f"Saved to {path.name}")
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        return AudioSaveResponse(ok=False, message=f"File write error: {exc}")
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="ai-audio.zip"'},
+    )

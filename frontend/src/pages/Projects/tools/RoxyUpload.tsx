@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
+import { pickMediaFile } from '@/lib/browserPickers'
 import {
   Briefcase,
   CheckCheck,
@@ -32,7 +32,6 @@ import { useAppStore } from '@/store/app.store'
 import { taskStore } from '@/store/task.store'
 
 type Step = 'config' | 'profile' | 'upload' | 'done'
-type FileWithPath = File & { path?: string }
 
 type StepMeta = {
   key: Step
@@ -57,12 +56,6 @@ const STEP_INDEX: Record<Step, number> = {
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
-}
-
-function looksLikeRealFilePath(value: string): boolean {
-  const path = value.trim()
-  if (!path) return false
-  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
 }
 
 export default function RoxyUpload() {
@@ -102,7 +95,6 @@ export default function RoxyUpload() {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const stepIndex = STEP_INDEX[step]
   const busy = loading || uploading
   const errorMessage = uploadError || error
@@ -151,11 +143,6 @@ export default function RoxyUpload() {
 
   const handleUpload = async () => {
     if (!canUpload || !workspaceId) return
-    if (!looksLikeRealFilePath(videoPath)) {
-      setUploadError('Đường dẫn video chưa đúng. Bấm `Choose file` để lấy full path thật, hoặc paste full path vào ô này.')
-      return
-    }
-
     setUploading(true)
     setUploadError(null)
     const taskId = taskStore.add({ toolId: 'roxy-upload', toolLabel: 'Roxy Upload', label: 'Upload video YouTube' })
@@ -189,40 +176,17 @@ export default function RoxyUpload() {
     }
   }
 
-  const handleFilePick = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] as FileWithPath | undefined
-    if (!file) return
-    const nextPath = file.path?.trim()
-    if (nextPath) {
-      setVideoPath(nextPath)
-      setUploadError(null)
-      return
-    }
-
-    setVideoPath(file.name)
-    setUploadError('Picker này chỉ lấy được tên file. Bấm `Choose file` để mở picker desktop, hoặc paste full path vào ô này.')
-  }
-
   const handleChooseFile = async () => {
     try {
-      const selected = await tauriOpen({
-        directory: false,
-        multiple: false,
-        filters: [
-          { name: 'Video', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm'] },
-        ],
-      })
-
-      if (selected && typeof selected === 'string') {
-        setVideoPath(selected)
+      const selected = await pickMediaFile('video/*,.mp4,.mov,.avi,.mkv,.webm')
+      if (selected) {
+        setVideoPath(selected.reference)
         setUploadError(null)
         return
       }
-    } catch {
-      // Fallback to browser input below.
+    } catch (cause) {
+      setUploadError(cause instanceof Error ? cause.message : 'Video upload failed.')
     }
-
-    fileInputRef.current?.click()
   }
 
   const reset = () => {
@@ -421,7 +385,7 @@ export default function RoxyUpload() {
                   <FileVideo size={18} />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-surface-800">File path or choose a video</p>
+                  <p className="text-sm font-semibold text-surface-800">Video from Media Library</p>
                   <p className="text-xs text-surface-500">Hỗ trợ mp4, mov, avi, mkv, webm.</p>
                 </div>
               </div>
@@ -429,17 +393,13 @@ export default function RoxyUpload() {
               <div className="flex flex-col gap-3 lg:flex-row">
                 <input
                   className="input min-w-0 flex-1 bg-white font-mono text-xs"
-                  placeholder="/path/to/video.mp4"
+                  placeholder="Choose a video from Media Library"
                   value={videoPath}
-                  onChange={e => {
-                    setVideoPath(e.target.value)
-                    if (uploadError) setUploadError(null)
-                  }}
+                  readOnly
                 />
                 <button className="btn-secondary shrink-0 justify-center px-4 lg:min-w-[160px]" onClick={handleChooseFile}>
                   <FolderOpen size={14} /> Choose file
                 </button>
-                <input ref={fileInputRef} type="file" accept=".mp4,.mov,.avi,.mkv,.webm" className="hidden" onChange={handleFilePick} />
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
