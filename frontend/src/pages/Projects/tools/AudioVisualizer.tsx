@@ -1,27 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { open as tauriOpen } from '@tauri-apps/plugin-dialog'
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { MediaPicker } from '@/components/media/MediaPicker'
+import { mediaApi, type MediaAsset } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import { toast } from '@/store/toast.store'
 import {
   Music, Play, Square, Save, Trash2, ChevronDown, ChevronUp,
-  Loader, FolderOpen, AudioWaveform, CheckCircle, XCircle,
+  Loader, Download, AudioWaveform, CheckCircle, XCircle,
 } from 'lucide-react'
 
-const API = 'http://127.0.0.1:8765/api/audio-visualizer'
-const buildPreviewUrl = (path: string) => `${API}/preview-source?audio_path=${encodeURIComponent(path)}&t=${Date.now()}`
-const normalizeAudioPath = (raw: string) => {
-  const value = raw.trim()
-  if (value.startsWith('file://')) {
-    try {
-      const u = new URL(value)
-      return decodeURIComponent(u.pathname)
-    } catch {
-      return value.replace(/^file:\/\//, '')
-    }
-  }
-  return value
-}
+const API = '/api/audio-visualizer'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -611,12 +598,14 @@ function useAudioPreview(config: VisualizerConfig, canvasRef: React.RefObject<HT
 
 export default function AudioVisualizer() {
   const [audioPath, setAudioPath] = useState<string | null>(null)
+  const [audioAsset, setAudioAsset] = useState<MediaAsset | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [config, setConfig] = useState<VisualizerConfig>(DEFAULT_CONFIG)
   const [jobId, setJobId] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<JobStatus>('idle')
   const [progress, setProgress] = useState(0)
   const [outputPath, setOutputPath] = useState<string | null>(null)
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
   const [presetName, setPresetName] = useState('')
   const [showPresets, setShowPresets] = useState(false)
@@ -626,7 +615,6 @@ export default function AudioVisualizer() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioElRef = useRef<HTMLAudioElement | null>(null)
-  const previewFallbackRef = useRef(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollStartRef = useRef<number>(0)
   const pollLastProgressRef = useRef<number>(0)
@@ -680,6 +668,7 @@ export default function AudioVisualizer() {
         }
         setProgress(nextProgress)
         if (data.output_path) setOutputPath(data.output_path)
+        if (data.download_url) setDownloadUrl(data.download_url)
         if (data.status === 'done') {
           clearInterval(pollRef.current!)
           toast.success('Render complete!')
@@ -704,52 +693,34 @@ export default function AudioVisualizer() {
     } catch { /* silent */ }
   }
 
-  const pickAudio = async () => {
-    const path = await tauriOpen({
-      multiple: false,
-      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'flac', 'ogg'] }],
-    })
-    if (!path || typeof path !== 'string') return
-    const normalized = normalizeAudioPath(path)
-    setAudioPath(normalized)
-    setAudioUrl(buildPreviewUrl(normalized))
-    previewFallbackRef.current = false
+  const selectAudio = (asset: MediaAsset) => {
+    setAudioAsset(asset)
+    setAudioPath(asset.reference)
+    setAudioUrl(asset.content_url)
     setJobStatus('idle')
     setOutputPath(null)
+    setDownloadUrl(null)
     setProgress(0)
   }
 
   const AUDIO_EXTS = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac']
 
-  const dropAudio = (e: React.DragEvent<HTMLDivElement>) => {
+  const dropAudio = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setIsDraggingAudio(false)
     const file = e.dataTransfer.files[0]
     if (!file) return
     const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
     if (!AUDIO_EXTS.includes(ext)) { toast.error('Unsupported format. Use mp3, wav, m4a, flac, ogg.'); return }
-    // Tauri exposes the real filesystem path on the File object
-    const rawPath = (file as File & { path?: string }).path
-    if (!rawPath) {
-      toast.error('Không đọc được đường dẫn thật của file audio')
-      return
+    try {
+      selectAudio(await mediaApi.upload(file))
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : 'Audio upload failed')
     }
-    const filePath = normalizeAudioPath(rawPath)
-    setAudioPath(filePath)
-    setAudioUrl(buildPreviewUrl(filePath))
-    previewFallbackRef.current = false
-    setJobStatus('idle')
-    setOutputPath(null)
-    setProgress(0)
   }
 
-  const pickImage = async (field: 'background_image_path' | 'cover_art_path') => {
-    const path = await tauriOpen({
-      multiple: false,
-      filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-    })
-    if (!path || typeof path !== 'string') return
-    setConfig(c => ({ ...c, [field]: path }))
+  const selectImage = (field: 'background_image_path' | 'cover_art_path', asset: MediaAsset) => {
+    setConfig(c => ({ ...c, [field]: asset.reference }))
   }
 
   const startRender = async () => {
@@ -759,6 +730,7 @@ export default function AudioVisualizer() {
     setJobStatus('queued')
     setProgress(0)
     setOutputPath(null)
+    setDownloadUrl(null)
 
     try {
       const res = await fetch(`${API}/render`, {
@@ -862,14 +834,7 @@ export default function AudioVisualizer() {
           onCanPlay={e => {
             try { setupAnalyser(e.currentTarget) } catch { /* handled on Play click */ }
           }}
-          onError={() => {
-            if (audioPath && !previewFallbackRef.current) {
-              previewFallbackRef.current = true
-              setAudioUrl(convertFileSrc(audioPath))
-              return
-            }
-            toast.error('Không load được file audio preview')
-          }}
+          onError={() => toast.error('Không load được file audio preview')}
           crossOrigin="anonymous"
           src={audioUrl}
           preload="auto"
@@ -939,13 +904,17 @@ export default function AudioVisualizer() {
             onDrop={dropAudio}
           >
             <div className="flex items-center gap-3">
-              <button className="btn-primary flex items-center gap-1.5" onClick={pickAudio}>
-                <FolderOpen size={14} />
-                {audioPath ? 'Change Audio' : 'Pick Audio File'}
-              </button>
+              <MediaPicker
+                kind="audio"
+                accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg,.aac"
+                label="Audio File"
+                selectedName={audioAsset?.original_name}
+                className="btn-primary"
+                onSelect={selectAudio}
+              />
               {audioPath ? (
                 <p className="text-xs text-surface-500 truncate flex-1" title={audioPath}>
-                  {audioPath.split('/').pop()}
+                  {audioAsset?.original_name ?? audioPath}
                 </p>
               ) : (
                 <p className="text-xs text-surface-400">or drag & drop an audio file here</p>
@@ -1018,9 +987,14 @@ export default function AudioVisualizer() {
                 )}
                 {config.background_mode === 'image' && (
                   <div className="flex items-center gap-2">
-                    <button className="btn-secondary text-xs" onClick={() => pickImage('background_image_path')}>
-                      <FolderOpen size={12} /> Pick Image
-                    </button>
+                    <MediaPicker
+                      kind="image"
+                      accept="image/*,.png,.jpg,.jpeg,.webp"
+                      label="Background Image"
+                      selectedName={config.background_image_path}
+                      className="text-xs"
+                      onSelect={(asset) => selectImage('background_image_path', asset)}
+                    />
                     {config.background_image_path && (
                       <span className="text-xs text-surface-500 truncate">{config.background_image_path.split('/').pop()}</span>
                     )}
@@ -1047,9 +1021,14 @@ export default function AudioVisualizer() {
                 <div>
                   <p className="text-xs font-semibold text-surface-600 mb-2">Cover Art (optional)</p>
                   <div className="flex items-center gap-2 mb-2">
-                    <button className="btn-secondary text-xs" onClick={() => pickImage('cover_art_path')}>
-                      <FolderOpen size={12} /> Pick Cover Art
-                    </button>
+                    <MediaPicker
+                      kind="image"
+                      accept="image/*,.png,.jpg,.jpeg,.webp"
+                      label="Cover Art"
+                      selectedName={config.cover_art_path}
+                      className="text-xs"
+                      onSelect={(asset) => selectImage('cover_art_path', asset)}
+                    />
                     {config.cover_art_path && (
                       <>
                         <span className="text-xs text-surface-500 truncate flex-1">{config.cover_art_path.split('/').pop()}</span>
@@ -1171,7 +1150,11 @@ export default function AudioVisualizer() {
                   <CheckCircle size={13} /> Done
                 </div>
                 <p className="text-[11px] text-green-600 break-all">{outputPath.split('/').pop()}</p>
-                <p className="text-[10px] text-green-500 mt-0.5 break-all">{outputPath}</p>
+                {downloadUrl && (
+                  <a className="btn-secondary mt-2 w-full text-xs" href={downloadUrl} download>
+                    <Download size={12} /> Download
+                  </a>
+                )}
               </div>
             )}
             {jobStatus === 'failed' && (

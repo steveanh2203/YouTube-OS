@@ -468,6 +468,15 @@
 - [ ] Add one-command web startup and self-host documentation
 - [ ] Verify upload → FFmpeg render → preview/download end to end
 
+## Self-hosted Web App — Full Migration
+- [ ] Migrate every remaining Tauri file dialog to Media Library/browser upload
+- [ ] Replace every hard-coded frontend HTTP/WebSocket localhost URL
+- [ ] Remove CapCut-only navigation, routers, services, and default dependencies
+- [ ] Make extension bridge URLs configurable for the self-hosted origin
+- [ ] Verify every retained page and tool in the browser
+- [ ] Verify a clean production build and one-command self-host startup
+- [ ] Run public-repository secret and generated-media scan
+
 ## Self-hosted Web App — Review
-- Implementation pending. Design: `docs/superpowers/specs/2026-08-11-self-hosted-web-app-design.md`.
+- Implementation pending. The task is complete only after both the vertical slice and full migration checklists pass. Design: `docs/superpowers/specs/2026-08-11-self-hosted-web-app-design.md`.
 - Milestone plan: `docs/superpowers/plans/2026-08-11-web-foundation-audio-visualizer.md`.

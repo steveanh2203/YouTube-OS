@@ -428,7 +428,6 @@ export default function SoraGen() {
               return
             }
             if (msg.type === 'sora_config') {
-              setThreadDelay(msg.config.thread_start_delay ?? 0)
               return
             }
             if (!selectedChildId) return
@@ -498,7 +497,7 @@ export default function SoraGen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base_folder_path: result }),
       })
-      updateChild(selectedChildId!, { base_folder_path: result })
+      updateChild(selectedChildId!, { base_folder_path: result, folderPath: result })
     } catch (e) { console.error('Folder pick failed:', e) }
   }
 

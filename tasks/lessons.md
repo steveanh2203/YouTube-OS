@@ -50,3 +50,4 @@
 - Với desktop app đang giữ sidecar chạy nền, sau khi sửa backend render/audio phải restart sạch port 8765 rồi mới báo user retest, nếu không file export vẫn đi qua code cũ.
 - Trước khi push code lên repo public, phải scan file local/config cho token, cookie, API key thật; nếu có thì ignore + thay bằng file mẫu sạch rồi mới stage.
 - Với thương hiệu ngách như AI33Pro, phải xác nhận đúng domain và mô hình sản phẩm từ user trước khi kết luận; không được suy diễn từ kết quả tìm kiếm có tên gần giống.
+- Khi user yêu cầu chuyển toàn bộ desktop app thành web app, vertical slice chỉ là thứ tự kiểm chứng kỹ thuật, không phải giới hạn phạm vi cuối. Phải nói rõ và tiếp tục migrate mọi màn/tool active cho tới khi không còn phụ thuộc desktop runtime.

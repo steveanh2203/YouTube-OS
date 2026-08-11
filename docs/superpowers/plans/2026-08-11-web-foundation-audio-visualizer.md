@@ -683,4 +683,4 @@ git commit -m "docs(web): document self-hosted milestone"
 
 ## Milestone Completion Gate
 
-The milestone is complete only when the production FastAPI process serves the SPA and the Audio Visualizer upload-to-download smoke test passes without Tauri. Persistent unified jobs, migration of the remaining native-dialog tools, configurable extension bridges, and full CapCut dependency removal belong to subsequent implementation plans derived from the approved design spec.
+The milestone is complete only when the production FastAPI process serves the SPA and the Audio Visualizer upload-to-download smoke test passes without Tauri. This gate validates the architecture but does not complete the user's request. Execution must continue through persistent unified jobs, migration of every remaining native-dialog tool, configurable extension bridges, and full CapCut dependency removal before the overall web-conversion task can be marked complete.

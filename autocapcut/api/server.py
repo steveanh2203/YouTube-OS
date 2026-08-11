@@ -21,6 +21,7 @@ from autocapcut.api.routes import audio_visualizer
 from autocapcut.api.routes import youtube_reply
 from autocapcut.api.routes import account_connect
 from autocapcut.api.routes import community
+from autocapcut.api.routes import media
 from autocapcut.database.connection import init_db
 
 _log = logging.getLogger("autocapcut.api")
@@ -71,6 +72,7 @@ app.include_router(audio_visualizer.router, prefix="/api/audio-visualizer",  tag
 app.include_router(youtube_reply.router,   prefix="/api/youtube-reply",      tags=["youtube-reply"])
 app.include_router(account_connect.router, prefix="/api/account-connect",    tags=["account-connect"])
 app.include_router(community.router,       prefix="/api/community",          tags=["community"])
+app.include_router(media.router,           prefix="/api/media",              tags=["media"])
 
 
 @app.get("/api/health")

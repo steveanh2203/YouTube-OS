@@ -9,6 +9,7 @@
     "dev:api": "sh -c 'lsof -ti:8765 | xargs kill -9 2>/dev/null; ../scripts/run_api.sh --port 8765 & vite'",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:web": "node --experimental-strip-types --test scripts/web-runtime.test.mjs",
     "preview": "vite preview",
     "install:deps": "npm install",
     "tauri:dev": "tauri dev",

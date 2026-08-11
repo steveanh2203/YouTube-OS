@@ -37,6 +37,9 @@ export interface ChildProject {
   description: string      // YouTube video description
   seedingComments: string  // newline-separated seed comments
   folderPath: string       // absolute path to child project folder
+  /** Legacy API aliases kept until every feature uses the normalized web model. */
+  base_folder_path?: string
+  video_number?: number
   planningStage: PlannerStage
   priority: PlannerPriority
   deadline: string | null

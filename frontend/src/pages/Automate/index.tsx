@@ -621,7 +621,7 @@ export default function AutomatePage() {
             const res = await roxyApi.upload({
               api_host: normalizeRoxyHost(roxy.apiHost),
               api_token: roxy.apiToken.trim(),
-              workspace_id: selectedParent.roxyWorkspaceId,
+              workspace_id: selectedParent.roxyWorkspaceId!,
               profile_id: selectedParent.roxyProfileId,
               video_path: videoPath,
               schedule_at: plan?.iso,

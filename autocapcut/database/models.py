@@ -180,6 +180,23 @@ class Thumbnail(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Managed media workspace
+# ---------------------------------------------------------------------------
+
+class MediaAsset(SQLModel, table=True):
+    __tablename__ = "media_assets"
+
+    id: str = Field(primary_key=True)
+    original_name: str = Field(nullable=False)
+    stored_path: str = Field(nullable=False, unique=True)
+    kind: str = Field(nullable=False, index=True)
+    content_type: str = Field(nullable=False)
+    size_bytes: int = Field(nullable=False)
+    sha256: str = Field(nullable=False, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
 # Competitor Video
 # ---------------------------------------------------------------------------
 

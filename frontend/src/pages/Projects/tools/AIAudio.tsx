@@ -81,8 +81,8 @@ const ELEVEN_CUSTOM_VOICES_KEY = 'autocapcut_eleven_custom_voices'
 
 const TTS_LANGUAGE_OPTIONS = [
   { value: 'auto', label: 'Auto detect', badge: 'Recommended' },
-  { value: 'en', label: 'English' },
-  { value: 'vi', label: 'Vietnamese' },
+  { value: 'en', label: 'English', badge: undefined },
+  { value: 'vi', label: 'Vietnamese', badge: undefined },
 ] as const
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
