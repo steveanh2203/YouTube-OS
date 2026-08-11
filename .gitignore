@@ -51,3 +51,7 @@ autocapcut/configs/config.json
 # Rust build artifacts
 rust/**/target/
 .gstack/
+
+# Runtime-downloaded Real-ESRGAN state and platform binaries
+tools/upscale/realesrgan/bin/
+tools/upscale/realesrgan/install_state.json
