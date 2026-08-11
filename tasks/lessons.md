@@ -49,3 +49,4 @@
 - Với Audio Visualizer spectrum, đừng cap render layout xuống kích thước nội bộ nhỏ nếu preview đang vẽ theo full canvas. Parity giữa preview và file xuất quan trọng hơn tối ưu scale-up.
 - Với desktop app đang giữ sidecar chạy nền, sau khi sửa backend render/audio phải restart sạch port 8765 rồi mới báo user retest, nếu không file export vẫn đi qua code cũ.
 - Trước khi push code lên repo public, phải scan file local/config cho token, cookie, API key thật; nếu có thì ignore + thay bằng file mẫu sạch rồi mới stage.
+- Với thương hiệu ngách như AI33Pro, phải xác nhận đúng domain và mô hình sản phẩm từ user trước khi kết luận; không được suy diễn từ kết quả tìm kiếm có tên gần giống.

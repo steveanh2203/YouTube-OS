@@ -456,3 +456,18 @@
 - [x] Fix same-profile concurrent open flow
 - [x] Verify with tests/checks
 - [x] Update lessons if needed
+
+## Self-hosted Web App — Milestone 1
+- [ ] Serve the production React SPA from FastAPI
+- [ ] Centralize same-origin API/WebSocket URLs and add Vite proxying
+- [ ] Add a safe managed media workspace and media records
+- [ ] Add media upload/library/preview/download/delete APIs
+- [ ] Build the browser Media Picker
+- [ ] Adapt Audio Visualizer backend to media IDs and workspace outputs
+- [ ] Replace Audio Visualizer Tauri dialogs with browser media selection
+- [ ] Add one-command web startup and self-host documentation
+- [ ] Verify upload → FFmpeg render → preview/download end to end
+
+## Self-hosted Web App — Review
+- Implementation pending. Design: `docs/superpowers/specs/2026-08-11-self-hosted-web-app-design.md`.
+- Milestone plan: `docs/superpowers/plans/2026-08-11-web-foundation-audio-visualizer.md`.
