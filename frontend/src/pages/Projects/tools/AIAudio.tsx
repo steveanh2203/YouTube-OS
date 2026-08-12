@@ -250,7 +250,7 @@ function parseDialogueLines(raw: string): { label: string; text: string }[] {
 
 function VoiceAvatar({ name }: { name: string }) {
   return (
-    <div className="flex h-10 w-10 shrink-0 select-none items-center justify-center rounded-2xl border border-violet-100 bg-violet-50 text-sm font-semibold text-violet-700">
+    <div className="flex h-10 w-10 shrink-0 select-none items-center justify-center rounded-2xl border border-violet-500/20 bg-violet-500/10 text-sm font-semibold text-violet-300">
       {name.charAt(0).toUpperCase()}
     </div>
   )
@@ -258,7 +258,7 @@ function VoiceAvatar({ name }: { name: string }) {
 
 function VoiceTag({ label }: { label: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-surface-200 bg-white px-2.5 py-1 text-xs font-medium text-surface-600">
+    <span className="inline-flex items-center rounded-full border border-surface-200 bg-surface-0 px-2.5 py-1 text-xs font-medium text-surface-600">
       {label}
     </span>
   )
@@ -294,7 +294,7 @@ function ElevenVoiceCard({
   return (
     <div
       className={cn(
-        'group flex min-h-[188px] flex-col rounded-xl border bg-white p-3.5 transition-colors',
+        'group flex min-h-[188px] flex-col rounded-xl border bg-surface-0 p-3.5 transition-colors',
         selected
           ? 'border-primary-300 bg-primary-50/30'
           : 'border-surface-200 hover:border-surface-300 hover:bg-surface-50/40',
@@ -323,7 +323,7 @@ function ElevenVoiceCard({
             className={cn(
               'btn-icon h-7 w-7 rounded-lg',
               favorite
-                ? 'bg-rose-50 text-rose-500 hover:bg-rose-100'
+                ? 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/10'
                 : 'text-surface-400 hover:bg-surface-100 hover:text-surface-700',
             )}
             onClick={onToggleFavorite}
@@ -362,7 +362,7 @@ function ElevenVoiceCard({
             'h-9 rounded-lg px-3.5 text-sm font-semibold transition-colors',
             selected
               ? 'bg-primary-600 text-white hover:bg-primary-700'
-              : 'border border-surface-200 bg-white text-surface-700 hover:border-primary-200 hover:text-primary-700',
+              : 'border border-surface-200 bg-surface-0 text-surface-700 hover:border-primary-200 hover:text-primary-700',
           )}
           onClick={onUse}
         >
@@ -396,7 +396,7 @@ function SliderSetting({
       : `calc(${pct}% - 7px)`
 
   return (
-    <div className="rounded-xl border border-surface-200 bg-white px-3 py-2.5">
+    <div className="rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium text-surface-800">{label}</p>
@@ -413,11 +413,11 @@ function SliderSetting({
         <div className="relative h-4">
           <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-surface-100 overflow-hidden" />
           <div
-            className={cn('absolute left-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-gradient-to-r', color)}
+            className={cn('absolute left-0 top-1/2 h-2 -translate-y-1/2 rounded-full', color)}
             style={{ width: `${pct}%` }}
           />
           <div
-            className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border-2 border-white bg-surface-700 shadow-[0_2px_8px_rgba(15,23,42,0.14)] transition-[left] duration-200"
+            className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border-2 border-surface-900 bg-surface-700 shadow-sm"
             style={{ left: knobLeft }}
           />
           <input
@@ -460,7 +460,7 @@ function ElevenToggleRow({
         checked ? 'bg-primary-600' : 'bg-surface-200',
       )}>
         <span className={cn(
-          'absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-all',
+          'absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-surface-0 shadow-sm transition-[background-color,border-color,color,box-shadow,opacity,transform]',
           checked ? 'left-5' : 'left-1',
         )} />
       </span>
@@ -502,7 +502,7 @@ function ElevenSlider({
       : `calc(${pct}% - 10px)`
 
   return (
-    <div className="space-y-2 rounded-xl border border-surface-200 bg-white px-3 py-3">
+    <div className="space-y-2 rounded-xl border border-surface-200 bg-surface-0 px-3 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="inline-flex border-b border-dashed border-surface-300 pb-0.5 text-sm font-medium text-surface-800">
           {label}: {stateLabel}
@@ -524,7 +524,7 @@ function ElevenSlider({
           style={{ width: `${pct}%` }}
         />
         <div
-          className="absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-white bg-primary-600 shadow-[0_2px_8px_rgba(15,23,42,0.14)]"
+          className="absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-surface-900 bg-primary-600 shadow-sm"
           style={{ left: knobLeft }}
         />
         <input
@@ -565,23 +565,23 @@ function SegmentCard({
 
   return (
     <div className={cn(
-      'group rounded-xl border bg-white transition-all',
-      isError      ? 'border-red-200 bg-red-50/30'   :
-      isDone       ? 'border-green-200/60'            :
-      isProcessing ? 'border-blue-200/60 bg-blue-50/20' :
+      'group rounded-xl border bg-surface-0 transition-[background-color,border-color,color,box-shadow,opacity,transform]',
+      isError      ? 'border-red-500/20 bg-red-500/10'   :
+      isDone       ? 'border-green-500/20'            :
+      isProcessing ? 'border-blue-500/20 bg-blue-500/10' :
                      'border-surface-200 hover:border-surface-300',
     )}>
       <div className="flex items-center gap-3 px-4 py-3">
         {/* Number badge */}
         {isGeneratingSeg ? (
           <div className="w-24 shrink-0">
-            <div className="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-600">
+            <div className="mb-1 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-300">
               <span>Gen</span>
               <span>{progressPercent}%</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-blue-100">
+            <div className="h-2 overflow-hidden rounded-full bg-blue-500/10">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-sky-400 transition-[width] duration-300"
+                className="h-full rounded-full bg-blue-500"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
@@ -590,10 +590,10 @@ function SegmentCard({
           <div className={cn(
             'shrink-0 flex items-center justify-center text-xs font-bold',
             isQueued
-              ? 'min-w-[66px] rounded-full px-3 py-1.5 bg-blue-100 text-blue-700'
+              ? 'min-w-[66px] rounded-full px-3 py-1.5 bg-blue-500/10 text-blue-300'
               : 'w-7 h-7 rounded-full',
-            isError      ? 'bg-red-100 text-red-600'     :
-            isDone       ? 'bg-green-100 text-green-700' :
+            isError      ? 'bg-red-500/10 text-red-300'     :
+            isDone       ? 'bg-green-500/10 text-green-300' :
             !isQueued    ? 'bg-surface-100 text-surface-500' : '',
           )}>
             {isQueued ? 'Queued' : index + 1}
@@ -645,7 +645,7 @@ function SegmentCard({
           )}
 
           <button
-            className="btn-icon text-surface-300 hover:text-red-500 hover:bg-red-50"
+            className="btn-icon text-surface-300 hover:text-red-500 hover:bg-red-500/10"
             onClick={onDelete}
             title="Delete"
           >
@@ -664,7 +664,7 @@ function SegmentCard({
 
       {/* Error message */}
       {isError && seg.error && (
-        <div className="flex items-center gap-1.5 px-4 pb-3 text-xs text-red-600">
+        <div className="flex items-center gap-1.5 px-4 pb-3 text-xs text-red-300">
           <AlertTriangle size={11} />
           {seg.error}
         </div>
@@ -683,15 +683,15 @@ function SummaryStat({
   tone?: 'neutral' | 'success' | 'error'
 }) {
   const labelClass = tone === 'success'
-    ? 'text-green-600'
+    ? 'text-green-300'
     : tone === 'error'
       ? 'text-red-500'
       : 'text-surface-400'
 
   const valueClass = tone === 'success'
-    ? 'text-green-700'
+    ? 'text-green-300'
     : tone === 'error'
-      ? 'text-red-600'
+      ? 'text-red-300'
       : 'text-surface-800'
 
   return (
@@ -1367,10 +1367,10 @@ export default function AIAudio() {
       <audio ref={audioRef} className="hidden" />
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-surface-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
-            <Mic size={16} className="text-violet-600" />
+          <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+            <Mic size={16} className="text-violet-300" />
           </div>
           <div>
             <h1 className="page-title">AI Audio</h1>
@@ -1388,9 +1388,9 @@ export default function AIAudio() {
         {health && activeHealth && (
           <span className={cn(
             'px-2.5 py-1 rounded-full text-xs font-medium',
-            activeHealth === 'good'     ? 'bg-green-100 text-green-700' :
-            activeHealth === 'degraded' ? 'bg-amber-100 text-amber-700' :
-                                          'bg-red-100 text-red-700',
+            activeHealth === 'good'     ? 'bg-green-500/10 text-green-300' :
+            activeHealth === 'degraded' ? 'bg-amber-500/10 text-amber-300' :
+                                          'bg-red-500/10 text-red-300',
           )}>
             {tab === 'dialogue' ? 'ElevenLabs' : provider === 'minimax' ? 'MiniMax' : 'ElevenLabs'}: {activeHealth}
           </span>
@@ -1398,7 +1398,7 @@ export default function AIAudio() {
       </div>
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
-      <div className="flex border-b border-surface-200 bg-white px-6">
+      <div className="flex border-b border-surface-200 bg-surface-0 px-6">
         {([
           { key: 'tts',      label: 'TTS Studio',     Icon: Volume2 },
           { key: 'dialogue', label: 'Dialogue Studio', Icon: MessageSquare },
@@ -1425,7 +1425,7 @@ export default function AIAudio() {
         {tab === 'tts' && (
           <>
             {/* ── Left panel: config + script ────────────────────────────── */}
-            <div className="w-80 shrink-0 border-r border-surface-200 flex flex-col overflow-hidden">
+            <div className="ai-audio-settings flex w-80 shrink-0 flex-col overflow-hidden border-r border-surface-200">
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <div className="space-y-2">
                   <label className="label mb-1.5">Provider</label>
@@ -1441,7 +1441,7 @@ export default function AIAudio() {
                           'rounded-xl border px-3 py-2 text-sm font-medium transition-colors',
                           provider === item.key
                             ? 'border-primary-400 bg-primary-50 text-primary-700'
-                            : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50',
+                            : 'border-surface-200 bg-surface-0 text-surface-600 hover:bg-surface-50',
                         )}
                         onClick={() => {
                           setProvider(item.key)
@@ -1458,11 +1458,11 @@ export default function AIAudio() {
                 {provider === 'elevenlabs' ? (
                   <div className="space-y-4">
                     {voicesError && (
-                      <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                        <p className="text-xs text-amber-700">{voicesError}</p>
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                        <p className="text-xs text-amber-300">{voicesError}</p>
                         <button
                           onClick={() => { setVoicesError(null); setVoicesRetryKey(k => k + 1) }}
-                          className="shrink-0 text-xs font-semibold text-amber-700 underline cursor-pointer"
+                          className="shrink-0 text-xs font-semibold text-amber-300 underline cursor-pointer"
                         >Retry</button>
                       </div>
                     )}
@@ -1470,7 +1470,7 @@ export default function AIAudio() {
                       <label className="label !mb-0 text-surface-600">Select a voice</label>
                       <button
                         type="button"
-                        className="flex w-full items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-left transition-colors hover:bg-surface-50"
+                        className="flex w-full items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5 text-left transition-colors hover:bg-surface-50"
                         onClick={() => {
                           setShowElevenVoiceLibrary(true)
                           setVoiceSearch('')
@@ -1508,7 +1508,7 @@ export default function AIAudio() {
                             <option key={m.model_id} value={m.model_id}>{m.name}</option>
                           ))}
                         </select>
-                        <div className="pointer-events-none flex min-h-[46px] items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5">
+                        <div className="pointer-events-none flex min-h-[46px] items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate text-sm font-medium text-surface-900">
                               {selectedModel?.name ?? DEFAULT_ELEVEN_MODEL}
@@ -1537,7 +1537,7 @@ export default function AIAudio() {
                             <option key={item.value} value={item.value}>{item.label}</option>
                           ))}
                         </select>
-                        <div className="pointer-events-none flex min-h-[46px] items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5">
+                        <div className="pointer-events-none flex min-h-[46px] items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5">
                           <div className="flex min-w-0 items-center gap-2">
                             <span className="truncate text-sm font-medium text-surface-900">
                               {selectedLanguage.label}
@@ -1581,7 +1581,7 @@ export default function AIAudio() {
                     </div>
 
                     <div className="space-y-3 pt-1">
-                      <div className="overflow-hidden rounded-xl border border-surface-200 bg-white divide-y divide-surface-100">
+                      <div className="overflow-hidden rounded-xl border border-surface-200 bg-surface-0 divide-y divide-surface-100">
                         <ElevenToggleRow
                           label="Loudness normalization (Beta)"
                           checked={ttsLoudness}
@@ -1609,11 +1609,11 @@ export default function AIAudio() {
                 ) : (
                   <>
                     {voicesError && (
-                      <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                        <p className="text-xs text-amber-700">{voicesError}</p>
+                      <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                        <p className="text-xs text-amber-300">{voicesError}</p>
                         <button
                           onClick={() => { setVoicesError(null); setVoicesRetryKey(k => k + 1) }}
-                          className="shrink-0 text-xs font-semibold text-amber-700 underline cursor-pointer"
+                          className="shrink-0 text-xs font-semibold text-amber-300 underline cursor-pointer"
                         >Retry</button>
                       </div>
                     )}
@@ -1622,7 +1622,7 @@ export default function AIAudio() {
 
                       <button
                         className={cn(
-                          'w-full flex items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-left transition-colors',
+                          'w-full flex items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5 text-left transition-colors',
                           showVoicePicker
                             ? 'border-primary-400 bg-primary-50/30'
                             : 'hover:bg-surface-50',
@@ -1653,7 +1653,7 @@ export default function AIAudio() {
                       </button>
 
                       {showVoicePicker && (
-                        <div className="absolute top-full left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-surface-200 bg-white shadow-xl">
+                        <div className="absolute top-full left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-surface-200 bg-surface-0 shadow-xl">
                           <div className="space-y-3 border-b border-surface-100 p-3">
                             <div className="inline-flex rounded-xl bg-surface-100 p-1">
                               {([
@@ -1666,7 +1666,7 @@ export default function AIAudio() {
                                   className={cn(
                                     'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
                                     minimaxVoiceTab === item.key
-                                      ? 'bg-white text-surface-900 shadow-sm'
+                                      ? 'bg-surface-0 text-surface-900 shadow-sm'
                                       : 'text-surface-500 hover:text-surface-700',
                                   )}
                                   onClick={() => setMinimaxVoiceTab(item.key)}
@@ -1732,7 +1732,7 @@ export default function AIAudio() {
                             <option key={m.model_id} value={m.model_id}>{m.name}</option>
                           ))}
                         </select>
-                        <div className="pointer-events-none flex min-h-[50px] items-center gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5">
+                        <div className="pointer-events-none flex min-h-[50px] items-center gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5">
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-surface-900 truncate">
                               {KNOWN_MINIMAX_MODELS.find(m => m.model_id === modelId)?.name ?? selectedMiniMaxModelLabel}
@@ -1750,7 +1750,7 @@ export default function AIAudio() {
                       <div className="space-y-3">
                           <SliderSetting
                             label="Speed"
-                            color="from-blue-400 to-blue-600"
+                            color="bg-blue-500"
                             value={minimaxSettings.speed}
                             min={0.5}
                             max={2}
@@ -1761,7 +1761,7 @@ export default function AIAudio() {
                           />
                           <SliderSetting
                             label="Volume"
-                            color="from-violet-400 to-violet-600"
+                            color="bg-violet-500"
                             value={minimaxSettings.vol}
                             min={0}
                             max={2}
@@ -1772,7 +1772,7 @@ export default function AIAudio() {
                           />
                           <SliderSetting
                             label="Pitch"
-                            color="from-rose-400 to-rose-600"
+                            color="bg-rose-500"
                             value={minimaxSettings.pitch}
                             min={-12}
                             max={12}
@@ -1781,7 +1781,7 @@ export default function AIAudio() {
                             formatValue={(v) => `${v > 0 ? '+' : ''}${v}`}
                             onChange={v => setMinimaxSettings(prev => ({ ...prev, pitch: v }))}
                           />
-                          <div className="rounded-xl border border-surface-200 bg-white px-3 py-3">
+                          <div className="rounded-xl border border-surface-200 bg-surface-0 px-3 py-3">
                             <div className="flex items-start justify-between gap-3">
                               <div>
                                 <label className="text-sm font-medium text-surface-800">Emotion</label>
@@ -1793,7 +1793,7 @@ export default function AIAudio() {
                             </div>
                             <div className="relative mt-2.5">
                               <select
-                                className="w-full appearance-none rounded-xl border border-surface-200 bg-white px-3 py-2.5 text-sm font-medium text-surface-800 outline-none transition-all hover:bg-surface-50 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 pr-8"
+                                className="w-full appearance-none rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5 text-sm font-medium text-surface-800 outline-none transition-[background-color,border-color,color,box-shadow,opacity,transform] hover:bg-surface-50 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 pr-8"
                                 value={minimaxSettings.emotion}
                                 onChange={e => setMinimaxSettings(prev => ({ ...prev, emotion: e.target.value }))}
                               >
@@ -1842,7 +1842,7 @@ export default function AIAudio() {
                         ))}
                       </div>
                       <textarea
-                        className="flex-1 resize-none text-xs font-mono leading-5 p-2.5 bg-white outline-none text-surface-800 placeholder:text-surface-300"
+                        className="flex-1 resize-none text-xs font-mono leading-5 p-2.5 bg-surface-0 outline-none text-surface-800 placeholder:text-surface-300"
                         rows={12}
                         placeholder={"First line\nSecond line\n..."}
                         value={script}
@@ -1880,9 +1880,9 @@ export default function AIAudio() {
             </div>
 
             {/* ── Right panel: segments preview ──────────────────────────── */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="ai-audio-preview flex min-w-0 flex-1 flex-col overflow-hidden">
               {/* Stats bar */}
-              <div className="space-y-3 border-b border-surface-200 bg-white px-5 py-4">
+              <div className="space-y-3 border-b border-surface-200 bg-surface-0 px-5 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-surface-900">Segments Preview</p>
@@ -1914,14 +1914,14 @@ export default function AIAudio() {
                       onClick={() => setFilter('all')}
                       className={cn(
                         'px-3 py-1 text-xs font-medium rounded-lg transition-colors',
-                        filter === 'all' ? 'bg-surface-900 text-white' : 'text-surface-600 hover:bg-surface-100',
+                        filter === 'all' ? 'bg-primary-500 text-surface-950' : 'text-surface-600 hover:bg-surface-100',
                       )}
                     >All</button>
                     <button
                       onClick={() => setFilter('issues')}
                       className={cn(
                         'px-3 py-1 text-xs font-medium rounded-lg transition-colors',
-                        filter === 'issues' ? 'bg-surface-900 text-white' : 'text-surface-600 hover:bg-surface-100',
+                        filter === 'issues' ? 'bg-primary-500 text-surface-950' : 'text-surface-600 hover:bg-surface-100',
                       )}
                     >Issues</button>
                     <div className="flex items-center gap-1 border border-surface-200 rounded-lg overflow-hidden">
@@ -1943,14 +1943,14 @@ export default function AIAudio() {
                 </div>
 
                 {isGenerating && batchProgress && (
-                  <div className="rounded-2xl border border-blue-100 bg-blue-50/70 px-3.5 py-3">
-                    <div className="flex items-center justify-between gap-3 text-xs font-medium text-blue-700">
+                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 px-3.5 py-3">
+                    <div className="flex items-center justify-between gap-3 text-xs font-medium text-blue-300">
                       <span>Generating audio batch</span>
                       <span>{batchProgress.completed}/{batchProgress.total} • {batchProgressPercent}%</span>
                     </div>
-                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-blue-100">
+                    <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-blue-500/10">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-cyan-400 transition-[width] duration-300"
+                        className="h-full rounded-full bg-blue-500"
                         style={{ width: `${batchProgressPercent}%` }}
                       />
                     </div>
@@ -2002,7 +2002,7 @@ export default function AIAudio() {
         {tab === 'dialogue' && (
           <>
             {/* ── Left panel: script ─────────────────────────────────────── */}
-            <div className="w-80 shrink-0 border-r border-surface-200 flex flex-col overflow-hidden">
+            <div className="ai-audio-settings flex w-80 shrink-0 flex-col overflow-hidden border-r border-surface-200">
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="label">Dialogue Script</label>
@@ -2021,7 +2021,7 @@ export default function AIAudio() {
                       ))}
                     </div>
                     <textarea
-                      className="flex-1 resize-none text-xs font-mono leading-5 p-2.5 bg-white outline-none text-surface-800 placeholder:text-surface-300"
+                      className="flex-1 resize-none text-xs font-mono leading-5 p-2.5 bg-surface-0 outline-none text-surface-800 placeholder:text-surface-300"
                       rows={16}
                       placeholder={"A> Hello!\nB> Hi there.\nA> How are you?"}
                       value={dlgScript}
@@ -2035,7 +2035,7 @@ export default function AIAudio() {
             </div>
 
             {/* ── Right panel: speakers + settings ───────────────────────── */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="ai-audio-preview flex min-w-0 flex-1 flex-col overflow-hidden">
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 <div className="rounded-xl border border-surface-200 bg-surface-50 px-3 py-2 text-xs text-surface-500">
                   Dialogue Studio currently uses ElevenLabs only.
@@ -2049,7 +2049,7 @@ export default function AIAudio() {
                   return (
                     <div
                       key={spk.id}
-                      className="rounded-xl border border-surface-200 bg-white overflow-hidden"
+                      className="rounded-xl border border-surface-200 bg-surface-0 overflow-hidden"
                     >
                       {/* Card header */}
                       <button
@@ -2058,7 +2058,7 @@ export default function AIAudio() {
                           s.id === spk.id ? { ...s, isExpanded: !s.isExpanded } : s
                         ))}
                       >
-                        <span className="w-7 h-7 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-500 text-xs font-bold text-surface-950">
                           {spk.label}
                         </span>
                         <div className="flex-1 min-w-0">
@@ -2073,7 +2073,7 @@ export default function AIAudio() {
                         }
                         {speakers.length > 2 && (
                           <button
-                            className="btn-icon text-surface-300 hover:text-red-500 hover:bg-red-50 ml-1"
+                            className="btn-icon text-surface-300 hover:text-red-500 hover:bg-red-500/10 ml-1"
                             onClick={e => {
                               e.stopPropagation()
                               setSpeakers(prev => prev.filter(s => s.id !== spk.id))
@@ -2102,10 +2102,10 @@ export default function AIAudio() {
                                   <>
                                     <button
                                       className={cn(
-                                        'w-full flex items-center gap-2.5 p-2.5 rounded-xl border-2 transition-all text-left',
+                                        'w-full flex items-center gap-2.5 p-2.5 rounded-xl border-2 transition-[background-color,border-color,color,box-shadow,opacity,transform] text-left',
                                         isOpen
                                           ? 'border-primary-400 bg-primary-50/30'
-                                          : 'border-surface-200 bg-white hover:border-surface-300',
+                                          : 'border-surface-200 bg-surface-0 hover:border-surface-300',
                                       )}
                                       onClick={() => {
                                         setDlgOpenPickerId(isOpen ? null : spk.id)
@@ -2128,7 +2128,7 @@ export default function AIAudio() {
                                     </button>
 
                                     {isOpen && (
-                                      <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-white rounded-xl border border-surface-200 shadow-xl overflow-hidden">
+                                      <div className="absolute top-full left-0 right-0 z-50 mt-1 bg-surface-0 rounded-xl border border-surface-200 shadow-xl overflow-hidden">
                                         <div className="p-2 border-b border-surface-100">
                                           <input
                                             className="input text-sm w-full"
@@ -2182,7 +2182,7 @@ export default function AIAudio() {
                               <label className="label mb-1.5">Model</label>
                               <div className="relative">
                                 <select
-                                  className="w-full appearance-none bg-white border-2 border-surface-200 hover:border-surface-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 rounded-xl px-3 py-2.5 text-sm text-surface-800 font-medium outline-none transition-all cursor-pointer pr-8"
+                                  className="w-full appearance-none bg-surface-0 border-2 border-surface-200 hover:border-surface-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 rounded-xl px-3 py-2.5 text-sm text-surface-800 font-medium outline-none transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer pr-8"
                                   value={spk.modelId}
                                   onChange={e => setSpeakers(prev => prev.map(s =>
                                     s.id === spk.id ? { ...s, modelId: e.target.value } : s
@@ -2202,7 +2202,7 @@ export default function AIAudio() {
                             {/* Stability slider */}
                             <SliderSetting
                               label="Stability"
-                              color="from-blue-400 to-blue-600"
+                              color="bg-blue-500"
                               value={spk.stability}
                               onChange={v => setSpeakers(prev => prev.map(s =>
                                 s.id === spk.id ? { ...s, stability: v } : s
@@ -2247,7 +2247,7 @@ export default function AIAudio() {
                     </div>
                     <div className="relative h-2 bg-surface-100 rounded-full overflow-hidden">
                       <div
-                        className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-indigo-400 to-indigo-600"
+                        className="absolute left-0 top-0 h-full rounded-full bg-indigo-500"
                         style={{ width: `${(dlgDelay / 3) * 100}%` }}
                       />
                       <input
@@ -2261,7 +2261,7 @@ export default function AIAudio() {
 
                   {/* Loudness normalization toggle */}
                   <button
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-surface-200 bg-white hover:bg-surface-50 transition-colors mb-2"
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-surface-200 bg-surface-0 hover:bg-surface-50 transition-colors mb-2"
                     onClick={() => setDlgLoudness(p => !p)}
                   >
                     <div>
@@ -2273,7 +2273,7 @@ export default function AIAudio() {
                       dlgLoudness ? 'bg-primary-500' : 'bg-surface-200',
                     )}>
                       <div className={cn(
-                        'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform',
+                        'absolute top-0.5 w-4 h-4 bg-surface-0 rounded-full shadow transition-transform',
                         dlgLoudness ? 'translate-x-4' : 'translate-x-0.5',
                       )} />
                     </div>
@@ -2281,7 +2281,7 @@ export default function AIAudio() {
 
                   {/* Export transcript toggle */}
                   <button
-                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-surface-200 bg-white hover:bg-surface-50 transition-colors"
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-surface-200 bg-surface-0 hover:bg-surface-50 transition-colors"
                     onClick={() => setDlgTranscript(p => !p)}
                   >
                     <p className="text-sm font-medium text-surface-800">Export transcript</p>
@@ -2290,7 +2290,7 @@ export default function AIAudio() {
                       dlgTranscript ? 'bg-primary-500' : 'bg-surface-200',
                     )}>
                       <div className={cn(
-                        'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform',
+                        'absolute top-0.5 w-4 h-4 bg-surface-0 rounded-full shadow transition-transform',
                         dlgTranscript ? 'translate-x-4' : 'translate-x-0.5',
                       )} />
                     </div>
@@ -2299,7 +2299,7 @@ export default function AIAudio() {
 
                 {/* Error */}
                 {dlgError && (
-                  <div className="flex items-center gap-2 rounded-xl px-4 py-3 bg-red-50 border border-red-200 text-sm text-red-700">
+                  <div className="flex items-center gap-2 rounded-xl px-4 py-3 bg-red-500/10 border border-red-500/20 text-sm text-red-300">
                     <AlertTriangle size={14} className="shrink-0" />
                     {dlgError}
                   </div>
@@ -2307,7 +2307,7 @@ export default function AIAudio() {
 
                 {/* Result audio */}
                 {dlgAudioUrl && (
-                  <div className="rounded-xl border border-green-200 bg-green-50/30 p-4 space-y-2">
+                  <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4 space-y-2">
                     <p className="text-sm font-semibold text-surface-700">Results</p>
                     <audio controls src={dlgAudioUrl} className="w-full" />
                     <div className="flex justify-end">
@@ -2338,7 +2338,7 @@ export default function AIAudio() {
 
       {provider === 'elevenlabs' && showElevenVoiceLibrary && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-surface-950/45 p-6 backdrop-blur-sm">
-          <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.12)]">
+          <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-surface-200 bg-surface-0 shadow-popover">
             <div className="flex items-start justify-between gap-4 border-b border-surface-200 px-5 py-4">
               <div>
                 <h2 className="text-2xl font-semibold leading-tight text-surface-900">Voice Library</h2>
@@ -2374,7 +2374,7 @@ export default function AIAudio() {
                       className={cn(
                         'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
                         elevenVoiceTab === item.key
-                          ? 'bg-white text-surface-900 shadow-sm'
+                          ? 'bg-surface-0 text-surface-900 shadow-sm'
                           : 'text-surface-500 hover:text-surface-700',
                       )}
                       onClick={() => {
@@ -2414,14 +2414,14 @@ export default function AIAudio() {
                           Add an ElevenLabs Voice ID once, then reuse it anytime.
                         </p>
                       </div>
-                      <span className="rounded-full border border-surface-200 bg-white px-2 py-0.5 text-[11px] font-medium text-surface-500">
+                      <span className="rounded-full border border-surface-200 bg-surface-0 px-2 py-0.5 text-[11px] font-medium text-surface-500">
                         {customVoices.length} saved
                       </span>
                     </div>
 
                     <div className="mt-4 space-y-3">
                       {customVoices.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-surface-200 bg-white px-5 py-8 text-center text-sm text-surface-400">
+                        <div className="rounded-xl border border-dashed border-surface-200 bg-surface-0 px-5 py-8 text-center text-sm text-surface-400">
                           No custom voices yet.
                         </div>
                       ) : (
@@ -2435,7 +2435,7 @@ export default function AIAudio() {
                           .map((voice) => (
                             <div
                               key={voice.voice_id}
-                              className="flex items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-3 py-2.5"
+                              className="flex items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-3 py-2.5"
                             >
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-semibold text-surface-900">{voice.name}</p>
@@ -2444,7 +2444,7 @@ export default function AIAudio() {
                               <div className="flex items-center gap-2">
                                 <button
                                   type="button"
-                                  className="rounded-lg bg-surface-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-surface-800"
+                                  className="rounded-lg bg-primary-500 px-3 py-2 text-xs font-semibold text-surface-950 transition-colors hover:bg-primary-400"
                                   onClick={() => handleUseElevenVoice({
                                     voice_id: voice.voice_id,
                                     name: voice.name,
@@ -2458,7 +2458,7 @@ export default function AIAudio() {
                                 </button>
                                 <button
                                   type="button"
-                                  className="btn-icon text-surface-400 hover:bg-red-50 hover:text-red-600"
+                                  className="btn-icon text-surface-400 hover:bg-red-500/10 hover:text-red-300"
                                   onClick={() => handleDeleteCustomVoice(voice.voice_id)}
                                 >
                                   <Trash2 size={14} />
@@ -2470,7 +2470,7 @@ export default function AIAudio() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-surface-200 bg-white p-4">
+                  <div className="rounded-xl border border-surface-200 bg-surface-0 p-4">
                     <h3 className="text-base font-semibold text-surface-900">Add custom voice</h3>
                     <p className="mt-1 text-sm text-surface-500">
                       Save any ElevenLabs Voice ID with a short label.
@@ -2502,7 +2502,7 @@ export default function AIAudio() {
                         />
                       </div>
                       {customVoiceError && (
-                        <p className="text-xs font-medium text-red-600">{customVoiceError}</p>
+                        <p className="text-xs font-medium text-red-300">{customVoiceError}</p>
                       )}
                       <button
                         type="button"
@@ -2517,7 +2517,7 @@ export default function AIAudio() {
               ) : isElevenVoiceLibraryLoading ? (
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {Array.from({ length: 6 }).map((_, index) => (
-                    <div key={index} className="animate-pulse rounded-xl border border-surface-200 bg-white p-4">
+                    <div key={index} className="animate-pulse rounded-xl border border-surface-200 bg-surface-0 p-4">
                       <div className="flex items-start gap-3">
                         <div className="h-10 w-10 rounded-2xl bg-surface-100" />
                         <div className="min-w-0 flex-1 space-y-2">

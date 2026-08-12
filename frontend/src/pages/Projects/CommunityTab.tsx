@@ -71,10 +71,10 @@ function fromPost(post: CommunityPostItem | null): CommunityFormState {
 
 
 function statusTone(status: string) {
-  if (status === 'published') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
-  if (status === 'queued') return 'bg-blue-50 text-blue-700 border-blue-200'
-  if (status === 'posting') return 'bg-amber-50 text-amber-700 border-amber-200'
-  if (status === 'failed') return 'bg-rose-50 text-rose-700 border-rose-200'
+  if (status === 'published') return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+  if (status === 'queued') return 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+  if (status === 'posting') return 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+  if (status === 'failed') return 'bg-rose-500/10 text-rose-300 border-rose-500/20'
   return 'bg-surface-50 text-surface-600 border-surface-200'
 }
 
@@ -302,7 +302,7 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="w-[360px] shrink-0 border-r border-surface-200 bg-white">
+      <div className="w-[360px] shrink-0 border-r border-surface-200 bg-surface-0">
         <div className="border-b border-surface-200 px-5 py-4">
           <div className="flex items-center justify-between">
             <div>
@@ -359,7 +359,7 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
                     'w-full rounded-2xl border px-4 py-3 text-left transition-colors',
                     selectedId === post.id
                       ? 'border-primary-300 bg-primary-50/70'
-                      : 'border-surface-200 bg-white hover:border-surface-300 hover:bg-surface-50',
+                      : 'border-surface-200 bg-surface-0 hover:border-surface-300 hover:bg-surface-50',
                   )}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -385,7 +385,7 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col bg-surface-50">
-        <div className="border-b border-surface-200 bg-white px-6 py-4">
+        <div className="border-b border-surface-200 bg-surface-0 px-6 py-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-surface-900">
@@ -502,7 +502,7 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
               </div>
 
               {error && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
                   <div className="flex items-start gap-2">
                     <AlertCircle size={16} className="mt-0.5 shrink-0" />
                     <span>{error}</span>
@@ -512,7 +512,7 @@ export default function CommunityTab({ parentId, children }: { parentId: string;
             </div>
           </div>
 
-          <aside className="min-h-0 overflow-y-auto border-l border-surface-200 bg-white p-5">
+          <aside className="min-h-0 overflow-y-auto border-l border-surface-200 bg-surface-0 p-5">
             <div className="space-y-5">
               <section>
                 <h3 className="text-sm font-semibold text-surface-900">Run summary</h3>

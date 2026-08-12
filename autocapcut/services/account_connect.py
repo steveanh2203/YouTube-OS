@@ -55,6 +55,8 @@ def _empty_state() -> dict[str, Any]:
     return {
         "bridge_key": "",
         "oauth_settings": {},
+        "youtube_data_settings": {},
+        "ai33_settings": {},
         "ai_reply_settings": {},
         "youtube_configs": {},
         "youtube_inbox_cache": {},
@@ -80,6 +82,12 @@ def _load_state() -> dict[str, Any]:
     raw_oauth_settings = payload.get("oauth_settings") or {}
     if isinstance(raw_oauth_settings, dict):
         state["oauth_settings"] = raw_oauth_settings
+    raw_youtube_data_settings = payload.get("youtube_data_settings") or {}
+    if isinstance(raw_youtube_data_settings, dict):
+        state["youtube_data_settings"] = raw_youtube_data_settings
+    raw_ai33_settings = payload.get("ai33_settings") or {}
+    if isinstance(raw_ai33_settings, dict):
+        state["ai33_settings"] = raw_ai33_settings
     raw_ai_reply_settings = payload.get("ai_reply_settings") or {}
     if isinstance(raw_ai_reply_settings, dict):
         state["ai_reply_settings"] = raw_ai_reply_settings
@@ -101,6 +109,7 @@ def _save_state(state: dict[str, Any]) -> None:
         json.dumps(state, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    path.chmod(0o600)
 
 
 def sanitize_youtube_config(value: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -133,6 +142,22 @@ def sanitize_oauth_settings(value: dict[str, Any] | None = None) -> dict[str, An
     return {
         "client_id": str(raw.get("client_id") or "").strip(),
         "client_secret": str(raw.get("client_secret") or "").strip(),
+        "verified_at": str(raw.get("verified_at") or "").strip(),
+    }
+
+
+def sanitize_ai33_settings(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = value or {}
+    return {
+        "api_key": str(raw.get("api_key") or "").strip(),
+        "verified_at": str(raw.get("verified_at") or "").strip(),
+    }
+
+
+def sanitize_youtube_data_settings(value: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = value or {}
+    return {
+        "api_key": str(raw.get("api_key") or "").strip(),
         "verified_at": str(raw.get("verified_at") or "").strip(),
     }
 
@@ -224,6 +249,18 @@ def get_oauth_settings() -> dict[str, Any]:
     return sanitize_oauth_settings(raw)
 
 
+def get_ai33_settings() -> dict[str, Any]:
+    state = _load_state()
+    raw = state.get("ai33_settings") if isinstance(state.get("ai33_settings"), dict) else {}
+    return sanitize_ai33_settings(raw)
+
+
+def get_youtube_data_settings() -> dict[str, Any]:
+    state = _load_state()
+    raw = state.get("youtube_data_settings") if isinstance(state.get("youtube_data_settings"), dict) else {}
+    return sanitize_youtube_data_settings(raw)
+
+
 def get_ai_reply_settings() -> dict[str, Any]:
     state = _load_state()
     raw = state.get("ai_reply_settings") if isinstance(state.get("ai_reply_settings"), dict) else {}
@@ -236,6 +273,28 @@ def save_oauth_settings(value: dict[str, Any]) -> dict[str, Any]:
     merged = {**current, **(value or {})}
     sanitized = sanitize_oauth_settings(merged)
     state["oauth_settings"] = sanitized
+    _save_state(state)
+    return sanitized
+
+
+def save_ai33_settings(value: dict[str, Any]) -> dict[str, Any]:
+    state = _load_state()
+    current = sanitize_ai33_settings(state.get("ai33_settings") if isinstance(state.get("ai33_settings"), dict) else None)
+    merged = {**current, **(value or {})}
+    sanitized = sanitize_ai33_settings(merged)
+    state["ai33_settings"] = sanitized
+    _save_state(state)
+    return sanitized
+
+
+def save_youtube_data_settings(value: dict[str, Any]) -> dict[str, Any]:
+    state = _load_state()
+    current = sanitize_youtube_data_settings(
+        state.get("youtube_data_settings") if isinstance(state.get("youtube_data_settings"), dict) else None
+    )
+    merged = {**current, **(value or {})}
+    sanitized = sanitize_youtube_data_settings(merged)
+    state["youtube_data_settings"] = sanitized
     _save_state(state)
     return sanitized
 

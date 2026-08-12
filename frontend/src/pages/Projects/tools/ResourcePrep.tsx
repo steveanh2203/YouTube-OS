@@ -126,7 +126,7 @@ function StepItem({
   return (
     <button
       className={cn(
-        'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all duration-150 cursor-pointer',
+        'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 cursor-pointer',
         active
           ? 'bg-primary-50 text-primary-700'
           : 'text-surface-600 hover:bg-surface-50 hover:text-surface-800',
@@ -135,7 +135,7 @@ function StepItem({
     >
       {/* Circle indicator */}
       <div className={cn(
-        'w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-all duration-200 text-xs font-bold',
+        'w-6 h-6 rounded-full flex items-center justify-center shrink-0 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200 text-xs font-bold',
         done
           ? 'bg-green-500 text-white'
           : active
@@ -151,7 +151,7 @@ function StepItem({
           <span className="text-xs font-medium truncate">{label}</span>
         </div>
         {done && (
-          <p className="text-[10px] text-green-600 mt-0.5">Completed</p>
+          <p className="text-[10px] text-green-300 mt-0.5">Completed</p>
         )}
       </div>
 
@@ -717,11 +717,11 @@ export default function ResourcePrep() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="bg-white rounded-xl shadow-popover p-6 w-[400px] mx-4"
+              className="bg-surface-0 rounded-xl shadow-popover p-6 w-[400px] mx-4"
             >
               <div className="flex items-start gap-3 mb-4">
-                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                  <AlertTriangle size={15} className="text-amber-600" />
+                <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle size={15} className="text-amber-300" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-surface-900 mb-1">Subfolder Setup</h3>
@@ -738,7 +738,7 @@ export default function ResourcePrep() {
       </AnimatePresence>
 
       {/* ── Top header bar ────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-surface-200 bg-white shrink-0">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-surface-200 bg-surface-0 shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-7 h-7 rounded-md bg-primary-100 flex items-center justify-center shrink-0">
             <ClipboardList size={14} className="text-primary-600" />
@@ -760,9 +760,9 @@ export default function ResourcePrep() {
           )}
           {/* Progress pill */}
           <div className={cn(
-            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all duration-300',
+            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-300',
             allDone
-              ? 'bg-green-100 text-green-700'
+              ? 'bg-green-500/10 text-green-300'
               : 'bg-surface-100 text-surface-600',
           )}>
             {allDone && <Check size={11} strokeWidth={3} />}
@@ -785,7 +785,7 @@ export default function ResourcePrep() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* Sidebar */}
-        <div className="w-52 shrink-0 border-r border-surface-200 bg-white flex flex-col overflow-y-auto">
+        <div className="w-52 shrink-0 border-r border-surface-200 bg-surface-0 flex flex-col overflow-y-auto">
           <div className="p-3">
             <p className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider px-1 mb-2">
               Steps
@@ -812,13 +812,13 @@ export default function ResourcePrep() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="mx-3 mb-3 mt-auto p-3 rounded-lg bg-green-50 border border-green-200"
+                className="mx-3 mb-3 mt-auto p-3 rounded-lg bg-green-500/10 border border-green-500/20"
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <CheckCircle2 size={14} className="text-green-600 shrink-0" />
-                  <span className="text-xs font-semibold text-green-700">Ready to edit!</span>
+                  <CheckCircle2 size={14} className="text-green-300 shrink-0" />
+                  <span className="text-xs font-semibold text-green-300">Ready to edit!</span>
                 </div>
-                <p className="text-[11px] text-green-600 leading-relaxed">
+                <p className="text-[11px] text-green-300 leading-relaxed">
                   All resources prepared. Status will auto-advance to Resource Prep.
                 </p>
               </motion.div>
@@ -858,13 +858,13 @@ export default function ResourcePrep() {
                       onBlur={() => saveField({ title })}
                     />
 
-                    <div className="rounded-xl border border-surface-200 bg-white overflow-hidden shadow-sm">
+                    <div className="rounded-xl border border-surface-200 bg-surface-0 overflow-hidden shadow-sm">
                       <div className="flex items-center justify-between gap-3 border-b border-surface-200 bg-surface-50/80 px-4 py-3">
                         <div>
                           <p className="text-sm font-semibold text-surface-900">Reference Video</p>
                           <p className="text-[11px] text-surface-500">Keep multiple competitors for this child project. Reopen later to review or edit them.</p>
                         </div>
-                        <div className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-surface-500 shrink-0">
+                        <div className="rounded-full bg-surface-0 px-2.5 py-1 text-[11px] font-medium text-surface-500 shrink-0">
                           {competitorLoading ? 'Loading...' : `${competitors.length} saved`}
                         </div>
                       </div>
@@ -905,7 +905,7 @@ export default function ResourcePrep() {
                           </div>
 
                           {competitors.length > 0 ? (
-                            <div className="overflow-hidden rounded-xl border border-surface-200 bg-white">
+                            <div className="overflow-hidden rounded-xl border border-surface-200 bg-surface-0">
                               <div className="grid grid-cols-[64px_minmax(0,1.6fr)_minmax(0,1fr)_110px] gap-3 border-b border-surface-200 bg-surface-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-surface-500">
                                 <span>#</span>
                                 <span>Title</span>
@@ -925,7 +925,7 @@ export default function ResourcePrep() {
                                         'grid w-full grid-cols-[64px_minmax(0,1.6fr)_minmax(0,1fr)_110px] gap-3 border-b border-surface-100 px-3 py-3 text-left transition-colors last:border-b-0',
                                         isSelected
                                           ? 'bg-primary-50 text-primary-700'
-                                          : 'bg-white text-surface-700 hover:bg-surface-50',
+                                          : 'bg-surface-0 text-surface-700 hover:bg-surface-50',
                                       )}
                                       onClick={() => {
                                         setSelectedCompetitorId(item.id)
@@ -1036,7 +1036,7 @@ export default function ResourcePrep() {
                               </span>
                             </div>
 
-                            <div className="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <div className="rounded-lg border border-surface-200 bg-surface-0 overflow-hidden">
                               {competitorThumbnail ? (
                                 <div className="p-2">
                                   <img
@@ -1086,7 +1086,7 @@ export default function ResourcePrep() {
                         <p
                           className={cn(
                             'text-[11px] leading-relaxed',
-                            blockingDuplicate ? 'text-amber-700' : competitorSaved ? 'text-green-700' : 'text-surface-400',
+                            blockingDuplicate ? 'text-amber-300' : competitorSaved ? 'text-green-300' : 'text-surface-400',
                           )}
                         >
                           {competitorChecking
@@ -1245,7 +1245,7 @@ export default function ResourcePrep() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="border border-surface-200 rounded-lg p-4 bg-white">
+                        <div className="border border-surface-200 rounded-lg p-4 bg-surface-0">
                           <div className="flex items-center justify-between mb-3">
                             <p className="text-xs font-semibold text-surface-700 flex items-center gap-1.5">
                               <FolderPlus size={13} />
@@ -1307,7 +1307,7 @@ export default function ResourcePrep() {
                             type="button"
                             className={cn(
                               'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold',
-                              'transition-all duration-200 cursor-pointer',
+                              'transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200 cursor-pointer',
                               'disabled:cursor-not-allowed disabled:opacity-60',
                               createFolderResult === 'success'
                                 ? 'bg-green-500 text-white shadow-sm'
@@ -1362,10 +1362,10 @@ function StepPane({ label, icon: Icon, done, onToggle, hint, children }: StepPan
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-2.5">
           <div className={cn(
-            'w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all duration-200',
-            done ? 'bg-green-100' : 'bg-primary-50',
+            'w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200',
+            done ? 'bg-green-500/10' : 'bg-primary-50',
           )}>
-            <Icon size={15} className={done ? 'text-green-600' : 'text-primary-500'} />
+            <Icon size={15} className={done ? 'text-green-300' : 'text-primary-500'} />
           </div>
           <div>
             <h2 className="text-sm font-semibold text-surface-900">{label}</h2>
@@ -1376,10 +1376,10 @@ function StepPane({ label, icon: Icon, done, onToggle, hint, children }: StepPan
         {/* Mark done toggle */}
         <button
           className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer border shrink-0',
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 cursor-pointer border shrink-0',
             done
-              ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-              : 'bg-white text-surface-600 border-surface-200 hover:bg-surface-50 hover:text-surface-800',
+              ? 'bg-green-500/10 text-green-300 border-green-500/20 hover:bg-green-500/10'
+              : 'bg-surface-0 text-surface-600 border-surface-200 hover:bg-surface-50 hover:text-surface-800',
           )}
           onClick={onToggle}
           title={done ? 'Mark as incomplete' : 'Mark as complete'}
@@ -1392,8 +1392,8 @@ function StepPane({ label, icon: Icon, done, onToggle, hint, children }: StepPan
 
       {/* Input area */}
       <div className={cn(
-        'rounded-lg border p-4 transition-all duration-200',
-        done ? 'border-green-200 bg-green-50/30' : 'border-surface-200 bg-white',
+        'rounded-lg border p-4 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200',
+        done ? 'border-green-500/20 bg-green-500/10' : 'border-surface-200 bg-surface-0',
       )}>
         {children}
       </div>

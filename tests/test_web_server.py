@@ -38,11 +38,14 @@ class WebSpaServingTests(unittest.TestCase):
             "/{project_id}/docs/{doc_id}/open",
             methods_by_path,
         )
-        self.assertTrue(
-            any(
-                getattr(route, "original_router", None) is parent_projects.router
-                for route in app.routes
-            )
+        app_methods_by_path = {
+            route.path: route.methods
+            for route in app.routes
+            if hasattr(route, "path") and hasattr(route, "methods")
+        }
+        self.assertIn(
+            "GET",
+            app_methods_by_path["/api/parent-projects/{project_id}/docs/{doc_id}/download"],
         )
 
     def test_self_host_script_builds_frontend_and_binds_locally(self) -> None:

@@ -12,25 +12,25 @@ const CONFIG: Record<ToastType, {
   success: {
     icon: <CheckCircle2 size={18} />,
     bar: 'bg-emerald-500',
-    iconBg: 'bg-emerald-50',
+    iconBg: 'bg-emerald-500/10',
     iconColor: 'text-emerald-500',
   },
   error: {
     icon: <XCircle size={18} />,
     bar: 'bg-rose-500',
-    iconBg: 'bg-rose-50',
+    iconBg: 'bg-rose-500/10',
     iconColor: 'text-rose-500',
   },
   info: {
     icon: <Info size={18} />,
     bar: 'bg-blue-500',
-    iconBg: 'bg-blue-50',
+    iconBg: 'bg-blue-500/10',
     iconColor: 'text-blue-500',
   },
   warning: {
     icon: <AlertTriangle size={18} />,
     bar: 'bg-amber-400',
-    iconBg: 'bg-amber-50',
+    iconBg: 'bg-amber-500/10',
     iconColor: 'text-amber-500',
   },
 }
@@ -51,7 +51,7 @@ export default function ToastContainer() {
               animate={{ opacity: 1, y: 0,  scale: 1    }}
               exit={{    opacity: 0, y: 8,  scale: 0.95, transition: { duration: 0.15 } }}
               transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-              className="pointer-events-auto w-[320px] bg-white rounded-xl shadow-lg border border-surface-100 overflow-hidden"
+              className="pointer-events-auto w-[320px] bg-surface-0 rounded-xl shadow-lg border border-surface-100 overflow-hidden"
             >
               {/* Colour bar on top */}
               <div className={cn('h-[3px] w-full', cfg.bar)} />

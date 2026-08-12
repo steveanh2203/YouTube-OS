@@ -41,7 +41,7 @@ function AddVideoDialog({
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl w-[440px] p-6 space-y-4">
+      <div className="bg-surface-0 rounded-2xl shadow-2xl w-[440px] p-6 space-y-4">
         <h2 className="text-sm font-semibold text-surface-900">Map video to project</h2>
 
         <div className="flex items-center gap-2 bg-surface-50 rounded-lg px-3 py-2">
@@ -100,22 +100,22 @@ function JobBadge({ status, errorMsg }: { status: JobStatus; errorMsg?: string }
     <span className={cn(base, 'bg-surface-100 text-surface-500')}>Queued</span>
   )
   if (status === 'seo') return (
-    <span className={cn(base, 'bg-blue-100 text-blue-700')}>
+    <span className={cn(base, 'bg-blue-500/10 text-blue-300')}>
       <Loader size={10} className="animate-spin" /> SEO...
     </span>
   )
   if (status === 'upload') return (
-    <span className={cn(base, 'bg-purple-100 text-purple-700')}>
+    <span className={cn(base, 'bg-purple-500/10 text-purple-300')}>
       <Loader size={10} className="animate-spin" /> Upload...
     </span>
   )
   if (status === 'done') return (
-    <span className={cn(base, 'bg-green-100 text-green-700')}>
+    <span className={cn(base, 'bg-green-500/10 text-green-300')}>
       <CheckCircle size={10} /> Done
     </span>
   )
   if (status === 'error') return (
-    <span className={cn(base, 'bg-red-100 text-red-600 cursor-help')} title={errorMsg}>
+    <span className={cn(base, 'bg-red-500/10 text-red-300 cursor-help')} title={errorMsg}>
       <XCircle size={10} /> Error
     </span>
   )
@@ -236,7 +236,7 @@ export default function AutomateV2() {
             <Settings size={11} />
             Roxy Config
             {roxyReady
-              ? <span className="text-green-600 font-medium ml-1">· ready</span>
+              ? <span className="text-green-300 font-medium ml-1">· ready</span>
               : <span className="text-amber-500 font-medium ml-1">· not configured</span>
             }
           </span>
@@ -274,10 +274,10 @@ export default function AutomateV2() {
       </div>
 
       {/* ── Toolbar ──────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-surface-100 bg-white">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-surface-100 bg-surface-0">
         <div className="flex items-center gap-3 text-xs text-surface-400">
           <span>{jobs.length} video{jobs.length !== 1 ? 's' : ''}</span>
-          {doneCount > 0 && <span className="text-green-600 font-medium">{doneCount} done</span>}
+          {doneCount > 0 && <span className="text-green-300 font-medium">{doneCount} done</span>}
           {errorCount > 0 && <span className="text-red-500 font-medium">{errorCount} errors</span>}
         </div>
         <div className="flex items-center gap-2">
@@ -354,7 +354,7 @@ export default function AutomateV2() {
                         )}
                         {!active && (
                           <button
-                            className="p-1.5 rounded text-surface-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="p-1.5 rounded text-surface-300 hover:text-red-500 hover:bg-red-500/10 transition-colors"
                             title="Delete"
                             onClick={() => setJobs(p => p.filter(j => j.id !== job.id))}
                           >

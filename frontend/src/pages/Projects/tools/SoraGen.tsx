@@ -115,12 +115,12 @@ function StatusBadge({ status }: { status: SoraStatus }) {
     </span>
   )
   if (status === 'done') return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-300 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
       <CheckCircle2 size={10} /> Done
     </span>
   )
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-300 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full">
       <XCircle size={10} /> Failed
     </span>
   )
@@ -136,7 +136,7 @@ function StatHelp({
   tone?: 'default' | 'success' | 'error'
 }) {
   const toneClass = tone === 'success'
-    ? 'text-green-500 hover:text-green-600'
+    ? 'text-green-500 hover:text-green-300'
     : tone === 'error'
       ? 'text-red-400 hover:text-red-500'
       : 'text-surface-400 hover:text-surface-500'
@@ -159,7 +159,7 @@ function StatHelp({
         <Tooltip.Content
           side="top"
           sideOffset={8}
-          className="z-[70] max-w-[220px] rounded-lg border border-surface-200 bg-white px-2.5 py-2 text-[11px] leading-relaxed text-surface-600 shadow-xl"
+          className="z-[70] max-w-[220px] rounded-lg border border-surface-200 bg-surface-0 px-2.5 py-2 text-[11px] leading-relaxed text-surface-600 shadow-xl"
         >
           {help}
           <Tooltip.Arrow className="fill-white" />
@@ -222,7 +222,7 @@ function PipelineDots({ status, progress }: { status: SoraStatus; progress: numb
             : isActive
               ? s.active
               : isFailedStage
-                ? 'bg-red-200'
+                ? 'bg-red-500/10'
                 : 'bg-surface-200'
         return (
           <Tooltip.Root key={s.label} delayDuration={100}>
@@ -680,7 +680,7 @@ export default function SoraGen() {
         </div>
         <div className="flex items-center gap-2">
           {extensionOnline && (
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-50 border border-green-200 text-[11px] font-medium text-green-700">
+            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-[11px] font-medium text-green-300">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               {workerCount > 1 ? `${workerCount} profiles online` : '1 profile online'}
             </span>
@@ -705,7 +705,7 @@ export default function SoraGen() {
               animate={{ width: 256, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="shrink-0 border-r border-surface-200 bg-white overflow-y-auto overflow-x-hidden"
+              className="shrink-0 border-r border-surface-200 bg-surface-0 overflow-y-auto overflow-x-hidden"
             >
               <div className="p-4 space-y-5 w-[256px]">
 
@@ -715,8 +715,8 @@ export default function SoraGen() {
                   <div className={cn(
                     'flex items-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-medium',
                     extensionOnline
-                      ? 'border-green-200 bg-green-50 text-green-700'
-                      : 'border-orange-200 bg-orange-50 text-orange-700'
+                      ? 'border-green-500/20 bg-green-500/10 text-green-300'
+                      : 'border-orange-500/20 bg-orange-500/10 text-orange-300'
                   )}>
                     {extensionOnline
                       ? <><Wifi size={12} className="shrink-0" /> {workerCount} profile{workerCount !== 1 ? 's' : ''} connected</>
@@ -737,7 +737,7 @@ export default function SoraGen() {
                       />
                       <button
                         onClick={copyKey}
-                        className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-white text-surface-500 hover:border-teal-400 hover:text-teal-700 hover:bg-teal-50 transition-all cursor-pointer"
+                        className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-surface-0 text-surface-500 hover:border-teal-400 hover:text-teal-700 hover:bg-teal-50 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                         title="Copy bridge key"
                       >
                         {keyCopied ? <Check size={14} /> : <Copy size={14} />}
@@ -761,14 +761,14 @@ export default function SoraGen() {
                     />
                       <button
                       onClick={handlePickFolder}
-                      className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-white text-surface-500 hover:border-teal-400 hover:text-teal-700 hover:bg-teal-50 transition-all cursor-pointer"
+                      className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-surface-0 text-surface-500 hover:border-teal-400 hover:text-teal-700 hover:bg-teal-50 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                       title="Browse folder"
                     >
                       <FolderSearch size={14} />
                     </button>
                   </div>
                   {folderPath ? (
-                    <p className="text-[10px] text-green-600 mt-1.5 flex items-center gap-1">
+                    <p className="text-[10px] text-green-300 mt-1.5 flex items-center gap-1">
                       <CheckCircle2 size={9} /> Videos will be saved here
                     </p>
                   ) : (
@@ -829,7 +829,7 @@ export default function SoraGen() {
                 {anyActive && (
                   <button
                     onClick={handleStop}
-                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-600 text-[11px] font-semibold hover:bg-red-100 hover:border-red-300 transition-all cursor-pointer"
+                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 text-[11px] font-semibold hover:bg-red-500/10 hover:border-red-300 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                   >
                     <Square size={10} className="fill-red-500 text-red-500" /> Stop
                   </button>
@@ -843,7 +843,7 @@ export default function SoraGen() {
           <div className="border-t border-surface-200 flex flex-col overflow-hidden flex-1 min-h-0">
 
             {/* Toolbar */}
-            <div className="bg-white border-b border-surface-200 px-4 py-2.5 flex items-center justify-between shrink-0">
+            <div className="bg-surface-0 border-b border-surface-200 px-4 py-2.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-surface-700">Generation Jobs</span>
                 {jobs.length > 0 && (
@@ -862,7 +862,7 @@ export default function SoraGen() {
                   onClick={handleRequeueSelected}
                   disabled={selected.size === 0 || anyActive}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all',
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                     selected.size > 0 && !anyActive
                       ? 'border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100 cursor-pointer'
                       : 'border-surface-200 text-surface-400 cursor-not-allowed opacity-50',
@@ -874,9 +874,9 @@ export default function SoraGen() {
                   onClick={handleRequeueFailed}
                   disabled={failedCount === 0 || anyActive}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all',
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                     failedCount > 0 && !anyActive
-                      ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer'
+                      ? 'border-red-300 bg-red-500/10 text-red-300 hover:bg-red-500/10 cursor-pointer'
                       : 'border-surface-200 text-surface-400 cursor-not-allowed opacity-50',
                   )}
                 >
@@ -885,7 +885,7 @@ export default function SoraGen() {
                 <button
                   onClick={handleClear}
                   disabled={jobs.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 text-[11px] font-medium text-surface-500 hover:border-surface-300 hover:bg-surface-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 text-[11px] font-medium text-surface-500 hover:border-surface-300 hover:bg-surface-50 transition-[background-color,border-color,color,box-shadow,opacity,transform] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Trash2 size={11} /> Clear
                 </button>
@@ -916,9 +916,9 @@ export default function SoraGen() {
                         className={cn(
                           'border-b border-surface-100 text-sm transition-colors',
                           selected.has(job.id)        ? 'bg-teal-50' :
-                          job.status === 'done'       ? 'bg-green-50/40' :
-                          job.status === 'failed'     ? 'bg-red-50/40' :
-                          job.status === 'generating' ? 'bg-teal-50/40' : 'bg-white hover:bg-surface-50',
+                          job.status === 'done'       ? 'bg-green-500/10' :
+                          job.status === 'failed'     ? 'bg-red-500/10' :
+                          job.status === 'generating' ? 'bg-teal-50/40' : 'bg-surface-0 hover:bg-surface-50',
                         )}
                       >
                         {/* Checkbox */}
@@ -932,8 +932,8 @@ export default function SoraGen() {
                         <td className="px-2 py-2.5">
                           <span className={cn(
                             'inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold',
-                            job.status === 'done'       ? 'bg-green-100 text-green-700' :
-                            job.status === 'failed'     ? 'bg-red-100 text-red-600' :
+                            job.status === 'done'       ? 'bg-green-500/10 text-green-300' :
+                            job.status === 'failed'     ? 'bg-red-500/10 text-red-300' :
                             job.status === 'generating' ? 'bg-teal-100 text-teal-700' :
                             'bg-surface-100 text-surface-500'
                           )}>
@@ -967,13 +967,13 @@ export default function SoraGen() {
                         <td className="px-3 py-2.5">
                           <p className="text-xs text-surface-700 line-clamp-2 leading-relaxed">{job.prompt}</p>
                           {job.status === 'done' && job.video_path && (
-                            <p className="text-[10px] text-green-600 font-mono mt-1 flex items-center gap-1">
+                            <p className="text-[10px] text-green-300 font-mono mt-1 flex items-center gap-1">
                               <FolderOpen size={9} />
                               {job.video_path.split('/').pop()}
                             </p>
                           )}
                           {job.status === 'failed' && job.error_msg && (
-                            <p className="text-[10px] font-medium text-red-600 mt-1 line-clamp-2">
+                            <p className="text-[10px] font-medium text-red-300 mt-1 line-clamp-2">
                               {humanizeSoraError(job.error_msg)}
                             </p>
                           )}
@@ -986,7 +986,7 @@ export default function SoraGen() {
                               <button
                                 type="button"
                                 onClick={() => handleDownloadVideo(job)}
-                                className="p-1.5 rounded-lg text-green-500 hover:text-green-600 hover:bg-green-50 transition-all cursor-pointer"
+                                className="p-1.5 rounded-lg text-green-500 hover:text-green-300 hover:bg-green-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                                 title="Tải video"
                               >
                                 <Download size={13} />
@@ -996,7 +996,7 @@ export default function SoraGen() {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteJob(job.id)}
-                                className="p-1.5 rounded-lg text-surface-300 hover:text-red-500 hover:bg-red-50 transition-all cursor-pointer"
+                                className="p-1.5 rounded-lg text-surface-300 hover:text-red-500 hover:bg-red-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                                 title="Xoá job này"
                               >
                                 <X size={13} />
@@ -1018,13 +1018,13 @@ export default function SoraGen() {
 
             {/* Stats footer */}
             {jobs.length > 0 && (
-              <div className="shrink-0 border-t border-surface-200 bg-white px-4 py-2.5 flex items-center gap-6">
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-700">
+              <div className="shrink-0 border-t border-surface-200 bg-surface-0 px-4 py-2.5 flex items-center gap-6">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-300">
                   <CheckCircle2 size={12} />
                   <span>{doneCount} Completed</span>
                   <StatHelp label="Completed" help="Finished videos that were published, cleaned, denoised, upscaled to 1080p, and saved back to your folder." tone="success" />
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-red-600">
+                <div className="flex items-center gap-1.5 text-[11px] font-medium text-red-300">
                   <XCircle size={12} />
                   <span>{failedCount} Failed</span>
                   <StatHelp label="Failed" help="Jobs that the Sora worker could not finish. You can regenerate them after fixing the issue." tone="error" />
@@ -1059,7 +1059,7 @@ export default function SoraGen() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="w-full max-w-[460px] rounded-2xl border border-surface-200 bg-white px-7 py-6 shadow-xl"
+              className="w-full max-w-[460px] rounded-2xl border border-surface-200 bg-surface-0 px-7 py-6 shadow-xl"
               onClick={e => e.stopPropagation()}
             >
               <h3 className="text-xl font-semibold text-surface-900">
@@ -1070,7 +1070,7 @@ export default function SoraGen() {
                 Choose how to save this new Sora batch.
               </p>
               {outputConflictDialog.videoSampleNames.length > 0 && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-300">
                   Videos: {outputConflictDialog.videoSampleNames.join(', ')}
                 </div>
               )}
@@ -1083,13 +1083,13 @@ export default function SoraGen() {
                   Close
                 </button>
                 <button
-                  className="inline-flex h-10 items-center justify-center rounded-lg border border-[#0D9488]/20 px-4 text-sm font-semibold text-[#0D9488] transition-colors hover:bg-[#0D9488]/5"
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-primary-500/20 px-4 text-sm font-semibold text-primary-300 transition-colors hover:bg-primary-50"
                   onClick={() => resolveOutputConflictMode('keep_both')}
                 >
                   Keep
                 </button>
                 <button
-                  className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#EA580C]"
+                  className="inline-flex h-10 items-center justify-center rounded-lg bg-primary-500 px-4 text-sm font-semibold text-surface-950 transition-colors hover:bg-primary-400"
                   onClick={() => resolveOutputConflictMode('replace_all')}
                 >
                   Override

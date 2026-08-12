@@ -76,7 +76,7 @@ export function WorkspacePickerDialog({ suggestedName = 'New project', onCancel,
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-950/45 p-4" role="dialog" aria-modal="true">
-      <div className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-surface-200 bg-white shadow-xl">
+      <div className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-surface-200 bg-surface-0 shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-200 px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold text-surface-900">Choose a server workspace</h2>
@@ -95,7 +95,7 @@ export function WorkspacePickerDialog({ suggestedName = 'New project', onCancel,
             <Upload size={14} /> Import a folder from this device
           </button>
         </div>
-        {error && <p className="px-4 pt-3 text-xs text-red-600">{error}</p>}
+        {error && <p className="px-4 pt-3 text-xs text-red-300">{error}</p>}
         <div className="min-h-40 flex-1 overflow-y-auto p-2">
           {directories.length === 0 && !loading ? (
             <div className="flex h-32 items-center justify-center text-xs text-surface-400">No workspace folders yet.</div>

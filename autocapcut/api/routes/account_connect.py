@@ -16,15 +16,18 @@ from autocapcut.database.models import ParentProject
 from autocapcut.services.account_connect import (
     disconnect_youtube_config,
     get_bridge_settings,
+    get_ai33_settings,
     get_oauth_settings,
     is_bridge_key_valid,
     oauth_settings_ready,
     record_youtube_quota_usage,
     regenerate_bridge_key,
     save_oauth_settings,
+    save_ai33_settings,
     save_youtube_inbox_cache,
     save_verified_connection,
 )
+from autocapcut.services.ai33_credentials import verify_ai33_api_key
 from autocapcut.services.youtube_comments import (
     YouTubeCommentsError,
     exchange_oauth_code,
@@ -64,6 +67,23 @@ class OAuthSettingsResponse(BaseModel):
 class OAuthSettingsVerifyRequest(BaseModel):
     client_id: str = Field(default="", max_length=300)
     client_secret: str = Field(default="", max_length=300)
+
+
+class AI33SettingsModel(BaseModel):
+    configured: bool = False
+    connected: bool = False
+    key_hint: str = ""
+    verified_at: str = ""
+
+
+class AI33SettingsResponse(BaseModel):
+    ok: bool
+    settings: AI33SettingsModel
+    message: str
+
+
+class AI33SettingsVerifyRequest(BaseModel):
+    api_key: str = Field(min_length=1, max_length=512)
 
 
 class OAuthExchangeRequest(BaseModel):
@@ -156,6 +176,23 @@ def _oauth_message(ready: bool) -> str:
     return "Thiếu hoặc sai OAuth Client ID / Client Secret."
 
 
+def _ai33_settings_response(message: str) -> AI33SettingsResponse:
+    settings = get_ai33_settings()
+    api_key = str(settings.get("api_key") or "").strip()
+    verified_at = str(settings.get("verified_at") or "").strip()
+    key_hint = f"••••{api_key[-4:]}" if api_key else ""
+    return AI33SettingsResponse(
+        ok=True,
+        settings=AI33SettingsModel(
+            configured=bool(api_key),
+            connected=bool(api_key and verified_at),
+            key_hint=key_hint,
+            verified_at=verified_at,
+        ),
+        message=message,
+    )
+
+
 def _require_bridge_key(x_account_connect_key: str = "") -> None:
     if is_bridge_key_valid(x_account_connect_key):
         return
@@ -225,6 +262,28 @@ async def verify_oauth_settings(req: OAuthSettingsVerifyRequest) -> OAuthSetting
         ready=True,
         message=_oauth_message(True),
     )
+
+
+@router.get("/ai33-settings", response_model=AI33SettingsResponse)
+async def get_ai33_settings_route() -> AI33SettingsResponse:
+    settings = get_ai33_settings()
+    connected = bool(settings.get("api_key") and settings.get("verified_at"))
+    message = "AI33.pro API key is connected." if connected else "Enter an AI33.pro API key to connect."
+    return _ai33_settings_response(message)
+
+
+@router.post("/ai33-settings/verify", response_model=AI33SettingsResponse)
+async def verify_ai33_settings(req: AI33SettingsVerifyRequest) -> AI33SettingsResponse:
+    api_key = req.api_key.strip()
+    result = await verify_ai33_api_key(api_key)
+    if not result.connected:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    save_ai33_settings({
+        "api_key": api_key,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return _ai33_settings_response(result.message)
 
 
 @router.get("/health", response_model=BridgeHealthResponse)

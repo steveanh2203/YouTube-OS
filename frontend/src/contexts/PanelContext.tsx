@@ -1,23 +1,17 @@
 import { createContext, useContext } from 'react'
-import { useAppStore, type AutomateSubView, type MainView, type ProjectSubView, type PanelState } from '@/store/app.store'
+import { useAppStore, type MainView, type ProjectSubView } from '@/store/app.store'
 
 // ─── Context shape ────────────────────────────────────────────────────────────
 
 export interface PanelContextValue {
-  panelId: string
-
-  // Panel-scoped state
   mainView: MainView
   projectSubView: ProjectSubView
-  automateSubView: AutomateSubView
   selectedParentId: string | null
   selectedChildId: string | null
   sidebarCollapsed: boolean
 
-  // Panel-scoped actions
   setMainView: (view: MainView) => void
   setProjectSubView: (view: ProjectSubView) => void
-  setAutomateSubView: (view: AutomateSubView) => void
   selectParent: (id: string | null) => void
   selectChild: (id: string | null) => void
   setSidebarCollapsed: (v: boolean) => void
@@ -33,25 +27,21 @@ export function usePanelContext(): PanelContextValue {
   return ctx
 }
 
-// ─── Helper: build context value from store for a given panelId ───────────────
+// ─── Helper: expose the single workspace through the existing context API ────
 
-export function usePanelContextValue(panelId: string): PanelContextValue {
+export function usePanelContextValue(): PanelContextValue {
   const store = useAppStore()
-  const panel: PanelState = store.panels.find((p) => p.id === panelId) ?? store.panels[0]
 
   return {
-    panelId,
-    mainView:         panel.mainView,
-    projectSubView:   panel.projectSubView,
-    automateSubView:  panel.automateSubView,
-    selectedParentId: panel.selectedParentId,
-    selectedChildId:  panel.selectedChildId,
-    sidebarCollapsed: panel.sidebarCollapsed,
-    setMainView:      (view) => store.setPanelMainView(panelId, view),
-    setProjectSubView:(view) => store.setPanelSubView(panelId, view),
-    setAutomateSubView:(view) => store.setPanelAutomateSubView(panelId, view),
-    selectParent:     (id)   => store.selectPanelParent(panelId, id),
-    selectChild:      (id)   => store.selectPanelChild(panelId, id),
-    setSidebarCollapsed: (v) => store.setPanelSidebarCollapsed(panelId, v),
+    mainView:         store.mainView,
+    projectSubView:   store.projectSubView,
+    selectedParentId: store.selectedParentId,
+    selectedChildId:  store.selectedChildId,
+    sidebarCollapsed: store.sidebarCollapsed,
+    setMainView:      store.setMainView,
+    setProjectSubView:store.setProjectSubView,
+    selectParent:     store.selectParent,
+    selectChild:      store.selectChild,
+    setSidebarCollapsed: store.setSidebarCollapsed,
   }
 }

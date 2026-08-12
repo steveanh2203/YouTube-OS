@@ -106,6 +106,36 @@ class AccountConnectServiceTests(unittest.TestCase):
         self.assertEqual(loaded["client_secret"], "GOCSPX-super-secret")
         self.assertEqual(loaded["verified_at"], "2026-04-01T06:30:00Z")
 
+    def test_save_and_load_ai33_settings(self) -> None:
+        saved = account_connect.save_ai33_settings({
+            "api_key": "ai33-test-key",
+            "verified_at": "2026-08-11T11:30:00Z",
+        })
+
+        self.assertEqual(saved["api_key"], "ai33-test-key")
+
+        loaded = account_connect.get_ai33_settings()
+        self.assertEqual(loaded["api_key"], "ai33-test-key")
+        self.assertEqual(loaded["verified_at"], "2026-08-11T11:30:00Z")
+
+        state_path = Path(os.environ[account_connect.ACCOUNT_CONNECT_FILE_ENV])
+        self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+
+    def test_save_and_load_youtube_data_settings(self) -> None:
+        saved = account_connect.save_youtube_data_settings({
+            "api_key": "youtube-data-test-key",
+            "verified_at": "2026-08-11T12:00:00Z",
+        })
+
+        self.assertEqual(saved["api_key"], "youtube-data-test-key")
+
+        loaded = account_connect.get_youtube_data_settings()
+        self.assertEqual(loaded["api_key"], "youtube-data-test-key")
+        self.assertEqual(loaded["verified_at"], "2026-08-11T12:00:00Z")
+
+        state_path = Path(os.environ[account_connect.ACCOUNT_CONNECT_FILE_ENV])
+        self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+
     def test_disconnect_clears_auth_fields_but_keeps_openrouter_settings(self) -> None:
         account_connect.save_youtube_config("77", {
             "openrouter_key": "sk-or-v1-keep",

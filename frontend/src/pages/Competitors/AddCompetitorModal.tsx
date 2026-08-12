@@ -132,7 +132,7 @@ export default function AddCompetitorModal({ open, onClose, childProjectId, pare
             transition={{ duration: 0.18, ease: 'easeOut' }}
             className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
           >
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-md pointer-events-auto border border-surface-200">
+            <div className="bg-surface-0 rounded-xl shadow-xl w-full max-w-md pointer-events-auto border border-surface-200">
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-surface-100">
                 <h2 className="text-sm font-semibold text-surface-900">Add competitor link</h2>
@@ -165,7 +165,7 @@ export default function AddCompetitorModal({ open, onClose, childProjectId, pare
 
                   {/* Duplicate warning */}
                   {dupWarning && (
-                    <p className="mt-1.5 text-xs text-amber-600 flex items-center gap-1">
+                    <p className="mt-1.5 text-xs text-amber-300 flex items-center gap-1">
                       <AlertTriangle size={12} /> {dupWarning}
                     </p>
                   )}
@@ -206,7 +206,7 @@ export default function AddCompetitorModal({ open, onClose, childProjectId, pare
                           'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer',
                           purpose === p.value
                             ? 'bg-primary-500 text-white border-primary-500'
-                            : 'bg-white text-surface-600 border-surface-200 hover:border-primary-300 hover:text-primary-600'
+                            : 'bg-surface-0 text-surface-600 border-surface-200 hover:border-primary-300 hover:text-primary-600'
                         )}
                       >
                         {p.label}

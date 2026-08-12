@@ -45,7 +45,10 @@ logs/
 .waylog/
 .DS_Store
 .claude/settings.json
+.claude/worktrees/
+.hallmark/
 frontend/.env
+frontend/src-tauri/
 autocapcut/configs/config.json
 
 # Rust build artifacts

@@ -292,7 +292,7 @@ export default function ParentProjects() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-surface-0">
         <div>
           <h1 className="page-title">Parent Projects</h1>
           <p className="page-sub mt-0.5">{parentProjects.length} project{parentProjects.length !== 1 ? 's' : ''}</p>
@@ -307,7 +307,7 @@ export default function ParentProjects() {
       <div className="flex-1 overflow-y-auto p-6">
         {/* Backend error banner */}
         {fetchError && (
-          <div className="mb-4 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+          <div className="mb-4 px-4 py-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300">
             {fetchError} — showing cached data
           </div>
         )}
@@ -351,7 +351,7 @@ export default function ParentProjects() {
                   <input className="input" placeholder="tag1, tag2, tag3"
                     value={form.keywordsRaw} onChange={e => setForm(f => ({ ...f, keywordsRaw: e.target.value }))} />
                 </div>
-                <div className="col-span-2 rounded-2xl border border-surface-200 bg-gradient-to-r from-surface-50 to-primary-50/40 p-4">
+                <div className="col-span-2 rounded-xl border border-surface-200 bg-surface-50 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-surface-800">Roxy Connection</p>
@@ -360,9 +360,9 @@ export default function ParentProjects() {
                     <span className={cn(
                       'badge',
                       hasRoxyConfig && activeProfile
-                        ? 'bg-green-50 text-green-700'
+                        ? 'bg-green-500/10 text-green-300'
                         : roxyLoading
-                          ? 'bg-amber-50 text-amber-700'
+                          ? 'bg-amber-500/10 text-amber-300'
                           : 'bg-surface-100 text-surface-600',
                     )}>
                       {roxyLoading ? 'Syncing' : activeProfile ? 'Connected' : 'Pending'}
@@ -372,7 +372,7 @@ export default function ParentProjects() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
                       <label className="label !mb-2">Roxy Workspace</label>
-                      <div className="rounded-xl border border-surface-200 bg-white px-4 py-3 shadow-sm transition-all duration-150 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                      <div className="rounded-xl border border-surface-200 bg-surface-0 px-4 py-3 shadow-sm transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2 text-surface-500">
                             <Briefcase size={15} />
@@ -401,7 +401,7 @@ export default function ParentProjects() {
 
                     <div>
                       <label className="label !mb-2">Roxy Profile</label>
-                      <div className="rounded-xl border border-surface-200 bg-white px-4 py-3 shadow-sm transition-all duration-150 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                      <div className="rounded-xl border border-surface-200 bg-surface-0 px-4 py-3 shadow-sm transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
                         <div className="mb-2 flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2 text-surface-500">
                             <Wifi size={15} />
@@ -429,7 +429,7 @@ export default function ParentProjects() {
                     </div>
                   </div>
                 </div>
-                <div className="col-span-2 rounded-2xl border border-surface-200 bg-gradient-to-r from-white to-red-50/50 p-4">
+                <div className="col-span-2 rounded-xl border border-red-500/20 bg-red-500/10 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-surface-800">YouTube Pairing</p>
@@ -438,7 +438,7 @@ export default function ParentProjects() {
                     <span className={cn(
                       'badge',
                       youtubeConfig.connected
-                        ? 'bg-green-50 text-green-700'
+                        ? 'bg-green-500/10 text-green-300'
                         : 'bg-surface-100 text-surface-600',
                     )}>
                       {youtubeConfig.connected ? 'Connected' : 'Pending'}
@@ -466,7 +466,7 @@ export default function ParentProjects() {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-200 bg-white px-4 py-3">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-200 bg-surface-0 px-4 py-3">
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-surface-700">
                         {youtubeConfig.connected
@@ -488,13 +488,13 @@ export default function ParentProjects() {
                     </button>
                   </div>
                 </div>
-                <div className="col-span-2 rounded-2xl border border-surface-200 bg-gradient-to-r from-white to-sky-50/60 p-4">
+                <div className="col-span-2 rounded-xl border border-sky-500/20 bg-sky-500/10 p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-surface-800">Brand Channel</p>
                       <p className="mt-1 text-xs text-surface-500">Đây là ADN riêng của từng project. Auto reply sẽ bám đúng profile này.</p>
                     </div>
-                    <span className="badge bg-sky-50 text-sky-700">
+                    <span className="badge bg-sky-500/10 text-sky-300">
                       Per project
                     </span>
                   </div>
@@ -573,8 +573,8 @@ export default function ParentProjects() {
                 exit={{ opacity: 0, scale: 0.97 }}
                 transition={{ duration: 0.18, delay: i * 0.04 }}
                 className={cn(
-                  'card p-4 flex items-center gap-4 cursor-pointer',
-                  'hover:shadow-card-hover hover:border-primary-200 transition-all duration-150',
+                  'parent-project-card card flex cursor-pointer items-center gap-4 p-4',
+                  'hover:shadow-card-hover hover:border-primary-200 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150',
                   deleting === p.id && 'opacity-50 pointer-events-none',
                 )}
                 onClick={() => handleOpen(p.id)}
@@ -590,7 +590,7 @@ export default function ParentProjects() {
                     <p className="text-sm font-semibold text-surface-900 truncate">{p.name}</p>
                     <span className="badge-neutral ml-1">{p.childCount} children</span>
                   </div>
-                  <div className="flex items-center gap-3 mt-1">
+                  <div className="parent-project-meta mt-1 flex min-w-0 items-center gap-3">
                     {p.author && (
                       <span className="flex items-center gap-1 text-xs text-surface-500">
                         <User size={11} /> {p.author}
@@ -602,7 +602,7 @@ export default function ParentProjects() {
                       </span>
                     )}
                     {p.keywordsRaw && (
-                      <span className="flex items-center gap-1 text-xs text-surface-400">
+                      <span className="parent-project-keywords flex min-w-0 items-center gap-1 truncate text-xs text-surface-400">
                         <Tag size={11} /> {p.keywordsRaw}
                       </span>
                     )}
@@ -615,7 +615,7 @@ export default function ParentProjects() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
+                <div className="parent-project-actions ml-2 flex items-center gap-1" onClick={e => e.stopPropagation()}>
                   <button
                     className="btn-icon text-surface-400 hover:text-primary-500 hover:bg-primary-50"
                     title="Edit"
@@ -624,7 +624,7 @@ export default function ParentProjects() {
                     <Pencil size={14} />
                   </button>
                   <button
-                    className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-50"
+                    className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-500/10"
                     title="Delete"
                     onClick={() => handleDelete(p.id)}
                   >
@@ -651,10 +651,10 @@ export default function ParentProjects() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
               transition={{ duration: 0.16 }}
-              className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+              className="w-full max-w-md rounded-xl bg-surface-0 p-5 shadow-xl"
             >
               <div className="mb-3 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-300">
                   <ShieldAlert size={18} />
                 </div>
                 <div>

@@ -112,25 +112,25 @@ export default function RoxyUpload() {
       label: 'API Host',
       value: normalizedHost,
       state: hasConfig ? 'Configured' : 'Missing',
-      tone: hasConfig ? 'bg-gradient-to-br from-primary-500 to-primary-600 text-white' : 'bg-white text-surface-700',
+      tone: hasConfig ? 'bg-primary-500 text-surface-950' : 'bg-surface-0 text-surface-700',
     },
     {
       label: 'Workspace',
       value: activeWorkspace?.workspace_name || 'Chưa chọn',
       state: activeWorkspace ? 'Selected' : 'Pending',
-      tone: activeWorkspace ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-white' : 'bg-white text-surface-700',
+      tone: activeWorkspace ? 'bg-amber-500 text-amber-950' : 'bg-surface-0 text-surface-700',
     },
     {
       label: 'Profile',
       value: activeProfile?.display_name || 'Chưa chọn',
       state: activeProfile ? 'Ready' : 'Pending',
-      tone: activeProfile ? 'bg-gradient-to-br from-sky-500 to-blue-600 text-white' : 'bg-white text-surface-700',
+      tone: activeProfile ? 'bg-sky-500 text-sky-950' : 'bg-surface-0 text-surface-700',
     },
     {
       label: 'Video',
       value: videoPath.trim() ? (videoPath.split('/').pop() ?? videoPath) : 'Chưa có file',
       state: videoPath.trim() ? 'Attached' : 'Pending',
-      tone: videoPath.trim() ? 'bg-gradient-to-br from-emerald-400 to-green-600 text-white' : 'bg-white text-surface-700',
+      tone: videoPath.trim() ? 'bg-emerald-500 text-emerald-950' : 'bg-surface-0 text-surface-700',
     },
   ]
 
@@ -207,7 +207,7 @@ export default function RoxyUpload() {
     if (step === 'config') {
       return (
         <div className="card overflow-hidden">
-          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+          <div className="border-b border-surface-200 bg-surface-50 px-5 py-4 md:px-6">
             <p className="text-base font-semibold text-surface-800">Connect to Roxy API</p>
             <p className="mt-1 text-sm text-surface-500">Nhập đúng host local API và token trước khi nạp workspace.</p>
           </div>
@@ -216,7 +216,7 @@ export default function RoxyUpload() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="rounded-2xl border border-surface-200 bg-surface-50/70 p-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-0 text-surface-600 shadow-sm">
                     <Server size={17} />
                   </div>
                   <div>
@@ -226,7 +226,7 @@ export default function RoxyUpload() {
                 </div>
                 <label className="label">API Host</label>
                 <input
-                  className="input bg-white font-mono text-xs"
+                  className="input bg-surface-0 font-mono text-xs"
                   value={apiHost}
                   onChange={e => setApiHost(e.target.value)}
                   onBlur={e => setApiHost(normalizeRoxyHost(e.target.value))}
@@ -236,7 +236,7 @@ export default function RoxyUpload() {
 
               <div className="rounded-2xl border border-surface-200 bg-surface-50/70 p-4">
                 <div className="mb-3 flex items-center gap-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-0 text-surface-600 shadow-sm">
                     <KeyRound size={17} />
                   </div>
                   <div>
@@ -246,7 +246,7 @@ export default function RoxyUpload() {
                 </div>
                 <label className="label">API Token</label>
                 <input
-                  className="input bg-white font-mono text-xs"
+                  className="input bg-surface-0 font-mono text-xs"
                   type="password"
                   placeholder="Paste token của Roxy"
                   value={apiToken}
@@ -271,7 +271,7 @@ export default function RoxyUpload() {
     if (step === 'profile') {
       return (
         <div className="card overflow-hidden">
-          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+          <div className="border-b border-surface-200 bg-surface-50 px-5 py-4 md:px-6">
             <p className="text-base font-semibold text-surface-800">Choose workspace and upload profile</p>
             <p className="mt-1 text-sm text-surface-500">Connect xong là app tự load sẵn profile cho ngươi.</p>
           </div>
@@ -281,7 +281,7 @@ export default function RoxyUpload() {
               <div className="rounded-2xl border border-surface-200 bg-surface-50/80 p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-0 text-surface-600 shadow-sm">
                       <Briefcase size={17} />
                     </div>
                     <div>
@@ -289,14 +289,14 @@ export default function RoxyUpload() {
                       <p className="text-xs text-surface-500">{workspaces.length} workspace</p>
                     </div>
                   </div>
-                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-surface-500 shadow-sm">
+                  <span className="rounded-full bg-surface-0 px-2.5 py-1 text-[11px] font-semibold text-surface-500 shadow-sm">
                     auto loaded
                   </span>
                 </div>
 
                 <div className="relative">
                   <select
-                    className="input h-11 appearance-none bg-white pr-10 text-sm shadow-sm"
+                    className="input h-11 appearance-none bg-surface-0 pr-10 text-sm shadow-sm"
                     value={workspaceId ?? ''}
                     onChange={e => changeWorkspace(Number(e.target.value))}
                     disabled={busy}
@@ -314,7 +314,7 @@ export default function RoxyUpload() {
               <div className="rounded-2xl border border-surface-200 bg-surface-50/80 p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-surface-600 shadow-sm">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-0 text-surface-600 shadow-sm">
                       <User size={17} />
                     </div>
                     <div>
@@ -327,7 +327,7 @@ export default function RoxyUpload() {
 
                 <div className="relative">
                   <select
-                    className="input h-11 appearance-none bg-white pr-10 text-sm shadow-sm"
+                    className="input h-11 appearance-none bg-surface-0 pr-10 text-sm shadow-sm"
                     value={profileId}
                     onChange={e => setProfileId(e.target.value)}
                     disabled={profiles.length === 0 || busy}
@@ -359,18 +359,18 @@ export default function RoxyUpload() {
     if (step === 'upload') {
       return (
         <div className="card overflow-hidden">
-          <div className="border-b border-surface-100 bg-gradient-to-r from-surface-50 to-white px-5 py-4 md:px-6">
+          <div className="border-b border-surface-200 bg-surface-50 px-5 py-4 md:px-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-base font-semibold text-surface-800">Video to upload</p>
                 <p className="mt-1 text-sm text-surface-500">Thêm video rồi mở trực tiếp luồng upload trên profile đã chọn.</p>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <div className="rounded-xl border border-surface-200 bg-white px-3 py-2">
+                <div className="rounded-xl border border-surface-200 bg-surface-0 px-3 py-2">
                   <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Workspace</p>
                   <p className="mt-1 text-sm font-medium text-surface-700">{activeWorkspace?.workspace_name || 'N/A'}</p>
                 </div>
-                <div className="rounded-xl border border-surface-200 bg-white px-3 py-2">
+                <div className="rounded-xl border border-surface-200 bg-surface-0 px-3 py-2">
                   <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Profile</p>
                   <p className="mt-1 text-sm font-medium text-surface-700">{activeProfile?.display_name || 'N/A'}</p>
                 </div>
@@ -379,9 +379,9 @@ export default function RoxyUpload() {
           </div>
 
           <div className="space-y-5 px-5 py-5 md:px-6 md:py-6">
-            <div className="rounded-2xl border border-dashed border-primary-200 bg-gradient-to-br from-primary-50 to-white p-4 md:p-5">
+            <div className="rounded-xl border border-dashed border-primary-200 bg-primary-50 p-4 md:p-5">
               <div className="mb-4 flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-primary-600 shadow-sm">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-surface-0 text-primary-600 shadow-sm">
                   <FileVideo size={18} />
                 </div>
                 <div>
@@ -392,7 +392,7 @@ export default function RoxyUpload() {
 
               <div className="flex flex-col gap-3 lg:flex-row">
                 <input
-                  className="input min-w-0 flex-1 bg-white font-mono text-xs"
+                  className="input min-w-0 flex-1 bg-surface-0 font-mono text-xs"
                   placeholder="Choose a video from Media Library"
                   value={videoPath}
                   readOnly
@@ -403,14 +403,14 @@ export default function RoxyUpload() {
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                <span className="rounded-full border border-surface-200 bg-white px-3 py-1 text-surface-500">Formats: mp4, mov, avi, mkv, webm</span>
+                <span className="rounded-full border border-surface-200 bg-surface-0 px-3 py-1 text-surface-500">Formats: mp4, mov, avi, mkv, webm</span>
                 {videoPath.trim() && (
                   <span className="rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-primary-700">File ready</span>
                 )}
               </div>
             </div>
 
-            <div className="flex flex-col gap-4 rounded-2xl border border-surface-200 bg-white p-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-4 rounded-2xl border border-surface-200 bg-surface-0 p-4 md:flex-row md:items-center md:justify-between">
               <label className="flex items-start gap-3 text-sm text-surface-700 cursor-pointer select-none">
                 <input type="checkbox" className="mt-0.5 h-4 w-4 rounded border-surface-300" checked={closeAfter} onChange={e => setCloseAfter(e.target.checked)} />
                 <span>
@@ -435,35 +435,35 @@ export default function RoxyUpload() {
     }
 
     return (
-      <div className="card overflow-hidden border-green-200">
-        <div className="bg-gradient-to-r from-green-50 to-white px-5 py-4 md:px-6">
+      <div className="card overflow-hidden border-green-500/20">
+        <div className="border-t border-emerald-500/20 bg-emerald-500/10 px-5 py-4 md:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-green-500 text-white shadow-sm">
               <CheckCircle size={20} />
             </div>
             <div>
-              <p className="text-base font-semibold text-green-700">Upload flow is ready</p>
-              <p className="mt-1 text-sm text-green-600">Roxy đã mở luồng upload. Anh có thể tiếp tục thao tác trong browser.</p>
+              <p className="text-base font-semibold text-green-300">Upload flow is ready</p>
+              <p className="mt-1 text-sm text-green-300">Roxy đã mở luồng upload. Anh có thể tiếp tục thao tác trong browser.</p>
             </div>
           </div>
         </div>
 
         <div className="space-y-5 px-5 py-5 md:px-6 md:py-6">
-          <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-700">
+          <div className="rounded-2xl border border-green-500/20 bg-green-500/10 px-4 py-4 text-sm text-green-300">
             <p className="font-semibold">Upload started!</p>
-            <p className="mt-1 whitespace-pre-wrap text-green-600">{successMsg}</p>
+            <p className="mt-1 whitespace-pre-wrap text-green-300">{successMsg}</p>
           </div>
 
           <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+            <div className="rounded-xl border border-surface-200 bg-surface-0 px-4 py-3">
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Workspace</p>
               <p className="mt-1 text-sm font-semibold text-surface-700">{activeWorkspace?.workspace_name || 'N/A'}</p>
             </div>
-            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+            <div className="rounded-xl border border-surface-200 bg-surface-0 px-4 py-3">
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Profile</p>
               <p className="mt-1 text-sm font-semibold text-surface-700">{activeProfile?.display_name || 'N/A'}</p>
             </div>
-            <div className="rounded-xl border border-surface-200 bg-white px-4 py-3">
+            <div className="rounded-xl border border-surface-200 bg-surface-0 px-4 py-3">
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-surface-400">Video</p>
               <p className="mt-1 truncate text-sm font-semibold text-surface-700">{videoPath.split('/').pop() ?? videoPath}</p>
             </div>
@@ -485,8 +485,8 @@ export default function RoxyUpload() {
   return (
     <>
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-surface-200 bg-white px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-100 text-red-600">
+      <div className="flex items-center gap-3 border-b border-surface-200 bg-surface-0 px-6 py-4">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-500/10 text-red-300">
           <Upload size={17} />
         </div>
         <div>
@@ -510,11 +510,11 @@ export default function RoxyUpload() {
           </div>
 
           {errorMessage && (
-            <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm">
+            <div className="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300 shadow-sm">
               <XCircle size={16} className="mt-0.5 shrink-0" />
               <div>
                 <p className="font-semibold">Có lỗi khi chạy Roxy Upload</p>
-                <p className="mt-1 whitespace-pre-wrap text-red-600">{errorMessage}</p>
+                <p className="mt-1 whitespace-pre-wrap text-red-300">{errorMessage}</p>
               </div>
             </div>
           )}
@@ -530,7 +530,7 @@ export default function RoxyUpload() {
           )}
 
           {(child?.roxyProfileName || parent?.roxyProfileName) && (
-            <div className="rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-700 shadow-sm">
+            <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-300 shadow-sm">
               Profile mặc định của project này: <span className="font-semibold">{child?.roxyProfileName || parent?.roxyProfileName}</span>
             </div>
           )}
@@ -566,12 +566,12 @@ export default function RoxyUpload() {
                         disabled={!isAvailable}
                         onClick={() => isAvailable && setStep(item.key)}
                         className={cn(
-                          'rounded-2xl border p-4 text-left transition-all',
+                          'rounded-2xl border p-4 text-left transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                           isActive
                             ? 'border-primary-300 bg-primary-50 shadow-sm'
                             : isDone
-                              ? 'border-green-200 bg-green-50'
-                              : 'border-surface-200 bg-white hover:border-surface-300',
+                              ? 'border-green-500/20 bg-green-500/10'
+                              : 'border-surface-200 bg-surface-0 hover:border-surface-300',
                           !isAvailable && 'cursor-not-allowed opacity-60 hover:border-surface-200',
                         )}
                       >
@@ -584,7 +584,7 @@ export default function RoxyUpload() {
                           </div>
                           <span className={cn(
                             'rounded-full px-2 py-0.5 text-[11px] font-semibold',
-                            isActive ? 'bg-primary-100 text-primary-700' : isDone ? 'bg-green-100 text-green-700' : 'bg-surface-100 text-surface-500',
+                            isActive ? 'bg-primary-100 text-primary-700' : isDone ? 'bg-green-500/10 text-green-300' : 'bg-surface-100 text-surface-500',
                           )}>
                             {isDone ? 'Done' : isActive ? 'Current' : `Step ${index + 1}`}
                           </span>
@@ -616,10 +616,10 @@ export default function RoxyUpload() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
               transition={{ duration: 0.16 }}
-              className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+              className="w-full max-w-md rounded-xl bg-surface-0 p-5 shadow-xl"
             >
               <div className="mb-3 flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 text-amber-300">
                   <ShieldAlert size={18} />
                 </div>
                 <div>

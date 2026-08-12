@@ -14,10 +14,10 @@ const API = ''
 // ---------------------------------------------------------------------------
 
 const STATUS_OPTIONS: { value: ChildStatus; label: string; dotCls: string; bgCls: string }[] = [
-  { value: 'draft',         label: 'Draft',         dotCls: 'bg-gray-400',   bgCls: 'bg-gray-100 text-gray-700' },
-  { value: 'resource_prep', label: 'Resource Prep', dotCls: 'bg-amber-400',  bgCls: 'bg-amber-50 text-amber-700' },
-  { value: 'editing',       label: 'Editing',       dotCls: 'bg-blue-400',   bgCls: 'bg-blue-50 text-blue-700' },
-  { value: 'published',     label: 'Published',     dotCls: 'bg-green-500',  bgCls: 'bg-green-50 text-green-700' },
+  { value: 'draft',         label: 'Draft',         dotCls: 'bg-surface-400', bgCls: 'bg-surface-100 text-surface-700' },
+  { value: 'resource_prep', label: 'Resource Prep', dotCls: 'bg-amber-400',  bgCls: 'bg-amber-500/10 text-amber-300' },
+  { value: 'editing',       label: 'Editing',       dotCls: 'bg-blue-400',   bgCls: 'bg-blue-500/10 text-blue-300' },
+  { value: 'published',     label: 'Published',     dotCls: 'bg-green-500',  bgCls: 'bg-green-500/10 text-green-300' },
 ]
 
 function statusConfig(s: ChildStatus) {
@@ -103,7 +103,7 @@ function StatusDropdown({ child, onUpdate }: { child: ChildProject; onUpdate: (s
             initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.1 }}
             style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
-            className="bg-white rounded-lg shadow-lg border border-surface-200 py-1 min-w-[148px]"
+            className="bg-surface-0 rounded-lg shadow-lg border border-surface-200 py-1 min-w-[148px]"
           >
             {STATUS_OPTIONS.map(opt => (
               <button
@@ -253,7 +253,7 @@ export default function ChildProjects() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-surface-0">
         <div>
           <h1 className="page-title">{parent?.name ?? 'Child Projects'}</h1>
           <p className="page-sub mt-0.5">{children.length} child project{children.length !== 1 ? 's' : ''}</p>
@@ -278,7 +278,7 @@ export default function ChildProjects() {
       </div>
 
       {/* Tab Bar */}
-      <div className="flex items-center gap-1 px-6 pt-3 pb-0 bg-white border-b border-surface-200">
+      <div className="flex items-center gap-1 px-6 pt-3 pb-0 bg-surface-0 border-b border-surface-200">
         <button
           className={cn(
             'px-4 py-2 text-xs font-semibold rounded-t-md border-b-2 transition-colors duration-150',
@@ -446,7 +446,7 @@ export default function ChildProjects() {
                         <td className="px-4 py-2.5 text-xs text-surface-400">{c.createdAt}</td>
                         <td className="px-4 py-2.5">
                           <button
-                            className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-50"
+                            className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-500/10"
                             title="Delete"
                             onClick={() => setConfirmDelete({ type: 'single', child: c })}
                           >
@@ -473,7 +473,7 @@ export default function ChildProjects() {
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }}
-              className="bg-white rounded-xl shadow-xl p-6 w-[380px] mx-4"
+              className="bg-surface-0 rounded-xl shadow-xl p-6 w-[380px] mx-4"
             >
               <h3 className="text-sm font-semibold text-surface-900 mb-2">
                 {confirmDelete.type === 'bulk'

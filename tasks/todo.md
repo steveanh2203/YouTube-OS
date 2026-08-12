@@ -1,5 +1,133 @@
 # TODO
 
+## Publish Current Web App to GitHub
+- [x] Confirm Git root, branch, remote, and divergence
+- [x] Review changed and untracked source files
+- [x] Exclude local worktrees, tool logs, and Tauri build artifacts
+- [x] Scan the publish scope for credentials and oversized files
+- [x] Run backend and frontend validation
+- [ ] Commit and push the complete validated scope
+- [ ] Verify remote SHA and clean worktree
+
+## Remove Audio Visualizer
+- [x] Audit project tool, FFmpeg Studio, API, task, and data dependencies
+- [x] Remove all Audio Visualizer navigation and frontend entry points
+- [x] Unmount its public API without destructive database cleanup
+- [x] Verify build, route removal, and live browser UI
+
+### Review
+- Removed Audio Visualizer from child tools, FFmpeg Studio, workspace routing, task icons, and panel labels
+- Deleted the frontend Visualizer page and unmounted its FastAPI route; dormant renderer and database compatibility code remain inaccessible
+- Frontend lint, TypeScript, and production build passed; targeted backend tests passed
+- Runtime API returned 404 with zero Visualizer OpenAPI paths; browser QA confirmed only Compose and Cut & Batch remain
+
+## Light Theme
+- [x] Audit existing design tokens and persisted UI state
+- [x] Add persistent Light / Dark theme state and sidebar toggle
+- [x] Add a complete light token palette without changing page logic
+- [x] Verify both themes in build and live browser
+
+### Review
+- Added a sidebar theme switch that persists through Zustand storage and page reloads
+- Mapped surface, accent, semantic status, sidebar, card, input, and popover colors to dynamic theme tokens
+- Browser QA confirmed Light / Dark switching and persistence; lint, typecheck, and production build passed
+
+## Remove Duplicate Global Brand Bar
+- [x] Remove the top MasterOS brand bar from the app shell
+- [x] Verify the workspace fills the reclaimed height in build and browser
+
+### Review
+- Removed the duplicate global TopBar component; MasterOS branding now appears only in the sidebar
+- Browser QA confirmed exactly one MasterOS label and the workspace fills the reclaimed height
+
+## Settings Credential Center Redesign
+- [x] Rework the Settings hierarchy around primary and supporting connections
+- [x] Keep OAuth, YouTube Data API, and AI33 verification behavior unchanged
+- [x] Verify lint, typecheck, build, and live browser structure
+
+### Review
+- Replaced three oversized stacked cards with a compact status rail and responsive two-column control-center layout
+- OAuth is the primary connection; YouTube Data API and AI33.pro are compact supporting cards
+- Browser QA confirmed all three connection sections, status summary, theme control, and single MasterOS brand label
+
+## Niche Research from YouTube Data API
+- [x] Confirm official YouTube search/video/channel endpoints and current quota model
+- [x] Add YouTube Data API key storage, verification, and niche research backend
+- [x] Replace Analytics with real Niche Research UI and rename navigation
+- [x] Add tests and verify lint, typecheck, build, API runtime, and browser UI
+
+### Review
+- Replaced Analytics with Niche Research and added market, language, time-window, and duration filters
+- Added live YouTube Data API key verification; only successful keys are stored and API responses expose only the last four characters
+- Opportunity scoring uses public video demand, views/day velocity, channel competition, and small-channel breakout signals; it is explicitly not search volume
+- Targeted backend tests: 20 passed; frontend lint, TypeScript, and production build passed
+- Full backend suite: 86 passed with 2 unchanged pre-existing failures
+- Runtime API health/settings returned HTTP 200; browser QA confirmed the Niche Research empty state and Settings credential card
+
+## Remove Split View
+- [x] Audit split-view shell, panel state, background task routing, and layout helpers
+- [x] Collapse the app to one workspace and remove split-view UI/state
+- [x] Verify lint, typecheck, build, and live browser navigation
+
+### Review
+- Removed the Split View control, second workspace, divider, resize helper, and panel-specific Zustand state
+- Redirected background task navigation and Reply Center settings navigation to the single workspace
+- Frontend lint, TypeScript typecheck, and Vite production build passed
+- Browser QA confirmed zero Split View controls and exactly one workspace panel
+
+## Remove Top-Level Automate Feature
+- [x] Audit top-level Automate navigation, panel state, and routing
+- [x] Remove Automate menu, Short/Long submenu, route, and frontend page
+- [x] Verify lint, typecheck, build, and live browser navigation
+
+### Review
+- Removed only the top-level Automate feature; retained the separate Cut Automate child tool
+- Frontend lint, TypeScript typecheck, and Vite production build passed
+- Browser QA confirmed zero Automate menu/text matches after reload
+
+## AI33.pro API Key Auto Verification
+- [x] Confirm the official authentication header and verification endpoint
+- [x] Add backend storage and live AI33.pro key verification
+- [x] Add debounced auto-verification UI to Settings
+- [x] Verify backend tests, lint, typecheck, build, and live browser
+
+### Review
+- AI33.pro verification uses `GET /v1/credits` with the `xi-api-key` header and saves only successful keys
+- API responses expose only connection status and a four-character key hint, never the full stored key
+- New targeted tests: 14 passed; frontend lint, typecheck, and Vite build passed
+- Full backend suite: 80 passed, with 2 unrelated pre-existing failures
+- Browser QA confirmed the empty state and automatic rejection flow for an invalid test key
+
+## Keep Only YouTube Keys in Settings
+- [x] Remove AI Reply, OpenRouter, quota, and Extension Bridge from Settings
+- [x] Keep OAuth Client ID, Client Secret, and explicit verification
+- [x] Verify lint, typecheck, build, and live browser
+
+## Remove Planner Feature
+- [x] Remove Planner from the sidebar and panel labels
+- [x] Remove Planner routing and the frontend page
+- [x] Verify lint, typecheck, build, and live browser navigation
+
+## MasterOS Web — shadcn/ui Full Redesign
+- [x] Lock the approved Workbench design system in `design.md` and frontend tokens
+- [x] Configure shadcn/ui for the existing React + Vite + Tailwind project
+- [x] Redesign the global shell: top bar, sidebars, split view, panel chrome, toasts
+- [x] Standardize buttons, inputs, tabs, tables, dialogs, badges, empty/loading/error states
+- [x] Redesign Planner, Projects, FFmpeg Studio, Automate, Reply Center, Analytics, Competitors, Settings
+- [x] Redesign every active Child Tool without adding or removing product features
+- [x] Verify desktop responsive behavior, keyboard focus, reduced motion, lint, typecheck, build, tests, and browser visuals
+- [x] Add a review section with validation evidence and remaining risks
+
+### Review
+- `npm run lint`: pass
+- `tsc -b --pretty false`: pass
+- `vite build`: pass (2,288 modules)
+- Browser QA: pass on Projects, Planner, FFmpeg Studio, AI Audio, Settings, and Split View
+- Frontend tests: 12 passed, 1 pre-existing Node localStorage environment failure
+- Backend tests: 75 passed, 2 pre-existing failures (macOS `/private/var` path normalization and FastAPI router identity assertion)
+- Runtime note: AI Audio still reports the pre-existing `API route not found` error while loading voices
+- Dependency note: `npm audit` reports 10 advisories; no automatic audit fix was applied
+
 ## GitHub Push Without Secrets
 - [x] Lọc file local và config chứa token/cookie trước khi push public repo
 - [x] Thêm ignore + file mẫu sạch cho config local

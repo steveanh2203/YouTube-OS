@@ -15,9 +15,9 @@ Tauri 2 desktop app với React 19, Vite, Tailwind CSS, Radix UI.
 ```
 frontend/
 ├── src/
-│   ├── App.tsx            — Root component, split-panel layout + ErrorBoundary
+│   ├── App.tsx            — Root component, single-workspace layout + ErrorBoundary
 │   ├── components/
-│   │   ├── layout/        — TopBar, WorkspacePanel, SplitDivider
+│   │   ├── layout/        — TopBar, Sidebar, WorkspacePanel
 │   │   └── ui/            — reusable UI components
 │   ├── pages/             — full-page views (Projects, ProductionPlanner, RenderDashboard, Analytics, Competitors)
 │   ├── store/             — Zustand stores
@@ -47,21 +47,16 @@ const data = await res.json()
 ## State Pattern (Zustand)
 ```typescript
 import { useAppStore } from '@/store/app.store'
-const { splitView, setActivePanelId, panels } = useAppStore()
+const { mainView, projectSubView } = useAppStore()
 ```
 
 ## Navigation
 Không dùng React Router. Điều hướng qua Zustand store:
 ```typescript
 import { useAppStore } from '@/store/app.store'
-const { setMainView, setPanelMainView } = useAppStore()
+const { setMainView } = useAppStore()
 
-// Single panel (legacy):
-setMainView('projects')   // 'projects' | 'planner' | 'render' | 'analytics' | 'competitors'
-
-// Dual panel:
-setPanelMainView('left', 'render')
-setPanelMainView('right', 'projects')
+setMainView('projects')   // 'projects' | 'render' | 'reply-center' | 'analytics' | 'competitors' | 'settings'
 ```
 
 ## Thêm page mới

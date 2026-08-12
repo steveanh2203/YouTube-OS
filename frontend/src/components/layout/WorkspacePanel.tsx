@@ -1,7 +1,6 @@
-import { lazy, Suspense, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { PanelContext, usePanelContextValue, usePanelContext } from '@/contexts/PanelContext'
-import { useAppStore } from '@/store/app.store'
 import Sidebar from '@/components/layout/Sidebar'
 import PanelTopBar from '@/components/layout/PanelTopBar'
 
@@ -18,18 +17,15 @@ const FastEdit = lazy(() => import('@/pages/Projects/tools/FastEdit'))
 const CutAutomate = lazy(() => import('@/pages/Projects/tools/CutAutomate'))
 const ResourcePrep = lazy(() => import('@/pages/Projects/tools/ResourcePrep'))
 const SoraGen = lazy(() => import('@/pages/Projects/tools/SoraGen'))
-const AudioVisualizer = lazy(() => import('@/pages/Projects/tools/AudioVisualizer'))
 const RenderDashboard = lazy(() => import('@/pages/RenderDashboard'))
-const AutomatePage = lazy(() => import('@/pages/Automate'))
 const Analytics = lazy(() => import('@/pages/Analytics'))
 const CompetitorsPage = lazy(() => import('@/pages/Competitors'))
-const ProductionPlanner = lazy(() => import('@/pages/ProductionPlanner'))
 const ReplyCenter = lazy(() => import('@/pages/ReplyCenter'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
 // ─── Keep-alive tool views ────────────────────────────────────────────────────
 
-const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'fast-edit', 'cut-automate', 'sora-gen', 'audio-visualizer'] as const
+const TOOL_VIEWS = ['resource-prep', 'ai-gen', 'ai-audio', 'livestream', 'srt-gen', 'raw-seo', 'roxy-upload', 'fast-edit', 'cut-automate', 'sora-gen'] as const
 type ToolView = typeof TOOL_VIEWS[number]
 
 function isToolView(v: string): v is ToolView {
@@ -37,15 +33,15 @@ function isToolView(v: string): v is ToolView {
 }
 
 const PAGE_VARIANTS = {
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0 },
-  exit:    { opacity: 0, y: -4 },
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit:    { opacity: 0 },
 }
 
 // ─── Inner panel content — reads from PanelContext ────────────────────────────
 
 function PanelInner() {
-  const { panelId, mainView, projectSubView } = usePanelContext()
+  const { mainView, projectSubView } = usePanelContext()
 
   const [mountedTools, setMountedTools] = useState<Set<ToolView>>(new Set())
 
@@ -65,9 +61,7 @@ function PanelInner() {
 
   let nonToolPage: ReactNode = null
   if (!showingTool) {
-    if (mainView === 'planner')             nonToolPage = <ProductionPlanner />
-    else if (mainView === 'render')         nonToolPage = <RenderDashboard />
-    else if (mainView === 'automate')       nonToolPage = <AutomatePage />
+    if (mainView === 'render')              nonToolPage = <RenderDashboard />
     else if (mainView === 'reply-center')   nonToolPage = <ReplyCenter />
     else if (mainView === 'analytics')      nonToolPage = <Analytics />
     else if (mainView === 'competitors')    nonToolPage = <CompetitorsPage />
@@ -76,17 +70,17 @@ function PanelInner() {
     else                                    nonToolPage = <ParentProjects />
   }
 
-  const pageKey = `${panelId}-${mainView}-${projectSubView}`
+  const pageKey = `${mainView}-${projectSubView}`
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden">
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-background">
       <Sidebar />
 
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col bg-background">
         <PanelTopBar />
 
-        <main className="flex-1 overflow-hidden relative">
-          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-surface-400">Loading workspace…</div>}>
+        <main className="relative flex-1 overflow-hidden bg-background">
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading workspace…</div>}>
 
           {/* Non-tool pages (animated) */}
           <AnimatePresence mode="wait">
@@ -117,7 +111,6 @@ function PanelInner() {
             {mountedTools.has('fast-edit')     && <div className={projectSubView === 'fast-edit'     ? 'h-full' : 'hidden'}><FastEdit /></div>}
             {mountedTools.has('cut-automate') && <div className={projectSubView === 'cut-automate' ? 'h-full' : 'hidden'}><CutAutomate /></div>}
             {mountedTools.has('sora-gen')          && <div className={projectSubView === 'sora-gen'          ? 'h-full' : 'hidden'}><SoraGen /></div>}
-            {mountedTools.has('audio-visualizer') && <div className={projectSubView === 'audio-visualizer' ? 'h-full' : 'hidden'}><AudioVisualizer /></div>}
           </div>
           </Suspense>
 
@@ -129,27 +122,12 @@ function PanelInner() {
 
 // ─── WorkspacePanel ───────────────────────────────────────────────────────────
 
-interface WorkspacePanelProps {
-  panelId: string
-  style?: CSSProperties
-  onActivate?: () => void
-  isActive?: boolean
-}
-
-export default function WorkspacePanel({ panelId, style, onActivate, isActive }: WorkspacePanelProps) {
-  const contextValue = usePanelContextValue(panelId)
-  const splitView = useAppStore((s) => s.splitView)
+export default function WorkspacePanel() {
+  const contextValue = usePanelContextValue()
 
   return (
     <PanelContext.Provider value={contextValue}>
-      <div
-        className={[
-          'flex flex-col flex-1 min-w-0 overflow-hidden',
-          splitView && isActive ? 'ring-1 ring-inset ring-primary-400' : '',
-        ].join(' ')}
-        style={style}
-        onMouseDown={onActivate}
-      >
+      <div className="workspace-panel flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <PanelInner />
       </div>
     </PanelContext.Provider>

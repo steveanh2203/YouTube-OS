@@ -73,17 +73,17 @@ function simulateProgress(stepKey: StepKey, startedAt: number): number {
 }
 
 const STEPS: StepDef[] = [
-  { key: '01', number: '01', label: 'Cut stock',       sublabel: 'Split the video into segments',       icon: Scissors,  color: 'bg-violet-100', iconColor: 'text-violet-600', borderColor: 'border-violet-200' },
-  { key: '02', number: '02', label: 'Edit & Render',   sublabel: 'Overlay, EQ, background track',   icon: Film,      color: 'bg-blue-100',   iconColor: 'text-blue-600',   borderColor: 'border-blue-200'   },
-  { key: '03', number: '03', label: 'Extract images',        sublabel: 'Extract frames → JPG',          icon: Image,     color: 'bg-sky-100',    iconColor: 'text-sky-600',    borderColor: 'border-sky-200'    },
-  { key: '04', number: '04', label: 'Extract MP3',        sublabel: 'Export the audio track',                icon: Music,     color: 'bg-green-100',  iconColor: 'text-green-600',  borderColor: 'border-green-200'  },
-  { key: '05', number: '05', label: 'Merge odd clips',          sublabel: 'Join clips 1, 3, 5, …',             icon: Layers,    color: 'bg-orange-100', iconColor: 'text-orange-600', borderColor: 'border-orange-200' },
-  { key: '06', number: '06', label: 'Merge even clips',        sublabel: 'Join clips 2, 4, 6, …',             icon: Layers,    color: 'bg-amber-100',  iconColor: 'text-amber-600',  borderColor: 'border-amber-200'  },
-  { key: '07', number: '07', label: 'Reset',            sublabel: 'Delete intermediate files',             icon: RefreshCcw,color: 'bg-red-100',    iconColor: 'text-red-600',    borderColor: 'border-red-200'    },
-  { key: '08_le',  number: '08', label: 'Delete odd images',  sublabel: 'Delete frames 1, 3, 5, …',           icon: Trash2,    color: 'bg-rose-100',   iconColor: 'text-rose-600',   borderColor: 'border-rose-200'   },
+  { key: '01', number: '01', label: 'Cut stock',       sublabel: 'Split the video into segments',       icon: Scissors,  color: 'bg-violet-500/10', iconColor: 'text-violet-300', borderColor: 'border-violet-500/20' },
+  { key: '02', number: '02', label: 'Edit & Render',   sublabel: 'Overlay, EQ, background track',   icon: Film,      color: 'bg-blue-500/10',   iconColor: 'text-blue-300',   borderColor: 'border-blue-500/20'   },
+  { key: '03', number: '03', label: 'Extract images',        sublabel: 'Extract frames → JPG',          icon: Image,     color: 'bg-sky-500/10',    iconColor: 'text-sky-300',    borderColor: 'border-sky-500/20'    },
+  { key: '04', number: '04', label: 'Extract MP3',        sublabel: 'Export the audio track',                icon: Music,     color: 'bg-green-500/10',  iconColor: 'text-green-300',  borderColor: 'border-green-500/20'  },
+  { key: '05', number: '05', label: 'Merge odd clips',          sublabel: 'Join clips 1, 3, 5, …',             icon: Layers,    color: 'bg-orange-500/10', iconColor: 'text-orange-300', borderColor: 'border-orange-500/20' },
+  { key: '06', number: '06', label: 'Merge even clips',        sublabel: 'Join clips 2, 4, 6, …',             icon: Layers,    color: 'bg-amber-500/10',  iconColor: 'text-amber-300',  borderColor: 'border-amber-500/20'  },
+  { key: '07', number: '07', label: 'Reset',            sublabel: 'Delete intermediate files',             icon: RefreshCcw,color: 'bg-red-500/10',    iconColor: 'text-red-300',    borderColor: 'border-red-500/20'    },
+  { key: '08_le',  number: '08', label: 'Delete odd images',  sublabel: 'Delete frames 1, 3, 5, …',           icon: Trash2,    color: 'bg-rose-500/10',   iconColor: 'text-rose-300',   borderColor: 'border-rose-500/20'   },
   { key: '08_chan', number: '09', label: 'Delete even images',sublabel: 'Delete frames 2, 4, 6, …',          icon: Trash2,    color: 'bg-pink-100',   iconColor: 'text-pink-600',   borderColor: 'border-pink-200'   },
   { key: '10', number: '10', label: 'Random images',      sublabel: 'Shuffle JPG → slideshow video',   icon: Shuffle,   color: 'bg-teal-100',   iconColor: 'text-teal-600',   borderColor: 'border-teal-200'   },
-  { key: '11', number: '11', label: 'Random videos',    sublabel: 'Shuffle .mp4 → merge H.264',        icon: Film,      color: 'bg-indigo-100', iconColor: 'text-indigo-600', borderColor: 'border-indigo-200' },
+  { key: '11', number: '11', label: 'Random videos',    sublabel: 'Shuffle .mp4 → merge H.264',        icon: Film,      color: 'bg-indigo-500/10', iconColor: 'text-indigo-300', borderColor: 'border-indigo-500/20' },
 ]
 
 // ─── Result banner ────────────────────────────────────────────────────────────
@@ -93,12 +93,12 @@ function ResultBanner({ result }: { result: CutAutomateTaskResponse }) {
     <div className={cn(
       'flex items-start gap-2 px-3 py-2.5 rounded-lg border text-xs',
       result.ok
-        ? 'bg-green-50 border-green-200 text-green-800'
-        : 'bg-red-50 border-red-200 text-red-800',
+        ? 'bg-green-500/10 border-green-500/20 text-green-300'
+        : 'bg-red-500/10 border-red-500/20 text-red-300',
     )}>
       {result.ok
-        ? <CheckCircle size={13} className="mt-0.5 shrink-0 text-green-600" />
-        : <AlertCircle size={13} className="mt-0.5 shrink-0 text-red-600" />}
+        ? <CheckCircle size={13} className="mt-0.5 shrink-0 text-green-300" />
+        : <AlertCircle size={13} className="mt-0.5 shrink-0 text-red-300" />}
       <span className="leading-relaxed">{result.message}</span>
     </div>
   )
@@ -174,14 +174,14 @@ function ProjectSetupPanel({
   }
 
   return (
-    <div className="rounded-2xl border border-indigo-200 bg-white mb-5 overflow-hidden">
+    <div className="rounded-2xl border border-indigo-500/20 bg-surface-0 mb-5 overflow-hidden">
       {/* Panel header */}
       <button
-        className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-indigo-50/50 transition-colors"
+        className="w-full flex items-center gap-3 px-5 py-3.5 text-left hover:bg-indigo-500/10 transition-colors"
         onClick={() => setExpanded(p => !p)}
       >
-        <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center shrink-0">
-          <FolderCheck size={15} className="text-indigo-600" />
+        <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0">
+          <FolderCheck size={15} className="text-indigo-300" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-surface-900">Initialize project</p>
@@ -189,15 +189,15 @@ function ProjectSetupPanel({
         </div>
         {scanResult && (
           scanResult.is_complete
-            ? <span className="text-xs text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full mr-1">Complete</span>
-            : <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full mr-1">Missing {scanResult.missing.length}</span>
+            ? <span className="text-xs text-green-300 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full mr-1">Complete</span>
+            : <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full mr-1">Missing {scanResult.missing.length}</span>
         )}
         {expanded ? <ChevronUp size={14} className="text-surface-400 shrink-0" /> : <ChevronDown size={14} className="text-surface-400 shrink-0" />}
       </button>
 
       {/* Panel body */}
       {expanded && (
-        <div className="px-5 pb-5 space-y-4 border-t border-indigo-100 pt-4">
+        <div className="px-5 pb-5 space-y-4 border-t border-indigo-500/20 pt-4">
           {/* Path picker */}
           <PathBreadcrumb
             label="Project folder"
@@ -211,7 +211,7 @@ function ProjectSetupPanel({
           <div className="flex gap-2">
             <button
               className={cn(
-                'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all',
+                'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                 projectDir && !scanning
                   ? 'bg-surface-100 hover:bg-surface-200 text-surface-700 cursor-pointer'
                   : 'bg-surface-50 text-surface-300 cursor-not-allowed',
@@ -224,7 +224,7 @@ function ProjectSetupPanel({
             </button>
             <button
               className={cn(
-                'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all',
+                'flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                 projectDir && !initing
                   ? 'bg-indigo-500 hover:bg-indigo-600 text-white cursor-pointer shadow-sm'
                   : 'bg-surface-100 text-surface-300 cursor-not-allowed',
@@ -243,8 +243,8 @@ function ProjectSetupPanel({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-surface-500">Folder structure</span>
                 {scanResult.is_complete
-                  ? <span className="text-[10px] text-green-600 flex items-center gap-1 font-medium"><CheckCircle size={10} /> Complete</span>
-                  : <span className="text-[10px] text-amber-600 flex items-center gap-1 font-medium"><AlertCircle size={10} /> Missing {scanResult.missing.length}</span>}
+                  ? <span className="text-[10px] text-green-300 flex items-center gap-1 font-medium"><CheckCircle size={10} /> Complete</span>
+                  : <span className="text-[10px] text-amber-300 flex items-center gap-1 font-medium"><AlertCircle size={10} /> Missing {scanResult.missing.length}</span>}
               </div>
               <div className="grid grid-cols-2 gap-1">
                 {scanResult.required.map(dir => {
@@ -252,7 +252,7 @@ function ProjectSetupPanel({
                   return (
                     <div key={dir} className={cn(
                       'flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-mono',
-                      present ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700',
+                      present ? 'bg-green-500/10 text-green-300' : 'bg-amber-500/10 text-amber-300',
                     )}>
                       {present
                         ? <CheckCircle size={9} className="text-green-500 shrink-0" />
@@ -267,13 +267,13 @@ function ProjectSetupPanel({
 
           {/* Init result summary — compact */}
           {initResult && initResult.created.length > 0 && (
-            <div className="rounded-xl border border-green-200 bg-green-50 px-3 py-2">
-              <p className="text-[11px] font-medium text-green-700 mb-1.5 flex items-center gap-1">
+            <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-3 py-2">
+              <p className="text-[11px] font-medium text-green-300 mb-1.5 flex items-center gap-1">
                 <FolderPlus size={10} /> Created {initResult.created.length} folders:
               </p>
               <div className="flex flex-wrap gap-1">
                 {initResult.created.map(dir => (
-                  <span key={dir} className="text-[10px] font-mono text-green-700 bg-green-100 px-1.5 py-0.5 rounded">{dir}</span>
+                  <span key={dir} className="text-[10px] font-mono text-green-300 bg-green-500/10 px-1.5 py-0.5 rounded">{dir}</span>
                 ))}
               </div>
             </div>
@@ -283,18 +283,18 @@ function ProjectSetupPanel({
           {scanMsg && (
             <div className={cn(
               'flex items-start gap-2 px-3 py-2 rounded-lg border text-xs',
-              scanMsg.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800',
+              scanMsg.ok ? 'bg-green-500/10 border-green-500/20 text-green-300' : 'bg-red-500/10 border-red-500/20 text-red-300',
             )}>
-              {scanMsg.ok ? <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-600" /> : <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-600" />}
+              {scanMsg.ok ? <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-300" /> : <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-300" />}
               {scanMsg.text}
             </div>
           )}
           {initMsg && (
             <div className={cn(
               'flex items-start gap-2 px-3 py-2 rounded-lg border text-xs',
-              initMsg.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800',
+              initMsg.ok ? 'bg-green-500/10 border-green-500/20 text-green-300' : 'bg-red-500/10 border-red-500/20 text-red-300',
             )}>
-              {initMsg.ok ? <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-600" /> : <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-600" />}
+              {initMsg.ok ? <CheckCircle size={12} className="mt-0.5 shrink-0 text-green-300" /> : <AlertCircle size={12} className="mt-0.5 shrink-0 text-red-300" />}
               {initMsg.text}
             </div>
           )}
@@ -467,7 +467,7 @@ function StepModal(props: ModalProps) {
       <>
         <PathBreadcrumb label="Project folder" value={props.projectDir} onChange={props.setProjectDir}
           onPickDirectory={() => pick(props.setProjectDir)} placeholder="/path/to/project/" />
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 text-xs">
           <AlertCircle size={13} />
           This will delete all files in: 01.catstock, 02.Edit, 03.tachanh, 04.tachmp3, 05.gop_le, 06.gop_chan
         </div>
@@ -547,11 +547,11 @@ function StepModal(props: ModalProps) {
     >
       <div
         className={cn(
-          'w-full max-w-lg mx-4 bg-white rounded-2xl shadow-2xl border',
+          'w-full max-w-lg mx-4 bg-surface-0 rounded-2xl shadow-2xl border',
           step.borderColor,
           'animate-in fade-in zoom-in-95 duration-150',
         )}
-        style={{ boxShadow: '0 25px 60px rgba(0,0,0,0.18)' }}
+        style={{ boxShadow: 'var(--shadow-popover)' }}
       >
         {/* Modal header */}
         <div className={cn('flex items-center gap-3 px-5 py-4 border-b', step.borderColor)}>
@@ -585,7 +585,7 @@ function StepModal(props: ModalProps) {
 
           <button
             className={cn(
-              'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150',
+              'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150',
               'shadow-sm',
               canRun && !isRunning
                 ? 'bg-primary-500 text-white hover:bg-primary-600 cursor-pointer'
@@ -629,10 +629,10 @@ function StepCard({ step, running, result, onClick }: {
     <button
       onClick={onClick}
       className={cn(
-        'group relative flex flex-col gap-3 p-4 rounded-2xl border bg-white text-left cursor-pointer',
-        'transition-all duration-200 hover:shadow-md hover:-translate-y-0.5',
-        status === 'ok'    ? 'border-green-200 bg-green-50/40'
-        : status === 'error' ? 'border-red-200 bg-red-50/30'
+        'group relative flex flex-col gap-3 p-4 rounded-2xl border bg-surface-0 text-left cursor-pointer',
+        'transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200 hover:shadow-md hover:-translate-y-0.5',
+        status === 'ok'    ? 'border-green-500/20 bg-green-500/10'
+        : status === 'error' ? 'border-red-500/20 bg-red-500/10'
         : step.borderColor,
       )}
     >
@@ -646,7 +646,7 @@ function StepCard({ step, running, result, onClick }: {
         {status === 'running'
           ? <Loader size={18} className={cn(step.iconColor, 'animate-spin')} />
           : status === 'ok'
-            ? <CheckCircle size={18} className="text-green-600" />
+            ? <CheckCircle size={18} className="text-green-300" />
             : status === 'error'
               ? <AlertCircle size={18} className="text-red-500" />
               : <Icon size={18} className={step.iconColor} />
@@ -863,9 +863,9 @@ export default function CutAutomate() {
     <div className="flex flex-col h-full bg-surface-50">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-white shrink-0">
-        <div className="w-9 h-9 rounded-xl bg-indigo-100 flex items-center justify-center">
-          <Scissors size={17} className="text-indigo-600" />
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-surface-0 shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center">
+          <Scissors size={17} className="text-indigo-300" />
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="page-title">Cut Automate</h1>
@@ -880,10 +880,10 @@ export default function CutAutomate() {
         {/* FFmpeg badge */}
         {ffmpegOk !== null && (
           ffmpegOk
-            ? <span className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 px-2.5 py-1 rounded-full">
+            ? <span className="flex items-center gap-1.5 text-xs text-green-300 bg-green-500/10 border border-green-500/20 px-2.5 py-1 rounded-full">
                 <Zap size={11} /> FFmpeg ready
               </span>
-            : <span className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+            : <span className="flex items-center gap-1.5 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
                 <AlertCircle size={11} /> FFmpeg unavailable
               </span>
         )}
@@ -894,7 +894,7 @@ export default function CutAutomate() {
 
         {/* FFmpeg warning */}
         {ffmpegOk === false && (
-          <div className="flex items-center gap-2 px-4 py-3 mb-5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+          <div className="flex items-center gap-2 px-4 py-3 mb-5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
             <AlertCircle size={14} />
             FFmpeg is not installed - most steps require it to work.
           </div>
@@ -909,11 +909,11 @@ export default function CutAutomate() {
 
         {/* Quick setup hint */}
         {Object.values(results).length === 0 && (
-          <div className="flex items-start gap-3 px-4 py-3 mb-5 rounded-xl bg-blue-50 border border-blue-100 text-blue-700 text-sm">
+          <div className="flex items-start gap-3 px-4 py-3 mb-5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-sm">
             <FolderOpen size={15} className="mt-0.5 shrink-0" />
             <div>
               <p className="font-medium">Where do I start?</p>
-              <p className="text-xs mt-0.5 text-blue-600">Click any card to configure and run that step. Paths are preserved between steps.</p>
+              <p className="text-xs mt-0.5 text-blue-300">Click any card to configure and run that step. Paths are preserved between steps.</p>
             </div>
           </div>
         )}

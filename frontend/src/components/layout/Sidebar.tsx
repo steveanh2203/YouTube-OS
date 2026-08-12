@@ -1,34 +1,31 @@
 import { cn } from '@/lib/utils'
-import { useAppStore, type AutomateSubView, type MainView, type ProjectSubView } from '@/store/app.store'
+import { useAppStore, type MainView, type ProjectSubView } from '@/store/app.store'
 import { usePanelContext } from '@/contexts/PanelContext'
 import {
-  FolderOpen, LayoutDashboard, BarChart2, ChevronLeft, ChevronRight,
+  FolderOpen, LayoutDashboard, Radar, ChevronLeft, ChevronRight,
   Scissors, Cpu, Mic, Radio, ChevronRight as Chevron, Target,
-  FileText, Tag, Upload, Film, ClipboardList, CalendarRange, Video, AudioWaveform, MessageSquareReply, Settings, WandSparkles,
+  FileText, Tag, Upload, Film, ClipboardList, Video, MessageSquareReply, Settings,
+  Moon, Sun,
 } from 'lucide-react'
 
 export default function Sidebar() {
   const {
     mainView, setMainView,
     projectSubView, setProjectSubView,
-    automateSubView, setAutomateSubView,
     sidebarCollapsed, setSidebarCollapsed,
     selectedParentId, selectParent,
     selectedChildId, selectChild,
   } = usePanelContext()
 
-  const { parentProjects, splitView } = useAppStore()
+  const { parentProjects, themeMode, setThemeMode } = useAppStore()
 
   const collapsed = sidebarCollapsed
-  const compact = splitView && !collapsed
 
   const mainNav = [
-    { id: 'planner',      label: 'Planner',      icon: CalendarRange },
     { id: 'projects',     label: 'Projects',     icon: FolderOpen },
     { id: 'render',       label: 'FFmpeg Studio', icon: LayoutDashboard },
-    { id: 'automate',     label: 'Automate',      icon: WandSparkles },
     { id: 'reply-center', label: 'Reply Center',  icon: MessageSquareReply },
-    { id: 'analytics',    label: 'Analytics',     icon: BarChart2 },
+    { id: 'analytics',    label: 'Niche Research', icon: Radar },
     { id: 'competitors',  label: 'Competitors',   icon: Target },
     { id: 'settings',     label: 'Settings',      icon: Settings },
   ] as { id: MainView; label: string; icon: React.ElementType }[]
@@ -44,30 +41,24 @@ export default function Sidebar() {
     { id: 'fast-edit',     label: 'Fast Edit',     icon: Film },
     { id: 'cut-automate', label: 'Cut Automate', icon: Scissors },
     { id: 'sora-gen',          label: 'Sora Gen',        icon: Video },
-    { id: 'audio-visualizer', label: 'Audio Visualizer', icon: AudioWaveform },
     // { id: 'animation', label: 'Animation', icon: Sparkles }, // hidden
   ] as { id: ProjectSubView; label: string; icon: React.ElementType }[]
-
-  const automateNav = [
-    { id: 'short', label: 'Short Video' },
-    { id: 'long', label: 'Long Video' },
-  ] as { id: AutomateSubView; label: string }[]
 
   return (
     <aside
       className={cn(
-        'flex flex-col bg-slate-900 transition-all duration-200 shrink-0',
-        collapsed ? 'w-14' : compact ? 'w-44' : 'w-52',
+        'flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200',
+        collapsed ? 'w-14' : 'w-52',
       )}
     >
       {/* Logo + Collapse */}
       {collapsed ? (
-        <div className="flex flex-col items-center py-3 border-b border-white/10 gap-2">
-          <div className="shrink-0 w-7 h-7 rounded-md bg-primary-500 flex items-center justify-center shadow-sm">
-            <Scissors size={15} color="white" strokeWidth={2.5} />
+        <div className="flex flex-col items-center gap-2 border-b border-sidebar-border py-2.5">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
+            <Scissors size={15} strokeWidth={2.5} />
           </div>
           <button
-            className="btn-icon text-slate-400 hover:text-white hover:bg-white/10"
+            className="btn-icon text-sidebar-foreground/45 hover:bg-sidebar-accent hover:text-sidebar-foreground"
             onClick={() => setSidebarCollapsed(false)}
             title="Expand"
           >
@@ -75,15 +66,15 @@ export default function Sidebar() {
           </button>
         </div>
       ) : (
-        <div className="flex items-center gap-2.5 px-3 py-3 border-b border-white/10">
-          <div className="shrink-0 w-7 h-7 rounded-md bg-primary-500 flex items-center justify-center shadow-sm">
-            <Scissors size={15} color="white" strokeWidth={2.5} />
+        <div className="flex items-center gap-2.5 border-b border-sidebar-border px-3 py-2.5">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
+            <Scissors size={15} strokeWidth={2.5} />
           </div>
-          <span className={cn('font-semibold text-white tracking-tight truncate flex-1', compact ? 'text-[13px]' : 'text-sm')}>
+          <span className="flex-1 truncate font-heading text-sm font-semibold tracking-[-0.025em] text-sidebar-foreground">
             MasterOS
           </span>
           <button
-            className="btn-icon text-slate-400 hover:text-white hover:bg-white/10"
+            className="btn-icon text-sidebar-foreground/45 hover:bg-sidebar-accent hover:text-sidebar-foreground"
             onClick={() => setSidebarCollapsed(true)}
             title="Collapse"
           >
@@ -93,63 +84,12 @@ export default function Sidebar() {
       )}
 
       {/* Main Nav */}
-      <nav className={cn('flex flex-col gap-0.5 p-2 flex-1 overflow-y-auto overflow-x-hidden', compact && 'p-1.5')}>
+      <nav className="flex flex-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-2">
         {mainNav.map(({ id, label, icon: Icon }) => {
-          if (id === 'automate') {
-            const automateOpen = mainView === 'automate' && !collapsed
-
-            return (
-              <div key={id}>
-                <button
-                  className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', mainView === id && 'active')}
-                  onClick={() => setMainView('automate')}
-                  title={collapsed ? label : undefined}
-                >
-                  <Icon size={16} className="shrink-0" />
-                  {!collapsed && (
-                    <>
-                      <span className="flex-1 text-left">{label}</span>
-                      <Chevron size={14} className={cn('transition-transform', automateOpen && 'rotate-90')} />
-                    </>
-                  )}
-                </button>
-
-                {automateOpen && (
-                  <div className="mt-2 space-y-1 pl-7">
-                    {automateNav.map((item) => (
-                      <button
-                        key={item.id}
-                        className={cn(
-                          'group flex w-full items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-left text-sm transition-colors',
-                          automateSubView === item.id
-                            ? 'border-white/10 bg-white/8 text-white'
-                            : 'text-slate-400 hover:border-white/5 hover:bg-white/5 hover:text-slate-200',
-                          compact && 'px-2.5 py-1.5 text-[13px]',
-                        )}
-                        onClick={() => {
-                          setMainView('automate')
-                          setAutomateSubView(item.id)
-                        }}
-                      >
-                        <span
-                          className={cn(
-                            'h-1.5 w-1.5 rounded-full transition-colors',
-                            automateSubView === item.id ? 'bg-primary-300' : 'bg-slate-600 group-hover:bg-slate-400',
-                          )}
-                        />
-                        <span className="flex-1">{item.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          }
-
           return (
             <button
               key={id}
-              className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', mainView === id && 'active')}
+              className={cn('nav-item w-full', mainView === id && 'active')}
               onClick={() => setMainView(id)}
               title={collapsed ? label : undefined}
             >
@@ -167,7 +107,7 @@ export default function Sidebar() {
             {/* Parent list */}
             {projectSubView !== 'parents' && (
               <button
-                className="nav-item w-full text-slate-400 text-xs"
+                className="nav-item w-full text-xs"
                 onClick={() => { setProjectSubView('parents'); selectParent(null); selectChild(null) }}
               >
                 <Chevron size={12} className="rotate-180" />
@@ -180,9 +120,9 @@ export default function Sidebar() {
                 key={p.id}
                 className={cn(
                   'w-full flex items-center gap-2 rounded-md cursor-pointer',
-                  compact ? 'px-2.5 py-1.5 text-[13px]' : 'px-3 py-1.5 text-sm',
-                  'hover:bg-white/10 transition-colors duration-150',
-                  selectedParentId === p.id ? 'text-white font-medium bg-primary-500/80' : 'text-slate-300',
+                  'px-3 py-1.5 text-sm',
+                  'transition-colors duration-150 hover:bg-sidebar-accent',
+                  selectedParentId === p.id ? 'bg-sidebar-accent font-medium text-sidebar-foreground' : 'text-sidebar-foreground/65',
                 )}
                 onClick={() => {
                   selectParent(p.id)
@@ -191,7 +131,7 @@ export default function Sidebar() {
               >
                 <FolderOpen size={13} className="shrink-0" />
                 <span className="truncate">{p.name}</span>
-                <span className="ml-auto text-xs bg-white/10 text-slate-300 px-1.5 py-0.5 rounded">{p.childCount}</span>
+                <span className="ml-auto rounded-md border border-sidebar-border bg-sidebar-accent px-1.5 py-0.5 text-xs text-sidebar-foreground/60">{p.childCount}</span>
               </button>
             ))}
 
@@ -203,7 +143,7 @@ export default function Sidebar() {
                 {toolNav.map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
-                    className={cn('nav-item w-full', compact && 'gap-2 px-2.5 py-1.5 text-[13px]', projectSubView === id && 'active')}
+                    className={cn('nav-item w-full', projectSubView === id && 'active')}
                     onClick={() => setProjectSubView(id)}
                   >
                     <Icon size={14} className="shrink-0" />
@@ -216,12 +156,24 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* Bottom info */}
-      {!collapsed && !compact && (
-        <div className="px-3 py-2 border-t border-white/10">
-          <p className="text-xs text-slate-500">v0.1.0 — Light</p>
-        </div>
-      )}
+      {/* Theme + bottom info */}
+      <div className="border-t border-sidebar-border p-2">
+        <button
+          type="button"
+          className={cn('nav-item', collapsed && 'justify-center px-0')}
+          onClick={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
+          aria-label={themeMode === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={collapsed ? (themeMode === 'dark' ? 'Light theme' : 'Dark theme') : undefined}
+        >
+          {themeMode === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          {!collapsed && <span>{themeMode === 'dark' ? 'Light theme' : 'Dark theme'}</span>}
+        </button>
+        {!collapsed && (
+          <p className="mt-1 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sidebar-foreground/30">
+            Web · v0.1.0
+          </p>
+        )}
+      </div>
     </aside>
   )
 }

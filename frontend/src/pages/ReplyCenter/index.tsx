@@ -189,12 +189,12 @@ const AVATAR_HUES = ['indigo', 'teal', 'violet', 'amber', 'rose', 'sky'] as cons
 type AvatarHue = typeof AVATAR_HUES[number]
 
 const AVATAR_CLS: Record<AvatarHue, string> = {
-  indigo: 'bg-indigo-100 text-indigo-700',
+  indigo: 'bg-indigo-500/10 text-indigo-300',
   teal:   'bg-teal-100 text-teal-700',
-  violet: 'bg-violet-100 text-violet-700',
-  amber:  'bg-amber-100 text-amber-700',
-  rose:   'bg-rose-100 text-rose-700',
-  sky:    'bg-sky-100 text-sky-700',
+  violet: 'bg-violet-500/10 text-violet-300',
+  amber:  'bg-amber-500/10 text-amber-300',
+  rose:   'bg-rose-500/10 text-rose-300',
+  sky:    'bg-sky-500/10 text-sky-300',
 }
 
 function getAvatarHue(name: string): AvatarHue {
@@ -229,8 +229,8 @@ const FILTER_TABS: { key: CommentFilter; label: string }[] = [
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function ReplyCenter() {
-  const { parentProjects, childProjects, setPanelMainView } = useAppStore()
-  const { panelId, selectedParentId, selectParent } = usePanelContext()
+  const { parentProjects, childProjects } = useAppStore()
+  const { selectedParentId, selectParent, setMainView } = usePanelContext()
 
   // Core state
   const [configs, setConfigs] = useState<Record<string, YouTubeReplyConfig>>({})
@@ -787,7 +787,7 @@ export default function ReplyCenter() {
   }
 
   const openSettings = () => {
-    setPanelMainView(panelId, 'settings')
+    setMainView('settings')
     toast.info('Open Settings', 'Verify OAuth in Settings, then pair the channel from the extension.')
   }
 
@@ -833,7 +833,7 @@ export default function ReplyCenter() {
       <Dialog.Root open={showAiAutoConfirm} onOpenChange={setShowAiAutoConfirm}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-surface-200 bg-white p-6 shadow-popover animate-fade-in">
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-surface-200 bg-surface-0 p-6 shadow-popover animate-fade-in">
             <Dialog.Title className="text-base font-semibold text-surface-900">Enable AI Auto?</Dialog.Title>
             <Dialog.Description className="mt-2 text-sm leading-6 text-surface-600">
               Safe comments (praise, neutral) will be sent automatically. Questions and risky comments stay in your queue for review.
@@ -857,7 +857,7 @@ export default function ReplyCenter() {
       <Dialog.Root open={Boolean(replyHistoryCommentId)} onOpenChange={(open) => { if (!open) setReplyHistoryCommentId(null) }}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px]" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[76vh] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-popover animate-fade-in">
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[76vh] w-[min(680px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-surface-200 bg-surface-0 shadow-popover animate-fade-in">
             {replyHistoryComment && (
               <>
                 <div className="flex items-start justify-between gap-4 border-b border-surface-200 px-4 py-3.5">
@@ -924,7 +924,7 @@ export default function ReplyCenter() {
                               'rounded-2xl border px-4 py-3',
                               reply.is_from_channel_owner
                                 ? 'border-primary-100 bg-primary-50/40'
-                                : 'border-surface-200 bg-white',
+                                : 'border-surface-200 bg-surface-0',
                             )}
                           >
                             <div className="flex items-start gap-3">
@@ -936,7 +936,7 @@ export default function ReplyCenter() {
                                       {reply.author_display_name}
                                     </p>
                                     {reply.is_from_channel_owner && (
-                                      <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-primary-700 ring-1 ring-primary-100">
+                                      <span className="rounded-full bg-surface-0 px-2 py-0.5 text-[10px] font-medium text-primary-700 ring-1 ring-primary-100">
                                         Sent
                                       </span>
                                     )}
@@ -972,7 +972,7 @@ export default function ReplyCenter() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
 
         {/* ── LEFT: Inbox ── */}
-        <div className="flex w-[38%] min-w-0 flex-col border-r border-surface-200 bg-white overflow-hidden">
+        <div className="flex w-[38%] min-w-0 flex-col border-r border-surface-200 bg-surface-0 overflow-hidden">
 
           {/* Inbox header */}
           <div className="border-b border-surface-200 px-4 py-3">
@@ -1002,7 +1002,7 @@ export default function ReplyCenter() {
                 className={cn(
                   'flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors duration-150 cursor-pointer',
                   aiAutoEnabled
-                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    ? 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/10'
                     : 'bg-surface-100 text-surface-500 hover:bg-surface-200',
                   (savingMode || !activeParentId) && 'cursor-not-allowed opacity-50',
                 )}
@@ -1050,7 +1050,7 @@ export default function ReplyCenter() {
                     {count > 0 && (
                       <span className={cn(
                         'rounded-full px-1.5 text-[10px] font-semibold',
-                        active ? 'bg-white/25 text-white' : 'bg-surface-200 text-surface-600',
+                        active ? 'bg-surface-0/25 text-white' : 'bg-surface-200 text-surface-600',
                       )}>
                         {count}
                       </span>
@@ -1114,22 +1114,22 @@ export default function ReplyCenter() {
                     const isFocused = focusedIndex === idx
 
                     const STATE_CLS: Record<typeof state, string> = {
-                      new:     'bg-sky-50 text-sky-700',
-                      ready:   'bg-violet-50 text-violet-700',
-                      replied: 'bg-emerald-50 text-emerald-700',
-                      skipped: 'bg-amber-50 text-amber-700',
+                      new:     'bg-sky-500/10 text-sky-300',
+                      ready:   'bg-violet-500/10 text-violet-300',
+                      replied: 'bg-emerald-500/10 text-emerald-300',
+                      skipped: 'bg-amber-500/10 text-amber-300',
                     }
 
                     return (
                       <button
                         key={item.comment_id}
                         className={cn(
-                          'w-full rounded-xl border px-3 py-2.5 text-left transition-all duration-150 cursor-pointer',
+                          'w-full rounded-xl border px-3 py-2.5 text-left transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 cursor-pointer',
                           isSelected
                             ? 'border-primary-300 bg-primary-50 shadow-card'
                             : isFocused
                             ? 'border-primary-200 bg-primary-50/50'
-                            : 'border-surface-200 bg-white hover:border-surface-300 hover:bg-surface-50',
+                            : 'border-surface-200 bg-surface-0 hover:border-surface-300 hover:bg-surface-50',
                           isFocused && 'ring-2 ring-primary-400 ring-offset-1',
                         )}
                         onClick={() => {
@@ -1168,7 +1168,7 @@ export default function ReplyCenter() {
                               {(sentiment === 'negative' || sentiment === 'question') && (
                                 <span className={cn(
                                   'rounded-full px-2 py-0.5 text-[10px] font-medium',
-                                  sentiment === 'question' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600',
+                                  sentiment === 'question' ? 'bg-amber-500/10 text-amber-300' : 'bg-red-500/10 text-red-300',
                                 )}>
                                   {sentiment}
                                 </span>
@@ -1232,18 +1232,18 @@ export default function ReplyCenter() {
                     <span className={cn(
                       'rounded-full px-2.5 py-1 text-[11px] font-medium',
                       selectedDecision === 'safe'
-                        ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-amber-50 text-amber-700',
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-amber-500/10 text-amber-300',
                     )}>
                       {selectedDecision === 'safe' ? 'Auto-safe' : 'Needs review'}
                     </span>
                     {selectedCommentState && (
                       <span className={cn(
                         'rounded-full px-2.5 py-1 text-[11px] font-medium',
-                        selectedCommentState === 'replied' ? 'bg-emerald-50 text-emerald-700'
-                        : selectedCommentState === 'ready' ? 'bg-violet-50 text-violet-700'
-                        : selectedCommentState === 'skipped' ? 'bg-amber-50 text-amber-700'
-                        : 'bg-sky-50 text-sky-700',
+                        selectedCommentState === 'replied' ? 'bg-emerald-500/10 text-emerald-300'
+                        : selectedCommentState === 'ready' ? 'bg-violet-500/10 text-violet-300'
+                        : selectedCommentState === 'skipped' ? 'bg-amber-500/10 text-amber-300'
+                        : 'bg-sky-500/10 text-sky-300',
                       )}>
                         {selectedCommentState}
                       </span>
@@ -1281,7 +1281,7 @@ export default function ReplyCenter() {
 
               {/* Error */}
               {error && (
-                <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
+                <p className="mt-3 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>
               )}
 
               {/* Actions */}

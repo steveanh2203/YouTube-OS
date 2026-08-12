@@ -207,10 +207,10 @@ export default function CompetitorsPage() {
   )
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-surface-0">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 px-5 py-3.5 border-b border-surface-200 bg-white shrink-0">
+      <div className="flex items-center gap-3 px-5 py-3.5 border-b border-surface-200 bg-surface-0 shrink-0">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600 shrink-0">
           <Target size={16} />
         </div>
@@ -411,7 +411,7 @@ export default function CompetitorsPage() {
           ) : (
             // Data table
             <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-white">
+              <thead className="sticky top-0 z-10 bg-surface-0">
                 <tr className="border-b border-surface-200 bg-surface-50">
                   <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-surface-400">
                     Title
@@ -484,7 +484,7 @@ export default function CompetitorsPage() {
                         <button
                           type="button"
                           onClick={() => void handleDeleteCompetitor(item.id)}
-                          className="btn-icon text-surface-300 hover:bg-red-50 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                          className="btn-icon text-surface-300 hover:bg-red-500/10 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer"
                           aria-label="Delete competitor"
                           title="Delete"
                         >

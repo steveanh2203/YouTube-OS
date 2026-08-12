@@ -75,7 +75,7 @@ export function PathBreadcrumb({
       {/* Outer container: same visual style as .input but flex row */}
       <div
         className={cn(
-          'flex items-center gap-0 rounded-lg border border-surface-300 bg-white',
+          'flex items-center gap-0 rounded-lg border border-surface-300 bg-surface-0',
           'focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100',
           'transition-shadow overflow-hidden min-h-[38px]',
         )}

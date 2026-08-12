@@ -82,13 +82,16 @@ test('roxyApi sends workspace credentials as JSON', async () => {
 })
 
 test('Roxy config normalizes hosts and round-trips browser storage', async () => {
-  const previousStorage = globalThis.localStorage
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   const values = new Map()
-  globalThis.localStorage = {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, String(value)),
-    removeItem: (key) => values.delete(key),
-  }
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key),
+    },
+  })
 
   try {
     const roxy = await loadOptionalModule('../src/lib/roxy.ts')
@@ -102,7 +105,11 @@ test('Roxy config normalizes hosts and round-trips browser storage', async () =>
       profileId: 'p1',
     })
   } finally {
-    globalThis.localStorage = previousStorage
+    if (previousStorage) {
+      Object.defineProperty(globalThis, 'localStorage', previousStorage)
+    } else {
+      delete globalThis.localStorage
+    }
   }
 })
 

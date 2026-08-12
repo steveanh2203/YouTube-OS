@@ -467,11 +467,97 @@ export interface OAuthSettingsResponse {
   message: string
 }
 
+export interface AI33SettingsResponse {
+  ok: boolean
+  settings: {
+    configured: boolean
+    connected: boolean
+    key_hint: string
+    verified_at: string
+  }
+  message: string
+}
+
+export interface YouTubeDataSettingsResponse {
+  ok: boolean
+  settings: {
+    configured: boolean
+    connected: boolean
+    key_hint: string
+    verified_at: string
+  }
+  message: string
+}
+
+export interface NicheResearchSummary {
+  opportunity_score: number
+  demand_score: number
+  competition_score: number
+  median_views: number
+  median_views_per_day: number
+  median_subscribers: number
+  small_channel_breakout_rate: number
+  result_count: number
+}
+
+export interface NicheKeywordIdea {
+  keyword: string
+  occurrences: number
+  avg_views: number
+  avg_views_per_day: number
+  score: number
+}
+
+export interface NicheVideo {
+  video_id: string
+  title: string
+  channel_id: string
+  channel_title: string
+  published_at: string
+  thumbnail_url: string
+  views: number
+  likes: number
+  comments: number
+  views_per_day: number
+  channel_subscribers: number
+  subscriber_count_hidden: boolean
+}
+
+export interface NicheResearchResponse {
+  ok: boolean
+  query: string
+  summary: NicheResearchSummary
+  keyword_ideas: NicheKeywordIdea[]
+  videos: NicheVideo[]
+  methodology: string
+}
+
+export const nicheResearchApi = {
+  settings: (): Promise<YouTubeDataSettingsResponse> => (
+    requestJson('/api/niche-research/settings')
+  ),
+  verifyKey: (body: { api_key: string }): Promise<YouTubeDataSettingsResponse> => (
+    postJson('/api/niche-research/settings/verify', body)
+  ),
+  search: (body: {
+    query: string
+    region_code: string
+    relevance_language: string
+    published_within_days: number
+    video_duration: 'any' | 'short' | 'medium' | 'long'
+    max_results: number
+  }): Promise<NicheResearchResponse> => postJson('/api/niche-research/search', body),
+}
+
 export const accountConnectApi = {
   settings: (): Promise<AccountConnectSettingsResponse> => requestJson('/api/account-connect/settings'),
   regenerate: (): Promise<AccountConnectSettingsResponse> => postEmpty('/api/account-connect/settings/regenerate'),
   oauthSettings: (): Promise<OAuthSettingsResponse> => requestJson('/api/account-connect/oauth-settings'),
   verifyOauth: (body: { client_id: string; client_secret: string }): Promise<OAuthSettingsResponse> => (
     postJson('/api/account-connect/oauth-settings/verify', body)
+  ),
+  ai33Settings: (): Promise<AI33SettingsResponse> => requestJson('/api/account-connect/ai33-settings'),
+  verifyAi33: (body: { api_key: string }): Promise<AI33SettingsResponse> => (
+    postJson('/api/account-connect/ai33-settings/verify', body)
   ),
 }

@@ -155,9 +155,9 @@ export default function SRTGen() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-white">
-        <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
-          <FileText size={16} className="text-violet-600" />
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-surface-0">
+        <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+          <FileText size={16} className="text-violet-300" />
         </div>
         <div>
           <h1 className="page-title">SRT Generator</h1>
@@ -226,7 +226,7 @@ export default function SRTGen() {
               <button
                 className={cn(
                   'btn-secondary text-xs py-1 px-2.5 h-auto',
-                  numbered && 'border-violet-300 text-violet-600 bg-violet-50'
+                  numbered && 'border-violet-300 text-violet-300 bg-violet-500/10'
                 )}
                 onClick={handleSplit}
                 disabled={!contentText.trim()}
@@ -249,7 +249,7 @@ export default function SRTGen() {
 
           {/* Import error */}
           {importError && (
-            <p className="flex items-center gap-1.5 text-xs text-red-600 mt-1">
+            <p className="flex items-center gap-1.5 text-xs text-red-300 mt-1">
               <AlertCircle size={11} className="shrink-0" />
               {importError}
             </p>
@@ -262,13 +262,13 @@ export default function SRTGen() {
                 <span className="font-medium text-surface-600">{sentenceCount}</span> sentences
               </p>
               {contentText.trim() && numbered && (
-                <span className="inline-flex items-center gap-1 text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded px-1.5 py-0.5">
+                <span className="inline-flex items-center gap-1 text-xs text-violet-300 bg-violet-500/10 border border-violet-500/20 rounded px-1.5 py-0.5">
                   <Hash size={10} />
                   Numbered
                 </span>
               )}
               {contentText.trim() && !numbered && (
-                <span className="inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                <span className="inline-flex items-center gap-1 text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
                   <Scissors size={10} />
                   Not numbered yet - click &quot;Split sentences&quot;
                 </span>
@@ -300,16 +300,16 @@ export default function SRTGen() {
         {result && (
           <div className={cn(
             'card p-4',
-            result.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+            result.ok ? 'border-green-500/20 bg-green-500/10' : 'border-red-500/20 bg-red-500/10'
           )}>
             <div className="flex items-start justify-between mb-3 gap-3">
               <div className="flex items-start gap-2">
                 {result.ok
-                  ? <CheckCircle size={16} className="text-green-600 mt-0.5 shrink-0" />
-                  : <AlertCircle size={16} className="text-red-600 mt-0.5 shrink-0" />}
+                  ? <CheckCircle size={16} className="text-green-300 mt-0.5 shrink-0" />
+                  : <AlertCircle size={16} className="text-red-300 mt-0.5 shrink-0" />}
                 <p className={cn(
                   'text-sm font-medium leading-snug',
-                  result.ok ? 'text-green-700' : 'text-red-700'
+                  result.ok ? 'text-green-300' : 'text-red-300'
                 )}>
                   {result.message}
                 </p>
@@ -326,7 +326,7 @@ export default function SRTGen() {
               )}
             </div>
             {result.output && (
-              <pre className="text-xs font-mono bg-white rounded-md p-3 border border-surface-200 max-h-64 overflow-y-auto whitespace-pre-wrap">
+              <pre className="text-xs font-mono bg-surface-0 rounded-md p-3 border border-surface-200 max-h-64 overflow-y-auto whitespace-pre-wrap">
                 {result.output}
               </pre>
             )}

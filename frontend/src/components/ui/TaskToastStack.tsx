@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight,
-  AudioWaveform,
   CheckCircle2,
   FileText,
   Film,
@@ -35,7 +34,6 @@ const TOOL_ICON: Record<ProjectSubView, React.ElementType> = {
   children:           Film,
   'resource-prep':    Film,
   'sora-gen':         Film,
-  'audio-visualizer': AudioWaveform,
 }
 
 function useAutoDismiss(task: BackgroundTask) {
@@ -53,25 +51,22 @@ function TaskToast({ task }: { task: BackgroundTask }) {
   useAutoDismiss(task)
   const { removeTask } = useTaskStore()
   const {
-    setActivePanelId,
-    setSplitView,
-    setPanelMainView,
-    setPanelSubView,
-    selectPanelParent,
-    selectPanelChild,
+    setMainView,
+    setProjectSubView,
+    selectParent,
+    selectChild,
   } = useAppStore()
 
   const ToolIcon = TOOL_ICON[task.toolId] ?? Film
   const isDone = task.status === 'done'
   const isError = task.status === 'error'
-  const isCancelled = task.status === 'cancelled'
   const barColor = isDone ? 'bg-emerald-500' : isError ? 'bg-rose-500' : 'bg-amber-500'
-  const iconBg = isDone ? 'bg-emerald-50' : isError ? 'bg-rose-50' : 'bg-amber-50'
-  const iconColor = isDone ? 'text-emerald-500' : isError ? 'text-rose-500' : 'text-amber-600'
+  const iconBg = isDone ? 'bg-emerald-500/10' : isError ? 'bg-rose-500/10' : 'bg-amber-500/10'
+  const iconColor = isDone ? 'text-emerald-300' : isError ? 'text-rose-300' : 'text-amber-300'
   const statusLabel = isDone ? 'Completed' : isError ? 'Error' : 'Stopped'
 
   return (
-    <div className="w-[312px] overflow-hidden rounded-2xl border border-surface-200 bg-white shadow-xl">
+    <div className="w-[312px] overflow-hidden rounded-2xl border border-surface-200 bg-surface-0 shadow-xl">
       <div className={cn('h-[3px] w-full', barColor)} />
 
       <div className="space-y-2 px-3.5 py-3">
@@ -103,7 +98,7 @@ function TaskToast({ task }: { task: BackgroundTask }) {
           <p
             className={cn(
               'px-1 text-[11px] leading-snug',
-              isDone ? 'text-emerald-700' : isError ? 'text-rose-600' : isCancelled ? 'text-amber-700' : 'text-amber-700',
+              isDone ? 'text-emerald-300' : isError ? 'text-rose-300' : 'text-amber-300',
             )}
           >
             {task.message}
@@ -112,22 +107,19 @@ function TaskToast({ task }: { task: BackgroundTask }) {
 
         <button
           onClick={() => {
-            const targetPanelId = task.panelId ?? 'left'
-            if (targetPanelId === 'right') setSplitView(true)
-            setActivePanelId(targetPanelId)
-            setPanelMainView(targetPanelId, task.targetMainView ?? 'projects')
-            setPanelSubView(targetPanelId, task.targetProjectSubView ?? task.toolId)
-            selectPanelParent(targetPanelId, task.targetParentId ?? null)
-            selectPanelChild(targetPanelId, task.targetChildId ?? null)
+            setMainView(task.targetMainView ?? 'projects')
+            setProjectSubView(task.targetProjectSubView ?? task.toolId)
+            selectParent(task.targetParentId ?? null)
+            selectChild(task.targetChildId ?? null)
             removeTask(task.id)
           }}
           className={cn(
             'flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[11px] font-medium transition-colors',
             isDone
-              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+              ? 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/10'
               : isError
-                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
-                : 'bg-amber-50 text-amber-700 hover:bg-amber-100',
+                ? 'bg-rose-500/10 text-rose-300 hover:bg-rose-500/10'
+                : 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/10',
           )}
         >
           Open {task.toolLabel}
@@ -145,21 +137,15 @@ function ProgressRing({ progress, size = 44 }: { progress: number; size?: number
   const offset = circ - (progress / 100) * circ
   return (
     <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(139,92,246,0.15)" strokeWidth="5" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-rule)" strokeWidth="5" />
       <circle
         cx={size / 2} cy={size / 2} r={r} fill="none"
-        stroke="url(#prog-grad)" strokeWidth="5"
+        stroke="var(--color-accent)" strokeWidth="5"
         strokeLinecap="round"
         strokeDasharray={circ}
         strokeDashoffset={offset}
         style={{ transition: 'stroke-dashoffset 0.4s ease-out' }}
       />
-      <defs>
-        <linearGradient id="prog-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stopColor="#8b5cf6" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-      </defs>
     </svg>
   )
 }
@@ -205,8 +191,7 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
         exit={{ opacity: 0, scale: 0.96, y: 8 }}
         transition={{ type: 'spring', stiffness: 340, damping: 28 }}
       >
-        {/* Card ngoài — light */}
-        <div className="overflow-hidden rounded-3xl bg-white shadow-[0_24px_64px_rgba(15,23,42,0.16)] ring-1 ring-slate-200">
+        <div className="overflow-hidden rounded-2xl border border-surface-200 bg-surface-0 shadow-popover">
 
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4">
@@ -216,14 +201,14 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
                 {[0, 1, 2].map(i => (
                   <span
                     key={i}
-                    className="h-2 w-2 rounded-full bg-violet-500"
+                    className="h-2 w-2 rounded-full bg-primary-500"
                     style={{ animation: `dot-pulse 1.2s ease-in-out ${i * 0.2}s infinite` }}
                   />
                 ))}
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-800">Cut Automate running</p>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-sm font-semibold text-surface-900">Cut Automate running</p>
+                <p className="text-[11px] text-surface-500">
                   {tasks.length} job{tasks.length > 1 ? 's' : ''} running · UI vẫn dùng bình thường
                 </p>
               </div>
@@ -233,7 +218,7 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
             <button
               onClick={() => setHidden(true)}
               aria-label="Hide popup"
-              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              className="rounded-lg p-1.5 text-surface-400 transition-colors hover:bg-surface-100 hover:text-surface-700"
             >
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                 <path d="M1 1l11 11M12 1L1 12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
@@ -242,7 +227,7 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
           </div>
 
           {/* Divider */}
-          <div className="mx-5 h-px bg-slate-100" />
+          <div className="mx-5 h-px bg-surface-200" />
 
           {/* Task list */}
           <div className="max-h-[min(420px,calc(100dvh-160px))] overflow-y-auto px-5 py-4">
@@ -262,21 +247,21 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
                       transition={{ type: 'spring', stiffness: 320, damping: 28 }}
                     >
                       {/* Task card */}
-                      <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                      <div className="rounded-xl border border-surface-200 bg-surface-50 p-4">
 
                         {/* Row: progress ring + info + Stop */}
                         <div className="flex items-center gap-3">
                           {/* SVG Progress Ring */}
                           <div className="relative shrink-0">
                             <ProgressRing progress={progress} size={44} />
-                            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-violet-600 rotate-90">
+                            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-primary-300 rotate-90">
                               {progress}
                             </span>
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold text-slate-800">{task.label}</p>
-                            <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                            <p className="truncate text-sm font-semibold text-surface-900">{task.label}</p>
+                            <p className="mt-0.5 truncate text-[11px] text-surface-500">
                               {task.message || 'Running in background…'}
                             </p>
                           </div>
@@ -287,9 +272,9 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
                             disabled={stopping}
                             aria-label={`Stop ${task.label}`}
                             className={cn(
-                              'shrink-0 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition-all',
+                              'shrink-0 rounded-xl px-3 py-1.5 text-[11px] font-semibold transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                               stopping
-                                ? 'cursor-not-allowed bg-rose-100 text-rose-400'
+                                ? 'cursor-not-allowed bg-rose-500/10 text-rose-400'
                                 : 'bg-rose-500 text-white hover:bg-rose-600 active:scale-95',
                             )}
                           >
@@ -298,12 +283,12 @@ function RunningCutTaskDock({ tasks }: { tasks: BackgroundTask[] }) {
                         </div>
 
                         {/* Progress bar */}
-                        <div className="mt-3 overflow-hidden rounded-full bg-slate-200 h-1.5">
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-200">
                           <div
                             className="h-full rounded-full transition-[width] duration-500 ease-out"
                             style={{
                               width: `${progress}%`,
-                              background: 'linear-gradient(90deg, #8b5cf6, #6366f1)',
+                              background: 'var(--color-accent)',
                             }}
                           />
                         </div>

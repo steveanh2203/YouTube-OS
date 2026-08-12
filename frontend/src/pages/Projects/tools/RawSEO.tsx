@@ -44,9 +44,9 @@ export default function RawSEO() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-white">
-        <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
-          <Tag size={16} className="text-blue-600" />
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-surface-0">
+        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+          <Tag size={16} className="text-blue-300" />
         </div>
         <div>
           <h1 className="page-title">Raw SEO</h1>
@@ -107,20 +107,20 @@ export default function RawSEO() {
 
         {/* Results */}
         {result && (
-          <div className={cn('card p-4', result.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50')}>
-            <p className={cn('text-sm font-semibold mb-3', result.ok ? 'text-green-700' : 'text-red-700')}>
+          <div className={cn('card p-4', result.ok ? 'border-green-500/20 bg-green-500/10' : 'border-red-500/20 bg-red-500/10')}>
+            <p className={cn('text-sm font-semibold mb-3', result.ok ? 'text-green-300' : 'text-red-300')}>
               {result.message}
             </p>
             {result.results.length > 0 && (
               <div className="space-y-1.5">
                 {result.results.map((r, i) => (
-                  <div key={i} className="flex items-start gap-2 text-xs bg-white rounded px-3 py-2 border border-surface-200">
+                  <div key={i} className="flex items-start gap-2 text-xs bg-surface-0 rounded px-3 py-2 border border-surface-200">
                     {r.ok
                       ? <CheckCircle size={13} className="text-green-500 shrink-0 mt-0.5" />
                       : <XCircle size={13} className="text-red-500 shrink-0 mt-0.5" />}
                     <div className="min-w-0">
                       <p className="font-mono truncate text-surface-600">{r.file.split('/').pop()}</p>
-                      <p className={cn('mt-0.5', r.ok ? 'text-green-600' : 'text-red-600')}>{r.message}</p>
+                      <p className={cn('mt-0.5', r.ok ? 'text-green-300' : 'text-red-300')}>{r.message}</p>
                     </div>
                   </div>
                 ))}

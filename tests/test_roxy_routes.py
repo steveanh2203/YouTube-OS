@@ -44,7 +44,7 @@ class RoxyRouteTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(
             result.videos,
-            [str(folder / "clip_a.mp4"), str(folder / "clip_b.mov")],
+            [str((folder / "clip_a.mp4").resolve()), str((folder / "clip_b.mov").resolve())],
         )
 
     def test_list_folder_videos_rejects_missing_folder(self) -> None:

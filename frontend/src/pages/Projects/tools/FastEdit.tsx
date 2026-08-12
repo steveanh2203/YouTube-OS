@@ -45,11 +45,11 @@ function Section({
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="rounded-xl border border-surface-200 bg-white overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-surface-200 bg-surface-0 overflow-hidden shadow-sm">
       <button
         className={cn(
           'flex items-center gap-2.5 w-full px-5 py-3 text-left',
-          'bg-white',
+          'bg-surface-0',
           collapsible && 'cursor-pointer hover:bg-surface-50 transition-colors',
           open && collapsible && 'border-b border-surface-100',
         )}
@@ -198,7 +198,7 @@ function ComposeTab() {
 
       {/* FFmpeg warning */}
       {status && !status.ready_to_render && (
-        <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+        <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-sm">
           <AlertCircle size={15} className="shrink-0" />
           <span>FFmpeg is not available - install FFmpeg to render.</span>
         </div>
@@ -322,8 +322,8 @@ function ComposeTab() {
       <div className="flex items-center justify-between pt-1">
         <div className="text-xs">
           {status?.ready_to_render
-            ? <span className="flex items-center gap-1.5 text-green-600 font-medium"><Zap size={12} /> FFmpeg ready</span>
-            : <span className="flex items-center gap-1.5 text-amber-600"><AlertCircle size={12} /> FFmpeg not ready</span>
+            ? <span className="flex items-center gap-1.5 text-green-300 font-medium"><Zap size={12} /> FFmpeg ready</span>
+            : <span className="flex items-center gap-1.5 text-amber-300"><AlertCircle size={12} /> FFmpeg not ready</span>
           }
         </div>
         <button
@@ -342,14 +342,14 @@ function ComposeTab() {
       {renderResult && (
         <div className={cn(
           'rounded-xl border p-4',
-          renderResult.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50',
+          renderResult.ok ? 'border-green-500/20 bg-green-500/10' : 'border-red-500/20 bg-red-500/10',
         )}>
           <div className="flex items-start gap-2.5 mb-2">
             {renderResult.ok
-              ? <CheckCircle size={16} className="text-green-600 mt-0.5 shrink-0" />
-              : <AlertCircle size={16} className="text-red-600 mt-0.5 shrink-0" />}
+              ? <CheckCircle size={16} className="text-green-300 mt-0.5 shrink-0" />
+              : <AlertCircle size={16} className="text-red-300 mt-0.5 shrink-0" />}
             <div>
-              <p className={cn('text-sm font-semibold', renderResult.ok ? 'text-green-700' : 'text-red-700')}>
+              <p className={cn('text-sm font-semibold', renderResult.ok ? 'text-green-300' : 'text-red-300')}>
                 {renderResult.message}
               </p>
               {renderResult.scenes.length > 0 && (
@@ -364,7 +364,7 @@ function ComposeTab() {
               {renderResult.scenes.map(s => (
                 <div key={s.index} className={cn(
                   'flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg',
-                  s.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+                  s.success ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300',
                 )}>
                   <span className="font-mono w-5 text-right shrink-0 opacity-60">{s.index + 1}</span>
                   <span className="flex-1 truncate font-mono">{s.output_path.split('/').pop()}</span>
@@ -379,7 +379,7 @@ function ComposeTab() {
                     </a>
                   )}
                   {s.error && (
-                    <span className="text-red-600 truncate max-w-[200px]" title={s.error}>{s.error}</span>
+                    <span className="text-red-300 truncate max-w-[200px]" title={s.error}>{s.error}</span>
                   )}
                 </div>
               ))}
@@ -479,10 +479,10 @@ function RenameTab() {
               <button
                 key={id}
                 className={cn(
-                  'flex items-center gap-2.5 flex-1 px-4 py-3 rounded-xl border-2 transition-all duration-150 text-left',
+                  'flex items-center gap-2.5 flex-1 px-4 py-3 rounded-xl border-2 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-150 text-left',
                   assetType === id
                     ? 'border-primary-400 bg-primary-50 shadow-sm'
-                    : 'border-surface-200 bg-white hover:border-surface-300 hover:bg-surface-50',
+                    : 'border-surface-200 bg-surface-0 hover:border-surface-300 hover:bg-surface-50',
                 )}
                 onClick={() => setAssetType(id)}
               >
@@ -550,14 +550,14 @@ function RenameTab() {
       {result && (
         <div className={cn(
           'rounded-xl border p-4',
-          result.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50',
+          result.ok ? 'border-green-500/20 bg-green-500/10' : 'border-red-500/20 bg-red-500/10',
         )}>
           <div className="flex items-start gap-2.5 mb-2">
             {result.ok
-              ? <CheckCircle size={16} className="text-green-600 mt-0.5 shrink-0" />
-              : <AlertCircle size={16} className="text-red-600 mt-0.5 shrink-0" />}
+              ? <CheckCircle size={16} className="text-green-300 mt-0.5 shrink-0" />
+              : <AlertCircle size={16} className="text-red-300 mt-0.5 shrink-0" />}
             <div>
-              <p className={cn('text-sm font-semibold', result.ok ? 'text-green-700' : 'text-red-700')}>
+              <p className={cn('text-sm font-semibold', result.ok ? 'text-green-300' : 'text-red-300')}>
                 {result.message}
               </p>
               <p className="text-xs text-surface-500 mt-0.5">
@@ -570,7 +570,7 @@ function RenameTab() {
               {result.results.map((r, i) => (
                 <div key={i} className={cn(
                   'flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg',
-                  r.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+                  r.success ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300',
                 )}>
                   <span className="font-mono truncate flex-1">{r.original_path.split('/').pop()}</span>
                   <span className="text-surface-400 shrink-0">→</span>
@@ -600,9 +600,9 @@ export default function FastEdit() {
     <div className="flex flex-col h-full bg-surface-50">
 
       {/* ── Header ── */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-white shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
-          <Film size={16} className="text-rose-600" />
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-surface-200 bg-surface-0 shrink-0">
+        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center shrink-0">
+          <Film size={16} className="text-rose-300" />
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-bold text-surface-900">Fast Edit</h1>
@@ -613,7 +613,7 @@ export default function FastEdit() {
       </div>
 
       {/* ── Tabs ── */}
-      <div className="flex gap-1 border-b border-surface-200 bg-white px-5 shrink-0">
+      <div className="flex gap-1 border-b border-surface-200 bg-surface-0 px-5 shrink-0">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}

@@ -74,7 +74,7 @@ export function MediaPicker({ kind, accept, label, selectedName, className, onSe
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-950/45 p-4" role="dialog" aria-modal="true">
-          <div className="flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-surface-200 bg-white shadow-xl">
+          <div className="flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-surface-200 bg-surface-0 shadow-xl">
             <div className="flex items-center justify-between border-b border-surface-200 px-5 py-4">
               <div>
                 <h2 className="text-sm font-semibold text-surface-900">Choose {label}</h2>
@@ -100,7 +100,7 @@ export function MediaPicker({ kind, accept, label, selectedName, className, onSe
                 {loading ? <Loader size={14} className="animate-spin" /> : <Upload size={14} />}
                 Upload {label}
               </button>
-              {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+              {error && <p className="mt-2 text-xs text-red-300">{error}</p>}
             </div>
 
             <div className="min-h-40 flex-1 overflow-y-auto p-2">

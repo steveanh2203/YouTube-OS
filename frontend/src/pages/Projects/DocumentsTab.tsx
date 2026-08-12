@@ -259,7 +259,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
             <motion.div
               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.15 }}
-              className="px-3 py-2 border-b border-surface-200 bg-white"
+              className="px-3 py-2 border-b border-surface-200 bg-surface-0"
             >
               <div className="flex gap-1">
                 <input
@@ -274,7 +274,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
                   }}
                 />
                 <button
-                  className="btn-icon text-surface-400 hover:text-green-600"
+                  className="btn-icon text-surface-400 hover:text-green-300"
                   disabled={creatingFolder || !newFolderName.trim()}
                   onClick={handleCreateFolder}
                 >
@@ -333,7 +333,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
                   <span className="truncate flex-1">{folder.name}</span>
                   {count > 0 && <span className="text-[10px] text-surface-400">{count}</span>}
                   <button
-                    className="opacity-0 group-hover:opacity-100 shrink-0 text-surface-300 hover:text-red-400 transition-all duration-100 p-0.5"
+                    className="opacity-0 group-hover:opacity-100 shrink-0 text-surface-300 hover:text-red-400 transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-100 p-0.5"
                     title="Delete folder"
                     onClick={e => { e.stopPropagation(); setConfirmDelete({ type: 'folder', item: folder }) }}
                   >
@@ -403,7 +403,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
         </AnimatePresence>
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-surface-200 bg-white">
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-surface-200 bg-surface-0">
           <span className="text-xs text-surface-500">
             {activeFolderId === 'root' ? 'Uncategorized files' : folders.find(f => f.id === activeFolderId)?.name ?? ''}
             <span className="ml-2 text-surface-400">({displayDocs.length} file{displayDocs.length !== 1 ? 's' : ''})</span>
@@ -509,7 +509,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
                               <ExternalLink size={12} />
                             </button>
                             <button
-                              className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-50"
+                              className="btn-icon text-surface-400 hover:text-red-500 hover:bg-red-500/10"
                               title="Delete"
                               onClick={() => setConfirmDelete({ type: 'doc', item: doc })}
                             >
@@ -550,7 +550,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 12 }}
               transition={{ duration: 0.15 }}
-              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-surface-900 text-white rounded-lg shadow-xl px-4 py-2.5"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-3 bg-primary-500 text-surface-950 rounded-lg shadow-xl px-4 py-2.5"
             >
               <span className="text-xs font-medium">
                 {selectedIds.size} file{selectedIds.size !== 1 ? 's' : ''} selected
@@ -586,7 +586,7 @@ export default function DocumentsTab({ parentId }: { parentId: string }) {
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }} transition={{ duration: 0.15 }}
-              className="bg-white rounded-xl shadow-xl p-6 w-[380px] mx-4"
+              className="bg-surface-0 rounded-xl shadow-xl p-6 w-[380px] mx-4"
             >
               <h3 className="text-sm font-semibold text-surface-900 mb-2">
                 {confirmDelete.type === 'folder'

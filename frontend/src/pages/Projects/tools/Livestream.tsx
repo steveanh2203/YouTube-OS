@@ -52,8 +52,8 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={cn(
       'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium',
-      status === 'streaming' ? 'bg-green-100 text-green-700' :
-      status === 'error'     ? 'bg-red-100 text-red-700'     :
+      status === 'streaming' ? 'bg-green-500/10 text-green-300' :
+      status === 'error'     ? 'bg-red-500/10 text-red-300'     :
                                'bg-surface-100 text-surface-500',
     )}>
       {status === 'streaming' && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
@@ -107,9 +107,9 @@ function ChannelCard({
   return (
     <div
       className={cn(
-        'rounded-xl border bg-white overflow-hidden transition-all',
+        'rounded-xl border bg-surface-0 overflow-hidden transition-[background-color,border-color,color,box-shadow,opacity,transform]',
         isStreaming ? 'border-green-300/60' :
-        status === 'error' ? 'border-red-200' :
+        status === 'error' ? 'border-red-500/20' :
         isSelected ? 'border-primary-300' : 'border-surface-200',
       )}
     >
@@ -120,10 +120,10 @@ function ChannelCard({
       >
         <div className={cn(
           'w-8 h-8 rounded-full flex items-center justify-center shrink-0',
-          isStreaming ? 'bg-green-100' : 'bg-surface-100',
+          isStreaming ? 'bg-green-500/10' : 'bg-surface-100',
         )}>
           {isStreaming
-            ? <Radio size={14} className="text-green-600 animate-pulse" />
+            ? <Radio size={14} className="text-green-300 animate-pulse" />
             : <Radio size={14} className="text-surface-400" />
           }
         </div>
@@ -142,12 +142,12 @@ function ChannelCard({
         {isStreaming && stats && (
           <div className="hidden sm:flex items-center gap-2 shrink-0">
             {stats.fps > 0 && (
-              <span className="text-xs font-mono bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
+              <span className="text-xs font-mono bg-green-500/10 text-green-300 px-1.5 py-0.5 rounded">
                 {stats.fps.toFixed(0)} fps
               </span>
             )}
             {stats.bitrate_kbps > 0 && (
-              <span className="text-xs font-mono bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
+              <span className="text-xs font-mono bg-blue-500/10 text-blue-300 px-1.5 py-0.5 rounded">
                 {(stats.bitrate_kbps / 1000).toFixed(1)} Mb/s
               </span>
             )}
@@ -157,7 +157,7 @@ function ChannelCard({
         {/* Start/Stop button */}
         <button
           className={cn(
-            'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+            'shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
             isStreaming
               ? 'bg-red-500 text-white hover:bg-red-600'
               : 'bg-green-500 text-white hover:bg-green-600',
@@ -249,7 +249,7 @@ function ChannelCard({
                       'flex-1 py-1.5 text-xs font-medium transition-colors',
                       ch.play_mode === m
                         ? 'bg-primary-600 text-white'
-                        : 'bg-white text-surface-600 hover:bg-surface-50',
+                        : 'bg-surface-0 text-surface-600 hover:bg-surface-50',
                     )}
                     onClick={() => onUpdate(ch.id, { play_mode: m })}
                   >
@@ -299,7 +299,7 @@ function ChannelCard({
                     ch[key] ? 'bg-primary-500' : 'bg-surface-200',
                   )}>
                     <div className={cn(
-                      'absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform',
+                      'absolute top-0.5 w-3 h-3 bg-surface-0 rounded-full shadow transition-transform',
                       ch[key] ? 'translate-x-4' : 'translate-x-0.5',
                     )} />
                   </div>
@@ -311,7 +311,7 @@ function ChannelCard({
           {/* Delete */}
           <div className="flex justify-end pt-1">
             <button
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
               onClick={() => onDelete(ch.id)}
             >
               <Trash2 size={12} /> Delete channel
@@ -451,13 +451,13 @@ export default function Livestream() {
   return (
     <div className="flex flex-col h-full">
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-white">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-surface-200 bg-surface-0">
         <div className="flex items-center gap-3">
           <div className={cn(
             'w-8 h-8 rounded-lg flex items-center justify-center',
-            streamingCount > 0 ? 'bg-green-100' : 'bg-rose-50',
+            streamingCount > 0 ? 'bg-green-500/10' : 'bg-rose-500/10',
           )}>
-            <Radio size={16} className={streamingCount > 0 ? 'text-green-600 animate-pulse' : 'text-rose-500'} />
+            <Radio size={16} className={streamingCount > 0 ? 'text-green-300 animate-pulse' : 'text-rose-500'} />
           </div>
           <div>
             <h1 className="page-title">Livestream Studio</h1>
@@ -469,13 +469,13 @@ export default function Livestream() {
                 </span>
               )}
               {ffmpeg.status === 'installed' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 font-medium">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-500/10 text-green-300 font-medium">
                   <CheckCircle size={10} />
                   installed{ffmpeg.version ? ` · ${ffmpeg.version}` : ''}
                 </span>
               )}
               {ffmpeg.status === 'missing' && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-600 font-medium">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-500/10 text-red-300 font-medium">
                   <AlertTriangle size={10} />
                   not installed — <a href="https://ffmpeg.org/download.html" target="_blank" rel="noreferrer" className="underline">download</a>
                 </span>
@@ -486,7 +486,7 @@ export default function Livestream() {
 
         <div className="flex items-center gap-2">
           {streamingCount > 0 && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-100 text-xs font-medium text-green-700">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10 text-xs font-medium text-green-300">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               {streamingCount} live
             </span>
@@ -550,12 +550,12 @@ export default function Livestream() {
                     </span>
                   </div>
                   {statusMap[selectedId].fps > 0 && (
-                    <span className="text-xs font-mono bg-white border border-surface-200 px-2 py-0.5 rounded text-surface-700">
+                    <span className="text-xs font-mono bg-surface-0 border border-surface-200 px-2 py-0.5 rounded text-surface-700">
                       {statusMap[selectedId].fps.toFixed(0)} fps
                     </span>
                   )}
                   {statusMap[selectedId].bitrate_kbps > 0 && (
-                    <span className="text-xs font-mono bg-white border border-surface-200 px-2 py-0.5 rounded text-surface-700">
+                    <span className="text-xs font-mono bg-surface-0 border border-surface-200 px-2 py-0.5 rounded text-surface-700">
                       {(statusMap[selectedId].bitrate_kbps / 1000).toFixed(1)} Mb/s
                     </span>
                   )}
@@ -590,7 +590,7 @@ export default function Livestream() {
               {/* Logs */}
               <div
                 ref={logsRef}
-                className="flex-1 overflow-y-auto p-4 bg-surface-900 font-mono"
+                className="flex-1 overflow-y-auto bg-surface-950 p-4 font-mono"
               >
                 {selectedLogs.length === 0 ? (
                   <p className="text-xs text-surface-500 italic">No logs yet. Start the stream to see activity.</p>

@@ -163,22 +163,22 @@ function StatusBadge({ status, errorMsg }: { status: RowStatus; errorMsg?: strin
     </span>
   )
   if (status === 'generating') return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-600 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-300 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-full">
       <Loader size={10} className="animate-spin" /> Generating…
     </span>
   )
   if (status === 'upscaling') return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-600 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full">
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-300 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-full">
       <Loader size={10} className="animate-spin" /> Upscaling…
     </span>
   )
   if (status === 'done')       return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-green-300 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
       <CheckCircle2 size={10} /> Done
     </span>
   )
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full" title={errorMsg}>
+    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-300 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full" title={errorMsg}>
       <XCircle size={10} /> Failed
     </span>
   )
@@ -194,7 +194,7 @@ function StatHelp({
   tone?: 'default' | 'success' | 'error'
 }) {
   const toneClass = tone === 'success'
-    ? 'text-green-500 hover:text-green-600'
+    ? 'text-green-500 hover:text-green-300'
     : tone === 'error'
       ? 'text-red-400 hover:text-red-500'
       : 'text-surface-400 hover:text-surface-500'
@@ -217,7 +217,7 @@ function StatHelp({
         <Tooltip.Content
           side="top"
           sideOffset={8}
-          className="z-[70] max-w-[220px] rounded-lg border border-surface-200 bg-white px-2.5 py-2 text-[11px] leading-relaxed text-surface-600 shadow-xl"
+          className="z-[70] max-w-[220px] rounded-lg border border-surface-200 bg-surface-0 px-2.5 py-2 text-[11px] leading-relaxed text-surface-600 shadow-xl"
         >
           {help}
           <Tooltip.Arrow className="fill-white" />
@@ -946,14 +946,14 @@ export default function AIGen() {
             exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.22 }}
             className="overflow-hidden shrink-0"
           >
-            <div className="flex items-center justify-between gap-3 px-5 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white text-xs">
+            <div className="flex items-center justify-between gap-3 bg-violet-600 px-5 py-2.5 text-xs text-white">
               <div className="flex items-center gap-2 min-w-0">
                 <Zap size={13} className="shrink-0" />
                 <span className="font-medium">Token received from extension</span>
                 <span className="opacity-70">·</span>
                 <span className="font-mono opacity-80 truncate max-w-[200px]">{tokenToast.tokenPreview}</span>
                 {tokenToast.projectId && <><span className="opacity-70">·</span><span className="opacity-80 truncate max-w-[120px]">Project: {tokenToast.projectId.slice(0, 8)}…</span></>}
-                {tokenToast.autoStart && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-white/20 font-semibold">⚡ Auto-generating</span>}
+                {tokenToast.autoStart && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-surface-0/20 font-semibold">⚡ Auto-generating</span>}
               </div>
               <button className="shrink-0 opacity-60 hover:opacity-100 transition-opacity" onClick={() => setTokenToast(t => ({ ...t, visible: false }))}>✕</button>
             </div>
@@ -962,10 +962,10 @@ export default function AIGen() {
       </AnimatePresence>
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-surface-200 bg-white shrink-0">
+      <div className="flex items-center justify-between px-6 py-3.5 border-b border-surface-200 bg-surface-0 shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-violet-100 flex items-center justify-center">
-            <Wand2 size={16} className="text-violet-600" />
+          <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center">
+            <Wand2 size={16} className="text-violet-300" />
           </div>
           <div>
             <h1 className="page-title">AI Image Generator</h1>
@@ -976,7 +976,7 @@ export default function AIGen() {
         </div>
         <div className="flex items-center gap-2">
           {lastExtTokenTs.current > 0 && (
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-50 border border-green-200 text-[11px] font-medium text-green-700">
+            <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-[11px] font-medium text-green-300">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               Extension connected
             </span>
@@ -995,7 +995,7 @@ export default function AIGen() {
             <motion.aside
               initial={{ width: 0, opacity: 0 }} animate={{ width: 272, opacity: 1 }} exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="shrink-0 border-r border-surface-200 bg-white overflow-y-auto overflow-x-hidden"
+              className="shrink-0 border-r border-surface-200 bg-surface-0 overflow-y-auto overflow-x-hidden"
             >
               <div className="p-4 space-y-5 w-[272px]">
 
@@ -1005,8 +1005,8 @@ export default function AIGen() {
                   <div className="flex gap-1">
                     {(['whisk', 'google_flow'] as const).map(b => (
                       <button key={b} onClick={() => { setBackend(b); save('backend', b) }}
-                        className={cn('flex-1 py-2 rounded-lg border text-xs font-medium transition-all',
-                          backend === b ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-surface-200 text-surface-500 hover:border-surface-300')}>
+                        className={cn('flex-1 py-2 rounded-lg border text-xs font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
+                          backend === b ? 'border-violet-500 bg-violet-500/10 text-violet-300' : 'border-surface-200 text-surface-500 hover:border-surface-300')}>
                         {b === 'whisk' ? '⚡ Whisk' : '🌊 Google Flow'}
                       </button>
                     ))}
@@ -1071,7 +1071,7 @@ export default function AIGen() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <label htmlFor={`ref-change-${ref.id}`}
-                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-surface-200 bg-white text-[11px] font-medium text-surface-600 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 cursor-pointer transition-all w-full justify-center">
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-surface-200 bg-surface-0 text-[11px] font-medium text-surface-600 hover:border-violet-400 hover:text-violet-300 hover:bg-violet-500/10 cursor-pointer transition-[background-color,border-color,color,box-shadow,opacity,transform] w-full justify-center">
                               <Camera size={11} /> Change #{idx + 1}
                             </label>
                             <input id={`ref-change-${ref.id}`} type="file" accept="image/*" className="hidden"
@@ -1082,7 +1082,7 @@ export default function AIGen() {
                           <div className="flex items-center gap-1.5">
                             <input className="input flex-1 text-xs py-1.5" placeholder={`Name #${idx + 1}`}
                               value={ref.name} onChange={e => setRefImages(prev => prev.map(r => r.id === ref.id ? { ...r, name: e.target.value } : r))} />
-                            <button className="p-1.5 rounded-lg text-surface-400 hover:text-red-500 hover:bg-red-50 transition-all"
+                            <button className="p-1.5 rounded-lg text-surface-400 hover:text-red-500 hover:bg-red-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                               onClick={() => setRefImages(prev => prev.filter(r => r.id !== ref.id))}><Trash2 size={14} /></button>
                           </div>
                           <p className="text-[10px] text-surface-400 mt-1 px-0.5 truncate">{ref.fileName}</p>
@@ -1095,7 +1095,7 @@ export default function AIGen() {
                       <input id="ref-add-input" ref={addInputRef} type="file" accept="image/*" className="hidden"
                         onChange={e => { const f = e.target.files?.[0]; if (f) handleAddFile(f); e.target.value = '' }} />
                       <label htmlFor="ref-add-input"
-                        className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed text-xs transition-all cursor-pointer border-surface-300 text-surface-500 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50">
+                        className="mt-3 w-full flex items-center justify-center gap-2 py-2 rounded-lg border border-dashed text-xs transition-[background-color,border-color,color,box-shadow,opacity,transform] cursor-pointer border-surface-300 text-surface-500 hover:border-violet-400 hover:text-violet-300 hover:bg-violet-500/10">
                         <Plus size={12} /> Add Reference Image
                       </label>
                     </>
@@ -1108,8 +1108,8 @@ export default function AIGen() {
                   <div className="grid grid-cols-5 gap-1">
                     {RATIOS.map(r => (
                       <button key={r.label} onClick={() => setRatio(r.label)}
-                        className={cn('flex flex-col items-center gap-1 py-2 px-1 rounded-lg border text-[10px] font-medium transition-all',
-                          ratio === r.label ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-surface-200 text-surface-500 hover:border-surface-300')}>
+                        className={cn('flex flex-col items-center gap-1 py-2 px-1 rounded-lg border text-[10px] font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
+                          ratio === r.label ? 'border-violet-500 bg-violet-500/10 text-violet-300' : 'border-surface-200 text-surface-500 hover:border-surface-300')}>
                         <div className={cn('border-2 rounded-sm', ratio === r.label ? 'border-violet-500' : 'border-surface-400')}
                           style={{ width: r.w >= r.h ? 18 : Math.round(18 * r.w / r.h), height: r.h >= r.w ? 18 : Math.round(18 * r.h / r.w) }} />
                         {r.label}
@@ -1150,14 +1150,14 @@ export default function AIGen() {
                           }
                         } catch { /* user cancelled */ }
                       }}
-                      className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-white text-surface-500 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-all"
+                      className="shrink-0 px-2.5 py-2 rounded-lg border border-surface-200 bg-surface-0 text-surface-500 hover:border-violet-400 hover:text-violet-300 hover:bg-violet-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                       title="Browse folder"
                     >
                       <FolderOpen size={14} />
                     </button>
                   </div>
                   {outputFolder.trim() ? (
-                    <p className="text-[10px] text-green-600 mt-1.5 flex items-center gap-1">
+                    <p className="text-[10px] text-green-300 mt-1.5 flex items-center gap-1">
                       <CheckCircle2 size={9} /> Images will be auto-saved here
                     </p>
                   ) : (
@@ -1172,7 +1172,7 @@ export default function AIGen() {
                 <section>
                   <label className="label mb-2 flex items-center justify-between">
                     <span>Parallel Threads</span>
-                    <span className="text-[10px] font-semibold text-violet-600 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded">
+                    <span className="text-[10px] font-semibold text-violet-300 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded">
                       {threadCount === 0 ? `Auto (${suggestThreads(rows.length || 1)})` : `${threadCount}×`}
                     </span>
                   </label>
@@ -1202,7 +1202,7 @@ export default function AIGen() {
                         upscaleEnabled ? 'bg-violet-600' : 'bg-surface-200',
                       )}
                     >
-                      <span className={cn('inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform', upscaleEnabled ? 'translate-x-4' : 'translate-x-0.5')} />
+                      <span className={cn('inline-block h-3.5 w-3.5 transform rounded-full bg-surface-0 shadow transition-transform', upscaleEnabled ? 'translate-x-4' : 'translate-x-0.5')} />
                     </button>
                   </div>
                   {upscaleEnabled && (
@@ -1215,9 +1215,9 @@ export default function AIGen() {
                             key={key}
                             onClick={() => { setUpscaleResolution(key); localStorage.setItem(LS('upscale_res'), key) }}
                             className={cn(
-                              'w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-medium transition-all',
+                              'w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                               isSelected
-                                ? 'border-violet-500 bg-violet-50 text-violet-700'
+                                ? 'border-violet-500 bg-violet-500/10 text-violet-300'
                                 : 'border-surface-200 text-surface-600 hover:border-surface-300 hover:bg-surface-50',
                             )}
                           >
@@ -1244,10 +1244,10 @@ export default function AIGen() {
         <main className="flex-1 flex flex-col overflow-hidden relative min-w-0">
 
           {/* ── Prompt Input ── */}
-          <div className="bg-white border-b border-surface-200 shrink-0 px-5 pt-4 pb-3">
+          <div className="bg-surface-0 border-b border-surface-200 shrink-0 px-5 pt-4 pb-3">
 
             {!cookie.trim() && (
-              <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">
+              <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
                 <Key size={12} className="shrink-0" />
                 Paste your {backend === 'whisk' ? 'Google session cookie' : 'bearer token'} in Settings to start.
               </div>
@@ -1257,7 +1257,7 @@ export default function AIGen() {
               {/* Textarea with drag & drop zone */}
               <div
                 className={cn(
-                  "flex-1 relative rounded-lg transition-all duration-200",
+                  "flex-1 relative rounded-lg transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-200",
                   isDragging && "ring-2 ring-violet-400 ring-offset-2"
                 )}
                 onDragEnter={handleDragEnter}
@@ -1277,7 +1277,7 @@ export default function AIGen() {
 
                 {/* Row count badge */}
                 {rows.length > 0 && (
-                  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-600 pointer-events-none select-none">
+                  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-500/10 text-violet-300 pointer-events-none select-none">
                     {rows.length}
                   </div>
                 )}
@@ -1290,10 +1290,10 @@ export default function AIGen() {
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-violet-400 bg-violet-50/90 backdrop-blur-sm"
+                      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-violet-400 bg-violet-500/10 backdrop-blur-sm"
                     >
                       <Upload size={24} className="text-violet-500" />
-                      <span className="text-sm font-medium text-violet-600">Drop file to import prompts</span>
+                      <span className="text-sm font-medium text-violet-300">Drop file to import prompts</span>
                       <span className="text-[10px] text-violet-400">.txt, .csv, .md, .json</span>
                     </motion.div>
                   )}
@@ -1320,7 +1320,7 @@ export default function AIGen() {
 
                 {/* Import File button */}
                 <button
-                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 bg-white text-[11px] font-medium text-surface-600 hover:bg-surface-50 hover:border-surface-300 transition-all"
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 bg-surface-0 text-[11px] font-medium text-surface-600 hover:bg-surface-50 hover:border-surface-300 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                   onClick={() => fileInputRef.current?.click()}
                   title="Import prompts from file (.txt, .csv, .md, .json)"
                 >
@@ -1342,7 +1342,7 @@ export default function AIGen() {
             <div className="flex items-center justify-between mt-2.5 px-0.5">
               <div className="flex items-center gap-3 text-[11px]">
                 {isRunning && (
-                  <span className="flex items-center gap-1 text-violet-600">
+                  <span className="flex items-center gap-1 text-violet-300">
                     <Loader size={10} className="animate-spin" /> {genStage}
                   </span>
                 )}
@@ -1351,7 +1351,7 @@ export default function AIGen() {
                 )}
                 {!isRunning && !errorMsg && rows.length > 0 && (
                   <span className="text-surface-400">
-                    {doneCount > 0 && <span className="text-green-600 font-medium mr-1">✓ {doneCount} done</span>}
+                    {doneCount > 0 && <span className="text-green-300 font-medium mr-1">✓ {doneCount} done</span>}
                     {failedCount > 0 && <span className="text-red-500 font-medium mr-1">✗ {failedCount} failed</span>}
                     {pendingCount > 0 && <span className="text-surface-400">○ {pendingCount} pending</span>}
                   </span>
@@ -1365,7 +1365,7 @@ export default function AIGen() {
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">
 
             {/* Table toolbar */}
-            <div className="bg-white border-b border-surface-200 px-5 py-2.5 flex items-center justify-between shrink-0">
+            <div className="bg-surface-0 border-b border-surface-200 px-5 py-2.5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-surface-700">Generation Results</span>
                 <span className="text-[11px] bg-surface-100 text-surface-500 border border-surface-200 px-2 py-0.5 rounded-full font-medium">
@@ -1377,9 +1377,9 @@ export default function AIGen() {
                   onClick={() => generateRows(selectedRows)}
                   disabled={selected.size === 0 || isRunning}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all',
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                     selected.size > 0 && !isRunning
-                      ? 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100'
+                      ? 'border-violet-300 bg-violet-500/10 text-violet-300 hover:bg-violet-500/10'
                       : 'border-surface-200 text-surface-400 cursor-not-allowed opacity-50',
                   )}
                 >
@@ -1389,9 +1389,9 @@ export default function AIGen() {
                   onClick={() => generateRows(failedRows)}
                   disabled={failedCount === 0 || isRunning}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all',
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                     failedCount > 0 && !isRunning
-                      ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100'
+                      ? 'border-red-300 bg-red-500/10 text-red-300 hover:bg-red-500/10'
                       : 'border-surface-200 text-surface-400 cursor-not-allowed opacity-50',
                   )}
                 >
@@ -1400,7 +1400,7 @@ export default function AIGen() {
                 <button
                   onClick={clearResults}
                   disabled={rows.length === 0}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 text-[11px] font-medium text-surface-500 hover:border-surface-300 hover:bg-surface-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-surface-200 text-[11px] font-medium text-surface-500 hover:border-surface-300 hover:bg-surface-50 transition-[background-color,border-color,color,box-shadow,opacity,transform] disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Trash2 size={11} /> Clear
                 </button>
@@ -1422,8 +1422,8 @@ export default function AIGen() {
                     <tr className="bg-surface-50 border-b border-surface-200">
                       {/* Select all */}
                       <th className="w-10 px-3 py-2.5 text-left">
-                        <button onClick={toggleSelectAll} className="text-surface-400 hover:text-violet-600 transition-colors">
-                          {allSelected ? <CheckSquare size={14} className="text-violet-600" /> : <Square size={14} />}
+                        <button onClick={toggleSelectAll} className="text-surface-400 hover:text-violet-300 transition-colors">
+                          {allSelected ? <CheckSquare size={14} className="text-violet-300" /> : <Square size={14} />}
                         </button>
                       </th>
                       <th className="w-10 px-2 py-2.5 text-left text-[11px] font-semibold text-surface-500">#</th>
@@ -1444,14 +1444,14 @@ export default function AIGen() {
                           transition={{ duration: 0.15 }}
                           className={cn(
                             'border-b border-surface-100 transition-colors',
-                            selected.has(row.id) ? 'bg-violet-50' : 'bg-white hover:bg-surface-50',
-                            row.status === 'generating' && 'bg-violet-50/60',
+                            selected.has(row.id) ? 'bg-violet-500/10' : 'bg-surface-0 hover:bg-surface-50',
+                            row.status === 'generating' && 'bg-violet-500/10',
                           )}
                         >
                           {/* Checkbox */}
                           <td className="px-3 py-2.5">
-                            <button onClick={() => toggleSelect(row.id)} className="text-surface-400 hover:text-violet-600 transition-colors">
-                              {selected.has(row.id) ? <CheckSquare size={14} className="text-violet-600" /> : <Square size={14} />}
+                            <button onClick={() => toggleSelect(row.id)} className="text-surface-400 hover:text-violet-300 transition-colors">
+                              {selected.has(row.id) ? <CheckSquare size={14} className="text-violet-300" /> : <Square size={14} />}
                             </button>
                           </td>
 
@@ -1459,9 +1459,9 @@ export default function AIGen() {
                           <td className="px-2 py-2.5">
                             <span className={cn(
                               'w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center select-none',
-                              row.status === 'done' ? 'bg-green-100 text-green-700' :
-                              row.status === 'failed' ? 'bg-red-100 text-red-700' :
-                              row.status === 'generating' ? 'bg-violet-100 text-violet-700' :
+                              row.status === 'done' ? 'bg-green-500/10 text-green-300' :
+                              row.status === 'failed' ? 'bg-red-500/10 text-red-300' :
+                              row.status === 'generating' ? 'bg-violet-500/10 text-violet-300' :
                               'bg-surface-100 text-surface-500',
                             )}>
                               {idx + 1}
@@ -1471,7 +1471,7 @@ export default function AIGen() {
                           {/* Image */}
                           <td className="px-2 py-2.5">
                             <div
-                              className={cn('w-16 h-11 rounded-lg overflow-hidden border flex items-center justify-center cursor-pointer transition-all',
+                              className={cn('w-16 h-11 rounded-lg overflow-hidden border flex items-center justify-center cursor-pointer transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                                 row.imageSrc ? 'border-surface-200 hover:border-violet-400 hover:shadow-md' : 'border-dashed border-surface-200 bg-surface-50'
                               )}
                               onClick={() => row.imageSrc && setLightbox(row)}
@@ -1509,7 +1509,7 @@ export default function AIGen() {
                             <div className="flex items-center gap-1 justify-end">
                               {row.imageSrc && (
                                 <button
-                                  className="p-1.5 rounded-lg text-surface-400 hover:text-violet-600 hover:bg-violet-50 transition-all"
+                                  className="p-1.5 rounded-lg text-surface-400 hover:text-violet-300 hover:bg-violet-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                                   onClick={() => handleDownload(row)}
                                   title="Download"
                                 >
@@ -1518,7 +1518,7 @@ export default function AIGen() {
                               )}
                               {(row.status === 'done' || row.status === 'failed') && (
                                 <button
-                                  className="p-1.5 rounded-lg text-surface-400 hover:text-violet-600 hover:bg-violet-50 transition-all"
+                                  className="p-1.5 rounded-lg text-surface-400 hover:text-violet-300 hover:bg-violet-500/10 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                                   onClick={() => generateRows([row])}
                                   disabled={isRunning}
                                   title="Regenerate"
@@ -1539,8 +1539,8 @@ export default function AIGen() {
             {/* Stats footer */}
             {rows.length > 0 && (
               <Tooltip.Provider>
-                <div className="shrink-0 border-t border-surface-200 bg-white px-5 py-2.5 flex items-center gap-6">
-                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-700">
+                <div className="shrink-0 border-t border-surface-200 bg-surface-0 px-5 py-2.5 flex items-center gap-6">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-green-300">
                     <CheckCircle2 size={12} />
                     <span>{doneCount} Completed</span>
                     <StatHelp
@@ -1551,8 +1551,8 @@ export default function AIGen() {
                   </div>
                   <div
                     className={cn(
-                      'flex items-center gap-1.5 text-[11px] font-medium text-red-600 transition-colors',
-                      failedCount > 0 && 'cursor-pointer hover:text-red-700 hover:underline'
+                      'flex items-center gap-1.5 text-[11px] font-medium text-red-300 transition-colors',
+                      failedCount > 0 && 'cursor-pointer hover:text-red-300 hover:underline'
                     )}
                     onClick={() => failedCount > 0 && setShowFailedModal(true)}
                   >
@@ -1573,7 +1573,7 @@ export default function AIGen() {
                     />
                   </div>
                   {selected.size > 0 && (
-                    <span className="ml-auto text-[11px] text-violet-600 font-medium">{selected.size} selected</span>
+                    <span className="ml-auto text-[11px] text-violet-300 font-medium">{selected.size} selected</span>
                   )}
                 </div>
               </Tooltip.Provider>
@@ -1586,14 +1586,14 @@ export default function AIGen() {
               <motion.div
                 initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 24 }} transition={{ duration: 0.25 }}
-                className="absolute bottom-6 right-6 w-[340px] bg-white rounded-2xl shadow-2xl border border-surface-200 overflow-hidden"
+                className="absolute bottom-6 right-6 w-[340px] bg-surface-0 rounded-2xl shadow-2xl border border-surface-200 overflow-hidden"
               >
-                <div className="h-1 bg-gradient-to-r from-violet-500 via-indigo-500 to-violet-500 animate-pulse" />
+                <div className="h-1 animate-pulse bg-violet-500" />
                 <div className="p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-violet-100 flex items-center justify-center">
-                        <Sparkles size={12} className="text-violet-600" />
+                      <div className="w-6 h-6 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                        <Sparkles size={12} className="text-violet-300" />
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-surface-800">
@@ -1605,7 +1605,7 @@ export default function AIGen() {
                         </p>
                       </div>
                     </div>
-                    <span className="text-xl font-bold text-violet-600 tabular-nums">
+                    <span className="text-xl font-bold text-violet-300 tabular-nums">
                       {genTotal > 0 ? Math.round((genDone / genTotal) * 100) : Math.round(genPct)}%
                     </span>
                   </div>
@@ -1614,14 +1614,14 @@ export default function AIGen() {
                   {genTotal > 1 && (
                     <div className="flex gap-1 mb-3 flex-wrap">
                       {Array.from({ length: genTotal }).map((_, i) => (
-                        <div key={i} className={cn('h-1.5 flex-1 min-w-[6px] rounded-full transition-all duration-300',
+                        <div key={i} className={cn('h-1.5 flex-1 min-w-[6px] rounded-full transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-300',
                           i < genDone ? 'bg-violet-500' : i === genDone ? 'bg-violet-300 animate-pulse' : 'bg-surface-200')} />
                       ))}
                     </div>
                   )}
 
                   <div className="h-1.5 bg-surface-100 rounded-full overflow-hidden mb-3">
-                    <motion.div className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"
+                    <motion.div className="h-full rounded-full bg-violet-500"
                       animate={{ width: `${genTotal > 0 ? Math.round((genDone / genTotal) * 100) : genPct}%` }}
                       transition={{ duration: 0.4, ease: 'easeOut' }} />
                   </div>
@@ -1635,10 +1635,10 @@ export default function AIGen() {
                   <div className="flex items-center gap-1 mt-3">
                     {GEN_STAGES.slice(0, -1).map((s, i) => (
                       <div key={s.key} className="flex items-center flex-1">
-                        <div className={cn('w-1.5 h-1.5 rounded-full shrink-0 transition-all',
+                        <div className={cn('w-1.5 h-1.5 rounded-full shrink-0 transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                           genPct >= s.pct ? 'bg-violet-500 scale-125' : genPct >= (GEN_STAGES[i-1]?.pct ?? 0) ? 'bg-violet-300 animate-pulse' : 'bg-surface-200')} />
                         {i < GEN_STAGES.length - 2 && (
-                          <div className={cn('h-0.5 flex-1 mx-0.5 transition-all', genPct >= s.pct ? 'bg-violet-400' : 'bg-surface-200')} />
+                          <div className={cn('h-0.5 flex-1 mx-0.5 transition-[background-color,border-color,color,box-shadow,opacity,transform]', genPct >= s.pct ? 'bg-violet-400' : 'bg-surface-200')} />
                         )}
                       </div>
                     ))}
@@ -1647,7 +1647,7 @@ export default function AIGen() {
                   {/* Stop button */}
                   <button
                     onClick={handleStop}
-                    className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-600 text-[11px] font-semibold hover:bg-red-100 hover:border-red-300 transition-all"
+                    className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 text-[11px] font-semibold hover:bg-red-500/10 hover:border-red-300 transition-[background-color,border-color,color,box-shadow,opacity,transform]"
                   >
                     <Square size={10} className="fill-red-500 text-red-500" /> Stop
                   </button>
@@ -1673,7 +1673,7 @@ export default function AIGen() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="w-full max-w-[460px] rounded-2xl border border-surface-200 bg-white px-7 py-6 shadow-xl"
+              className="w-full max-w-[460px] rounded-2xl border border-surface-200 bg-surface-0 px-7 py-6 shadow-xl"
               onClick={e => e.stopPropagation()}
             >
               <h3 className="text-xl font-semibold text-surface-900">
@@ -1684,7 +1684,7 @@ export default function AIGen() {
                 Choose whether to continue in this folder or close and pick another folder.
               </p>
               {outputConflictDialog.videoCount > 0 && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs leading-5 text-amber-300">
                   Video files stay safe. AI Gen only writes image files, but this warning prevents mixing a new image batch into a video folder by accident.
                   {outputConflictDialog.videoSampleNames.length > 0 && (
                     <div className="mt-1 font-medium">
@@ -1707,13 +1707,13 @@ export default function AIGen() {
                   Close
                 </button>
                 <button
-                  className="inline-flex h-10 items-center justify-center rounded-lg border border-[#0D9488]/20 px-4 text-sm font-semibold text-[#0D9488] transition-colors hover:bg-[#0D9488]/5"
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-primary-500/20 px-4 text-sm font-semibold text-primary-300 transition-colors hover:bg-primary-50"
                   onClick={() => resolveOutputConflictMode('keep_both')}
                 >
                   Keep
                 </button>
                 <button
-                  className="inline-flex h-10 items-center justify-center rounded-lg bg-[#F97316] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#EA580C]"
+                  className="inline-flex h-10 items-center justify-center rounded-lg bg-primary-500 px-4 text-sm font-semibold text-surface-950 transition-colors hover:bg-primary-400"
                   onClick={() => resolveOutputConflictMode('replace_all')}
                 >
                   Override
@@ -1735,7 +1735,7 @@ export default function AIGen() {
             {/* Prev arrow */}
             <button
               className={cn(
-                'absolute left-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white flex items-center justify-center transition-all',
+                'absolute left-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-surface-0/20 hover:bg-surface-0/40 text-white flex items-center justify-center transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                 !lightboxPrev && 'opacity-0 pointer-events-none'
               )}
               onClick={e => { e.stopPropagation(); if (lightboxPrev) setLightbox(lightboxPrev) }}
@@ -1746,7 +1746,7 @@ export default function AIGen() {
             {/* Next arrow */}
             <button
               className={cn(
-                'absolute right-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 text-white flex items-center justify-center transition-all',
+                'absolute right-4 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-surface-0/20 hover:bg-surface-0/40 text-white flex items-center justify-center transition-[background-color,border-color,color,box-shadow,opacity,transform]',
                 !lightboxNext && 'opacity-0 pointer-events-none'
               )}
               onClick={e => { e.stopPropagation(); if (lightboxNext) setLightbox(lightboxNext) }}
@@ -1756,7 +1756,7 @@ export default function AIGen() {
 
             <motion.div
               initial={{ scale: 0.92 }} animate={{ scale: 1 }} exit={{ scale: 0.92 }}
-              className="relative max-w-3xl w-full bg-white rounded-2xl overflow-hidden shadow-2xl"
+              className="relative max-w-3xl w-full bg-surface-0 rounded-2xl overflow-hidden shadow-2xl"
               onClick={e => e.stopPropagation()}
             >
               <img src={lightbox.imageSrc} alt={lightbox.prompt} className="w-full object-contain max-h-[72vh]" />
@@ -1801,7 +1801,7 @@ export default function AIGen() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 8 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden"
+              className="bg-surface-0 rounded-xl shadow-xl w-full max-w-2xl overflow-hidden"
               onClick={e => e.stopPropagation()}
             >
               {/* Header */}
@@ -1834,7 +1834,7 @@ export default function AIGen() {
                   </thead>
                   <tbody>
                     {failedRows.map((row, idx) => (
-                      <tr key={row.id} className="border-b border-surface-100 last:border-0 hover:bg-red-50/40 transition-colors">
+                      <tr key={row.id} className="border-b border-surface-100 last:border-0 hover:bg-red-500/10 transition-colors">
                         <td className="px-4 py-2.5 text-surface-400 font-mono">{idx + 1}</td>
                         <td className="px-4 py-2.5 max-w-0">
                           <span
@@ -1885,7 +1885,7 @@ export default function AIGen() {
                   className="flex items-center gap-1.5 text-[12px] font-medium text-surface-600 hover:text-surface-800 px-3 py-1.5 rounded-lg hover:bg-surface-200 transition-colors"
                 >
                   {copiedAll
-                    ? <><Check size={12} className="text-green-500" /><span className="text-green-600">Copied!</span></>
+                    ? <><Check size={12} className="text-green-500" /><span className="text-green-300">Copied!</span></>
                     : <><Copy size={12} /><span>Copy All Prompts</span></>
                   }
                 </button>

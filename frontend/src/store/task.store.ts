@@ -17,7 +17,6 @@ export interface BackgroundTask {
   progress?: number
   canCancel?: boolean
   jobId?: string
-  panelId?: string
   targetMainView?: MainView
   targetProjectSubView?: ProjectSubView
   targetParentId?: string | null
@@ -53,7 +52,6 @@ export const useTaskStore = create<TaskStore>((set) => ({
   addTask: (task) => {
     const id = uid()
     const appState = useAppStore.getState()
-    const activePanel = appState.panels.find((panel) => panel.id === appState.activePanelId) ?? appState.panels[0]
 
     set(s => ({
       tasks: [...s.tasks, {
@@ -62,11 +60,10 @@ export const useTaskStore = create<TaskStore>((set) => ({
         status: 'running',
         startedAt: Date.now(),
         progress: task.progress ?? 0,
-        panelId: activePanel?.id,
-        targetMainView: activePanel?.mainView,
-        targetProjectSubView: activePanel?.projectSubView,
-        targetParentId: activePanel?.selectedParentId ?? null,
-        targetChildId: activePanel?.selectedChildId ?? null,
+        targetMainView: appState.mainView,
+        targetProjectSubView: appState.projectSubView,
+        targetParentId: appState.selectedParentId,
+        targetChildId: appState.selectedChildId,
       }],
     }))
     return id

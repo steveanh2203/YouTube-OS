@@ -51,3 +51,8 @@
 - Trước khi push code lên repo public, phải scan file local/config cho token, cookie, API key thật; nếu có thì ignore + thay bằng file mẫu sạch rồi mới stage.
 - Với thương hiệu ngách như AI33Pro, phải xác nhận đúng domain và mô hình sản phẩm từ user trước khi kết luận; không được suy diễn từ kết quả tìm kiếm có tên gần giống.
 - Khi user yêu cầu chuyển toàn bộ desktop app thành web app, vertical slice chỉ là thứ tự kiểm chứng kỹ thuật, không phải giới hạn phạm vi cuối. Phải nói rõ và tiếp tục migrate mọi màn/tool active cho tới khi không còn phụ thuộc desktop runtime.
+- Khi tạo concept UI cho MasterOS, phải inventory navigation và tính năng thực tế từ source trước; không tự thêm dashboard metrics, storage, activity hay workflow chưa tồn tại chỉ để mockup trông đầy đặn.
+- Khi user định nghĩa lại `Analytics` thành nghiên cứu ngách YouTube, phải thay cả data flow và ngôn ngữ sản phẩm; không giữ dashboard nội bộ cũ hoặc gọi proxy từ public video data là search volume.
+- Khi sidebar đã có brand identity đầy đủ, không giữ thêm global brand bar lặp lại phía trên; nó làm tốn chiều cao mà không thêm context.
+- Trang credentials không nên xếp mọi provider thành card full-width giống nhau; phải phân cấp kết nối chính/phụ và đưa status thật lên một rail gọn để giảm scroll.
+- Khi bỏ một tool xuất hiện ở nhiều bề mặt, phải audit và gỡ toàn bộ navigation, workspace route, task affordance và public API; không xóa schema hoặc dữ liệu cũ nếu user chưa yêu cầu cleanup phá hủy.

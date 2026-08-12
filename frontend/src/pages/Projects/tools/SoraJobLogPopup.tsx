@@ -24,31 +24,31 @@ const STEPS = [
   {
     id: 1, label: 'Generate',
     dot:   'bg-blue-500',
-    ring:  'ring-blue-100',
+    ring:  'ring-blue-500/20',
     pill:  'bg-blue-500 text-white shadow-sm',
     idle:  'bg-surface-100 text-surface-400 border-surface-200',
-    line:  'bg-blue-200',
-    text:  'text-blue-700',
+    line:  'bg-blue-500/10',
+    text:  'text-blue-300',
     keywords: ['generating', 'queued', 'task', 'create', 'waiting for task', 'prompt', 'collect', 'aspect', 'duration', 'button'],
   },
   {
     id: 2, label: 'Publish',
     dot:   'bg-violet-500',
-    ring:  'ring-violet-100',
+    ring:  'ring-violet-500/20',
     pill:  'bg-violet-500 text-white shadow-sm',
     idle:  'bg-surface-100 text-surface-400 border-surface-200',
-    line:  'bg-violet-200',
-    text:  'text-violet-700',
+    line:  'bg-violet-500/10',
+    text:  'text-violet-300',
     keywords: ['publish', 'public', 'permalink', 'sora post'],
   },
   {
     id: 3, label: 'Remove Watermark',
     dot:   'bg-orange-500',
-    ring:  'ring-orange-100',
+    ring:  'ring-orange-500/20',
     pill:  'bg-orange-500 text-white shadow-sm',
     idle:  'bg-surface-100 text-surface-400 border-surface-200',
-    line:  'bg-orange-200',
-    text:  'text-orange-700',
+    line:  'bg-orange-500/10',
+    text:  'text-orange-300',
     keywords: ['watermark', 'removing', 'snapzora', 'snapsora', 'no_watermark', 'no-watermark', 'clean url', 'direct url', 'remove watermark complete'],
   },
   {
@@ -64,21 +64,21 @@ const STEPS = [
   {
     id: 5, label: 'Upscale 1080p',
     dot:   'bg-amber-500',
-    ring:  'ring-amber-100',
+    ring:  'ring-amber-500/20',
     pill:  'bg-amber-500 text-white shadow-sm',
     idle:  'bg-surface-100 text-surface-400 border-surface-200',
-    line:  'bg-amber-200',
-    text:  'text-amber-700',
+    line:  'bg-amber-500/10',
+    text:  'text-amber-300',
     keywords: ['upscale', '1080p', 'full hd', 'enhance start'],
   },
   {
     id: 6, label: 'Save to Folder',
     dot:   'bg-green-500',
-    ring:  'ring-green-100',
+    ring:  'ring-green-500/20',
     pill:  'bg-green-500 text-white shadow-sm',
     idle:  'bg-surface-100 text-surface-400 border-surface-200',
-    line:  'bg-green-200',
-    text:  'text-green-700',
+    line:  'bg-green-500/10',
+    text:  'text-green-300',
     keywords: ['save to folder', 'saved to folder', 'saving final', 'video saved', 'done', 'complete', 'hoàn thành'],
   },
 ]
@@ -96,10 +96,10 @@ function detectStep(message: string): number {
 const LEVEL_CFG: Record<LogLevel, {
   bg: string; border: string; text: string; dim: string; Icon: React.ElementType
 }> = {
-  info:    { bg: 'bg-white',        border: 'border-l-blue-400',   text: 'text-surface-700', dim: 'text-blue-400',   Icon: Info },
-  success: { bg: 'bg-green-50',     border: 'border-l-green-500',  text: 'text-green-800',   dim: 'text-green-500',  Icon: CheckCircle2 },
-  warn:    { bg: 'bg-amber-50',     border: 'border-l-amber-500',  text: 'text-amber-800',   dim: 'text-amber-500',  Icon: AlertTriangle },
-  error:   { bg: 'bg-red-50',       border: 'border-l-red-500',    text: 'text-red-800',     dim: 'text-red-500',    Icon: XCircle },
+  info:    { bg: 'bg-surface-0',        border: 'border-l-blue-400',   text: 'text-surface-700', dim: 'text-blue-400',   Icon: Info },
+  success: { bg: 'bg-green-500/10',     border: 'border-l-green-500',  text: 'text-green-300',   dim: 'text-green-500',  Icon: CheckCircle2 },
+  warn:    { bg: 'bg-amber-500/10',     border: 'border-l-amber-500',  text: 'text-amber-300',   dim: 'text-amber-500',  Icon: AlertTriangle },
+  error:   { bg: 'bg-red-500/10',       border: 'border-l-red-500',    text: 'text-red-300',     dim: 'text-red-500',    Icon: XCircle },
 }
 
 function formatTime(isoTs: string) {
@@ -165,7 +165,7 @@ export default function SoraJobLogPopup({
         {/* Modal — white card per design system */}
         <Dialog.Content
           className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
-                     w-[600px] max-h-[82vh] bg-white rounded-2xl shadow-xl z-50
+                     w-[600px] max-h-[82vh] bg-surface-0 rounded-2xl shadow-xl z-50
                      flex flex-col focus:outline-none overflow-hidden
                      border border-surface-200"
           aria-describedby={undefined}
@@ -192,14 +192,14 @@ export default function SoraJobLogPopup({
                   )}
                   {isDone && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold
-                                     bg-green-50 text-green-700 border border-green-200
+                                     bg-green-500/10 text-green-300 border border-green-500/20
                                      px-2 py-0.5 rounded-full">
                       <CheckCircle2 size={9} /> Done
                     </span>
                   )}
                   {isFailed && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-semibold
-                                     bg-red-50 text-red-700 border border-red-200
+                                     bg-red-500/10 text-red-300 border border-red-500/20
                                      px-2 py-0.5 rounded-full">
                       <XCircle size={9} /> Failed
                     </span>
@@ -226,8 +226,7 @@ export default function SoraJobLogPopup({
               {/* Animated progress fill */}
               {(currentStep > 0 || isDone) && (
                 <motion.div
-                  className="absolute top-4 left-0 h-0.5 z-[1]
-                             bg-gradient-to-r from-blue-400 via-violet-400 via-orange-400 via-amber-400 to-green-400"
+                  className="absolute left-0 top-4 z-[1] h-0.5 bg-primary-500"
                   initial={{ width: '0%' }}
                   animate={{
                     width: isDone
@@ -252,11 +251,11 @@ export default function SoraJobLogPopup({
                         animate={active ? { scale: [1, 1.1, 1] } : { scale: 1 }}
                         transition={{ repeat: Infinity, duration: 1.5 }}
                         className={cn(
-                          'w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300',
+                          'w-8 h-8 rounded-full flex items-center justify-center transition-[background-color,border-color,color,box-shadow,opacity,transform] duration-300',
                           done   ? `${step.dot} ring-4 ${step.ring}` :
                           active ? `${step.dot} ring-4 ${step.ring}` :
-                          fail   ? 'bg-red-500 ring-4 ring-red-100' :
-                                   'bg-white border-2 border-surface-200',
+                          fail   ? 'bg-red-500 ring-4 ring-red-500/20' :
+                                   'bg-surface-0 border-2 border-surface-200',
                         )}
                       >
                         {active && <Loader2 size={13} className="animate-spin text-white" />}
@@ -294,9 +293,9 @@ export default function SoraJobLogPopup({
           </div>
 
           {/* ── Log entries ─────────────────────────────────────── */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-1 bg-white">
+          <div className="flex-1 overflow-y-auto p-4 space-y-1 bg-surface-0">
             {failureMessage && (
-              <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium leading-relaxed text-red-700">
+              <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-[11px] font-medium leading-relaxed text-red-300">
                 {failureMessage}
               </div>
             )}
@@ -354,7 +353,7 @@ export default function SoraJobLogPopup({
                 </span>
               )}
               {isDone && (
-                <span className="flex items-center gap-1 text-[10px] font-semibold text-green-600">
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-green-300">
                   <CheckCircle2 size={10} /> 1080p video saved to folder
                 </span>
               )}
